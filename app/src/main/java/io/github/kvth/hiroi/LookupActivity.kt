@@ -33,9 +33,15 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import io.github.kvth.hiroi.anki.AnkiSettings
+import io.github.kvth.hiroi.anki.CardCreator
+import io.github.kvth.hiroi.anki.CardData
+import io.github.kvth.hiroi.anki.DuplicateNoteException
+import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.LookupResult
+import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Translator
+import io.github.kvth.hiroi.ocr.ScreenOcr
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -50,7 +56,7 @@ class LookupActivity : Activity() {
     private lateinit var scroll: ScrollView
     private lateinit var textView: TextView
     private lateinit var resultsScroll: ScrollView
-    private lateinit var resultsView: TextView
+    private lateinit var resultsList: LinearLayout
     private lateinit var textActions: List<Button>
 
     private val dictionaries by lazy { DictionaryDb.get(this) }
@@ -63,6 +69,10 @@ class LookupActivity : Activity() {
     private var systemBars = Insets.NONE
     private var panelAtTop = false
     private var hasText = false
+    private val scanner: ExecutorService = Executors.newSingleThreadExecutor() // OCR, apart from lookups
+    private var scanning = false
+    private var pendingTap: Pair<Int, Int>? = null // a tap outside the boxes while scanning
+    private var captureGeneration = 0 // tells a scan's result from an older capture's
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +82,7 @@ class LookupActivity : Activity() {
         // Theme colours are resolved here; the formatter itself runs on the lookup thread.
         formatter = ResultsFormatter(themeColor(android.R.attr.textColorSecondary), themeColor(android.R.attr.colorAccent))
         setContentView(buildContent())
+        startScan()
         showHint()
     }
 
@@ -79,6 +90,7 @@ class LookupActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         overlay.blocks = CaptureStore.blocks
+        startScan()
         showHint()
     }
 
@@ -94,9 +106,11 @@ class LookupActivity : Activity() {
 
     override fun onDestroy() {
         worker.shutdownNow()
+        scanner.shutdownNow()
         if (isFinishing) {
             CaptureStore.onClosed?.invoke()
             CaptureStore.onClosed = null
+            CaptureStore.screenshot = null // ~10 MB
         }
         super.onDestroy()
     }
@@ -115,14 +129,12 @@ class LookupActivity : Activity() {
         scroll = maxHeightScrollView(0.3f)
         scroll.addView(textView)
 
-        resultsView = TextView(this).apply {
-            setTextIsSelectable(true)
-            textSize = 16f
-            setLineSpacing(0f, 1.1f)
+        resultsList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(0, (8 * dp).toInt(), 0, 0)
         }
         resultsScroll = maxHeightScrollView(0.4f)
-        resultsScroll.addView(resultsView)
+        resultsScroll.addView(resultsList)
         resultsScroll.visibility = View.GONE
 
         val buttons = LinearLayout(this).apply { gravity = Gravity.END }
@@ -142,13 +154,7 @@ class LookupActivity : Activity() {
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             isClickable = true // keep taps on the panel from reaching the overlay
-            setOnClickListener {
-                // Tapping the hint moves the bar to the other edge, uncovering the boxes under it.
-                if (!hasText) {
-                    panelAtTop = !panelAtTop
-                    placePanel()
-                }
-            }
+            setOnClickListener { if (!hasText) moveHint() }
             elevation = 8 * dp
             background = GradientDrawable().apply {
                 setColor(themeColor(android.R.attr.colorBackground))
@@ -186,6 +192,10 @@ class LookupActivity : Activity() {
     private fun listenForWordTaps() {
         val taps = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                if (!hasText) {
+                    moveHint()
+                    return true
+                }
                 val offset = charAt(textView, e.x, e.y)
                 // Run after the TextView has handled the tap, which would clear our selection.
                 if (offset >= 0) textView.post { lookUpAt(offset) }
@@ -194,8 +204,15 @@ class LookupActivity : Activity() {
         })
         textView.setOnTouchListener { _, event ->
             taps.onTouchEvent(event)
-            false
+            // The hint isn't selectable, so take its touches ourselves, or the tap's end never arrives.
+            !hasText
         }
+    }
+
+    /** Tapping the hint moves the bar to the other edge, uncovering what's under it. */
+    private fun moveHint() {
+        panelAtTop = !panelAtTop
+        placePanel()
     }
 
     /** The index of the character under (x, y), not the nearest gap between characters. */
@@ -225,7 +242,13 @@ class LookupActivity : Activity() {
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
                             Lookup.Message(getString(R.string.no_match))
                         } else {
-                            Lookup.Found(result, formatter.format(result, ankiStatus(result)))
+                            val anki = ankiStatus(result)
+                            Lookup.Found(
+                                result, text,
+                                sections = result.terms.map { Section(it, formatter.header(it, anki), formatter.body(it)) },
+                                kanji = formatter.kanji(result),
+                                error = anki?.error?.let(formatter::error),
+                            )
                         }
                     }
                 }
@@ -252,9 +275,19 @@ class LookupActivity : Activity() {
         }
     }
 
+    private class Section(val term: TermGroup, val header: CharSequence, val body: CharSequence)
+
     private sealed interface Lookup {
         class Message(val text: String) : Lookup
-        class Found(val result: LookupResult, val text: CharSequence) : Lookup
+
+        /** [text] is the panel text the lookup ran on (for the card's sentence). */
+        class Found(
+            val result: LookupResult,
+            val text: String,
+            val sections: List<Section>,
+            val kanji: CharSequence,
+            val error: CharSequence?,
+        ) : Lookup
     }
 
     private fun showLookup(lookup: Lookup) {
@@ -265,15 +298,92 @@ class LookupActivity : Activity() {
                 // while the text has focus, which it lacks when the tap was on a box.
                 textView.requestFocus()
                 Selection.setSelection(textView.text as Spannable, lookup.result.start, lookup.result.end)
-                showResultsText(lookup.text)
+                showFound(lookup)
             }
         }
     }
 
     private fun showResultsText(text: CharSequence) {
-        resultsView.text = text
+        resultsList.removeAllViews()
+        resultsList.addView(resultText(text))
         resultsScroll.visibility = View.VISIBLE
         resultsScroll.scrollTo(0, 0)
+    }
+
+    /** Per word: headword and reading with an "＋ Anki" button if cards are set up, then the definitions. */
+    private fun showFound(found: Lookup.Found) {
+        resultsList.removeAllViews()
+        found.error?.let { resultsList.addView(resultText(it)) }
+        val canAddCards = AnkiSettings(this).cardFormat.complete
+        for ((i, section) in found.sections.withIndex()) {
+            val header = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                if (i > 0) setPadding(0, (12 * dp).toInt(), 0, 0)
+                addView(TextView(this@LookupActivity).apply { text = section.header }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+                if (canAddCards) addView(addCardButton(section.term, found))
+            }
+            resultsList.addView(header)
+            resultsList.addView(resultText(section.body))
+        }
+        if (found.kanji.isNotEmpty()) resultsList.addView(resultText(found.kanji).apply { setPadding(0, (12 * dp).toInt(), 0, 0) })
+        resultsScroll.visibility = View.VISIBLE
+        resultsScroll.scrollTo(0, 0)
+    }
+
+    private fun resultText(text: CharSequence) = TextView(this).apply {
+        setTextIsSelectable(true)
+        textSize = 16f
+        setLineSpacing(0f, 1.1f)
+        this.text = text
+    }
+
+    private fun addCardButton(term: TermGroup, found: Lookup.Found) =
+        Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+            setText(R.string.anki_add)
+            setOnClickListener { addCard(this, term, found) }
+        }
+
+    /** Makes a note from [term] with the card format; the button then shows how it went. */
+    private fun addCard(button: Button, term: TermGroup, found: Lookup.Found) {
+        button.isEnabled = false
+        button.setText(R.string.anki_adding)
+        val start = found.result.start
+        val data = CardData(
+            term, found.text, start, start + term.source.length,
+            documentTitle = appLabel(CaptureStore.sourcePackage),
+            furigana = { sentence ->
+                Furigana.forText(sentence) { text, i ->
+                    translator.lookUp(text, i)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
+                }
+            },
+        )
+        val screenshot = CaptureStore.screenshot
+        worker.execute {
+            val result = runCatching { CardCreator(AnkiSettings(this)).add(data, screenshot) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                result.fold(
+                    { button.setText(R.string.anki_added) },
+                    { error ->
+                        if (error is DuplicateNoteException) {
+                            button.setText(R.string.anki_duplicate)
+                        } else {
+                            Log.w(TAG, "Adding a card failed", error)
+                            button.isEnabled = true
+                            button.setText(R.string.anki_add)
+                            Toast.makeText(this, getString(R.string.anki_add_failed, error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    /** The app's name, e.g. for the card's {document-title}; the package name if it can't be read. */
+    private fun appLabel(packageName: String?): String {
+        if (packageName == null) return ""
+        return runCatching { packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString() }
+            .getOrDefault(packageName)
     }
 
     private fun placePanel() {
@@ -291,10 +401,13 @@ class LookupActivity : Activity() {
     private fun showHint() {
         overlay.selected = null
         val count = overlay.blocks.size
-        setPanelText(
-            if (count == 0) getString(R.string.hint_none) else getString(R.string.hint_tap, count),
-            atTop = hintAtTop(), isText = false,
-        )
+        val hint = when {
+            count > 0 && scanning -> getString(R.string.hint_tap_scanning, count)
+            count > 0 -> getString(R.string.hint_tap, count)
+            scanning -> getString(R.string.hint_none_scanning)
+            else -> getString(R.string.hint_none)
+        }
+        setPanelText(hint, atTop = hintAtTop(), isText = false)
     }
 
     /** The hint panel goes to the edge where it hides less of the boxes (by area). */
@@ -344,8 +457,46 @@ class LookupActivity : Activity() {
         }
     }
 
-    private fun onEmptyTap() {
-        if (hasText) showHint() else finish()
+    /** Outside every box: remembered while images are still being scanned, else go back or close. */
+    private fun onEmptyTap(x: Int, y: Int) {
+        when {
+            scanning -> pendingTap = x to y
+            hasText -> showHint()
+            else -> finish()
+        }
+    }
+
+    /**
+     * Reads the screenshot in the background as soon as the overlay opens, on its own thread so
+     * lookups don't wait. Japanese lines from images are added as dashed boxes when it's done.
+     */
+    private fun startScan() {
+        scanning = false
+        pendingTap = null
+        val generation = ++captureGeneration
+        val screenshot = CaptureStore.screenshot ?: return
+        scanning = true
+        val appText = overlay.blocks
+        scanner.execute {
+            val started = SystemClock.elapsedRealtime()
+            val lines = runCatching {
+                ScreenOcr.recognize(screenshot).filter { it.hasJapanese() && !ScreenOcr.duplicates(it, appText) }
+            }.onFailure { Log.e(TAG, "OCR failed", it) }.getOrDefault(emptyList())
+            Log.d(TAG, "OCR took ${SystemClock.elapsedRealtime() - started} ms: ${lines.size} new lines")
+            runOnUiThread { if (generation == captureGeneration && !isDestroyed) scanDone(lines) }
+        }
+    }
+
+    private fun scanDone(lines: List<TextBlock>) {
+        scanning = false
+        overlay.addBlocks(lines)
+        val tap = pendingTap
+        pendingTap = null
+        val hit = tap?.let { (x, y) -> overlay.blockAt(x, y) }
+        when {
+            hit != null -> showBlock(hit, tap.first, tap.second) // tapped an image while it was being read
+            !hasText -> showHint() // new count, no more "looking"
+        }
     }
 
     private fun selectedOrAllText(): String {

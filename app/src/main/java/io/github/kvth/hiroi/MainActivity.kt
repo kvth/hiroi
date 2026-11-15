@@ -8,6 +8,12 @@ import android.content.ComponentName
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -15,16 +21,23 @@ import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import io.github.kvth.hiroi.anki.AnkiConnect
 import io.github.kvth.hiroi.anki.AnkiSettings
+import io.github.kvth.hiroi.anki.CardFormat
+import io.github.kvth.hiroi.anki.Markers
+import io.github.kvth.hiroi.anki.YomitanSettings
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import java.io.File
@@ -56,6 +69,11 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             startActivityForResult(pick, REQUEST_IMPORT)
         }
+        findViewById<Button>(R.id.cards_import).setOnClickListener {
+            val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+            @Suppress("DEPRECATION")
+            startActivityForResult(pick, REQUEST_YOMITAN_SETTINGS)
+        }
         findViewById<Button>(R.id.import_example).setOnClickListener {
             importDictionary { assets.open(EXAMPLE_ASSET) }
         }
@@ -68,8 +86,30 @@ class MainActivity : Activity() {
                 setPadding(0, (6 * resources.displayMetrics.density).toInt(), 0, 0)
             })
         }
+        findViewById<ImageView>(R.id.example_image).setImageBitmap(exampleImage())
         setUpAnki()
         if (savedInstanceState == null) importFrom(intent)
+    }
+
+    /** A sentence drawn into a bitmap: an image to try OCR on, since apps don't expose that as text. */
+    private fun exampleImage(): Bitmap {
+        val density = resources.displayMetrics.density
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 22f, resources.displayMetrics)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        val text = getString(R.string.example_image_text)
+        val padding = 16 * density
+        val bounds = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
+        val bitmap = Bitmap.createBitmap(
+            (bounds.width() + 2 * padding).toInt(), (bounds.height() + 2 * padding).toInt(), Bitmap.Config.ARGB_8888,
+        )
+        Canvas(bitmap).apply {
+            drawColor(0xFF2E5A88.toInt())
+            drawText(text, padding - bounds.left, padding - bounds.top, paint)
+        }
+        return bitmap
     }
 
     private fun setUpAnki() {
@@ -99,7 +139,111 @@ class MainActivity : Activity() {
                 }
             }
         }
+        setUpCards()
         showAnkiChoices()
+    }
+
+    private fun setUpCards() {
+        findViewById<Button>(R.id.cards_deck).setOnClickListener {
+            askAnki({ it.deckNames() }) { decks -> choose(R.string.anki_choose_deck, decks) { deck -> anki.cardFormat = anki.cardFormat.copy(deck = deck) } }
+        }
+        findViewById<Button>(R.id.cards_model).setOnClickListener {
+            askAnki({ it.modelNames() }) { models ->
+                choose(R.string.anki_choose_model, models) { model ->
+                    if (model.isEmpty()) {
+                        anki.cardFormat = anki.cardFormat.copy(model = "", fields = emptyMap())
+                    } else {
+                        askAnki({ it.modelFieldNames(model) }) { names ->
+                            // Keep templates for fields that stay, guess the rest from their names.
+                            val old = anki.cardFormat.fields
+                            val guessed = CardFormat.guessTemplates(names)
+                            anki.cardFormat = anki.cardFormat.copy(model = model, fields = names.associateWithTo(LinkedHashMap()) { old[it] ?: guessed.getValue(it) })
+                            showAnkiChoices()
+                        }
+                    }
+                }
+            }
+        }
+        findViewById<Button>(R.id.cards_fields).setOnClickListener { editFieldTemplates() }
+        findViewById<EditText>(R.id.cards_tags).apply {
+            setText(anki.cardFormat.tags.joinToString(" "))
+            onChange { text -> anki.cardFormat = anki.cardFormat.copy(tags = text.split(Regex("\\s+")).filter { it.isNotEmpty() }) }
+        }
+        findViewById<CheckBox>(R.id.cards_prevent_duplicates).apply {
+            isChecked = anki.cardFormat.preventDuplicates
+            setOnCheckedChangeListener { _, checked -> anki.cardFormat = anki.cardFormat.copy(preventDuplicates = checked) }
+        }
+        findViewById<CheckBox>(R.id.cards_word_audio).apply {
+            isChecked = anki.wordAudio
+            setOnCheckedChangeListener { _, checked -> anki.wordAudio = checked }
+        }
+    }
+
+    /** A form with a template per field of the note type, like Yomitan's card format editor. */
+    private fun editFieldTemplates() {
+        val format = anki.cardFormat
+        if (format.fields.isEmpty()) {
+            showCardStatus(getString(R.string.cards_incomplete))
+            return
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+        }
+        val inputs = format.fields.map { (name, template) ->
+            form.addView(TextView(this).apply { text = name; setPadding(0, pad / 2, 0, 0) })
+            name to EditText(this).apply {
+                setText(template)
+                textSize = 14f
+                form.addView(this)
+            }
+        }
+        form.addView(TextView(this).apply {
+            text = getString(R.string.cards_fields_help, Markers.supported.sorted().joinToString(" ") { "{$it}" })
+            textSize = 12f
+            setPadding(0, pad, 0, pad)
+        })
+        AlertDialog.Builder(this)
+            .setTitle(format.model)
+            .setView(ScrollView(this).apply { addView(form) })
+            .setPositiveButton(R.string.save) { _, _ ->
+                anki.cardFormat = anki.cardFormat.copy(fields = inputs.associateTo(LinkedHashMap()) { (name, input) -> name to input.text.toString() })
+                showAnkiChoices()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Takes a card format from a Yomitan settings export; with several profiles, the user picks one. */
+    private fun importYomitanSettings(uri: Uri) {
+        val formats = try {
+            YomitanSettings.cardFormats(contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() })
+        } catch (e: Exception) {
+            showCardStatus(getString(R.string.cards_import_failed, e.message ?: e.javaClass.simpleName))
+            return
+        }
+        when (formats.size) {
+            0 -> showCardStatus(getString(R.string.cards_import_none))
+            1 -> useCardFormat(formats.single().second)
+            else -> AlertDialog.Builder(this)
+                .setTitle(R.string.cards_import_choose)
+                .setItems(formats.map { (name, format) -> "$name (${format.model} → ${format.deck})" }.toTypedArray()) { _, which ->
+                    useCardFormat(formats[which].second)
+                }
+                .show()
+        }
+    }
+
+    private fun useCardFormat(format: CardFormat) {
+        anki.cardFormat = format
+        findViewById<EditText>(R.id.cards_tags).setText(format.tags.joinToString(" "))
+        findViewById<CheckBox>(R.id.cards_prevent_duplicates).isChecked = format.preventDuplicates
+        showAnkiChoices()
+    }
+
+    private fun showCardStatus(text: String) {
+        findViewById<TextView>(R.id.cards_status).text = text
     }
 
     /** A list to pick from, with "none" first to switch the Anki check off. */
@@ -137,6 +281,20 @@ class MainActivity : Activity() {
             isEnabled = anki.deck.isNotEmpty()
         }
         showAnkiStatus(if (anki.enabled) getString(R.string.anki_ready, anki.deck, anki.field) else "")
+
+        val format = anki.cardFormat
+        findViewById<Button>(R.id.cards_deck).text = getString(R.string.cards_deck, format.deck.ifEmpty { none })
+        findViewById<Button>(R.id.cards_model).text = getString(R.string.cards_model, format.model.ifEmpty { none })
+        findViewById<Button>(R.id.cards_fields).isEnabled = format.fields.isNotEmpty()
+        showCardStatus(
+            if (!format.complete) {
+                getString(R.string.cards_incomplete)
+            } else {
+                val ready = getString(R.string.cards_ready, format.model, format.deck, format.fields.values.count { it.isNotBlank() })
+                val unsupported = format.unsupported
+                if (unsupported.isEmpty()) ready else ready + "\n" + getString(R.string.cards_unsupported, unsupported.joinToString(" ") { "{$it}" })
+            },
+        )
     }
 
     private fun showAnkiStatus(text: String) {
@@ -172,7 +330,9 @@ class MainActivity : Activity() {
         // file:// URIs only in debug builds, where scripts/emulator.sh imports through the app's own cache.
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (uri.scheme == ContentResolver.SCHEME_CONTENT || (uri.scheme == ContentResolver.SCHEME_FILE && debuggable)) {
-            importDictionary { contentResolver.openInputStream(uri)!! }
+            // A JSON file is a Yomitan settings export (scripts/emulator.sh yomitan); anything else a dictionary.
+            if (intent.type == "application/json" || uri.path.orEmpty().endsWith(".json")) importYomitanSettings(uri)
+            else importDictionary { contentResolver.openInputStream(uri)!! }
         }
     }
 
@@ -184,6 +344,7 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_IMPORT && resultCode == RESULT_OK && uri != null) {
             importDictionary { contentResolver.openInputStream(uri)!! }
         }
+        if (requestCode == REQUEST_YOMITAN_SETTINGS && resultCode == RESULT_OK && uri != null) importYomitanSettings(uri)
     }
 
     override fun onResume() {
@@ -289,6 +450,7 @@ class MainActivity : Activity() {
     private companion object {
         const val TAG = "HiroiImport"
         const val REQUEST_IMPORT = 1
+        const val REQUEST_YOMITAN_SETTINGS = 2
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py
 

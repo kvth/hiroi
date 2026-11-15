@@ -12,6 +12,9 @@
 #                            (closing it leaves the emulator running)
 #   install                  reinstall build/outputs/hiroi-debug.apk, keeping app data
 #   import <dictionary.zip>  import another Yomitan dictionary
+#   anki [deck.apkg]         install AnkiDroid and AnkiConnect Android, import a deck (default: the
+#                            Lapis note type) and start AnkiConnect on the emulator's 127.0.0.1:8765
+#   yomitan <settings.json>  hand a Yomitan settings export to Hiroi to take a card format from
 #   fake-anki                serve a small fake AnkiConnect deck on the emulator's 127.0.0.1:8765,
 #                            where Hiroi looks by default (scripts/fake-ankiconnect.py); then pick
 #                            the deck Japanese::Core and the field Word in Hiroi's Anki section
@@ -37,6 +40,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 CONTAINER=hiroi-emulator
+ANKIDROID_VERSION=2.25.3
+ANKICONNECT_VERSION=1.15
+LAPIS_VERSION=1.7.0
 VIEWER=hiroi-emulator-view
 IMAGE=localhost/hiroi-emulator
 PACKAGE=io.github.kvth.hiroi
@@ -140,6 +146,112 @@ cmd_start() {
   echo "==> Ready. Watch and click along with: $0 view"
 }
 
+# Taps the first text on screen matching a regular expression, optionally only right of x=$2 and
+# above y=$3. Retries for $4 seconds (default 15) while the screen appears.
+tap_text() {
+  local pattern=$1 min_x=${2:-0} max_y=${3:-99999} tries=${4:-15} position
+  for _ in $(seq 1 "$tries"); do
+    position=$(cmd_texts 2>/dev/null | awk -v p="$pattern" -v x="$min_x" -v y="$max_y" '$1 >= x && $2 <= y && $0 ~ p { print $1, $2; exit }')
+    if [ -n "$position" ]; then
+      adb shell input tap $position
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# Waits until a text matching the regular expression is on screen.
+wait_for_text() {
+  for _ in $(seq 1 "${2:-30}"); do
+    cmd_texts 2>/dev/null | grep -qE "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+cmd_anki() {
+  require_running
+  local deck="${1:-}" downloads="$OUT/downloads"
+  mkdir -p "$downloads"
+  fetch() {
+    local file="$downloads/$(basename "$1")"
+    [ -f "$file" ] || curl -fsSL -o "$file" "$1"
+    echo "$file"
+  }
+  local ankidroid ankiconnect
+  ankidroid=$(fetch "https://github.com/ankidroid/Anki-Android/releases/download/v$ANKIDROID_VERSION/variant-abi-AnkiDroid-$ANKIDROID_VERSION-x86_64.apk")
+  ankiconnect=$(fetch "https://github.com/KamWithK/AnkiconnectAndroid/releases/download/$ANKICONNECT_VERSION/ankiconnect_android_${ANKICONNECT_VERSION//./_}.apk")
+  [ -n "$deck" ] || deck=$(fetch "https://github.com/donkuri/lapis/releases/download/$LAPIS_VERSION/Lapis.apkg")
+  [ -f "$deck" ] || die "$deck not found"
+
+  echo "==> Installing AnkiDroid $ANKIDROID_VERSION and AnkiConnect Android $ANKICONNECT_VERSION"
+  for apk in "$ankidroid" "$ankiconnect"; do
+    podman cp "$apk" "$CONTAINER:/tmp/$(basename "$apk")"
+    adb install -r "/tmp/$(basename "$apk")" | tail -1
+  done
+  adb shell pm grant com.ichi2.anki android.permission.POST_NOTIFICATIONS
+  adb shell appops set com.ichi2.anki MANAGE_EXTERNAL_STORAGE allow
+  adb shell pm grant com.kamwithk.ankiconnectandroid android.permission.POST_NOTIFICATIONS
+  adb shell pm grant com.kamwithk.ankiconnectandroid com.ichi2.anki.permission.READ_WRITE_DATABASE
+  # The fake server's port forwarding would keep AnkiConnect from listening on 8765.
+  podman exec "$CONTAINER" pkill -f fake-ankiconnect.py >/dev/null 2>&1 || true
+  adb reverse --remove tcp:8765 >/dev/null 2>&1 || true
+
+  echo "==> Setting up AnkiDroid"
+  adb shell monkey -p com.ichi2.anki -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  tap_text "Get started" 0 99999 8 || true # only on the very first start
+  wait_for_text "AnkiDroid" || die "AnkiDroid didn't open"
+
+  local name
+  name=$(basename "$deck")
+  echo "==> Importing $name"
+  podman cp "$deck" "$CONTAINER:/tmp/$name"
+  adb push "/tmp/$name" "/sdcard/Download/$name" >/dev/null 2>&1
+  adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d "file:///sdcard/Download/$name" >/dev/null
+  sleep 2
+  # AnkiDroid can't open a plain file path, but takes the file from the media store.
+  local id
+  id=$(adb shell content query --uri content://media/external/file --projection _id --where "_display_name=\'$name\'" |
+    grep -o "_id=[0-9]*" | tail -1 | cut -d= -f2)
+  [ -n "$id" ] || die "$name isn't in the media store"
+  adb shell am start -a android.intent.action.VIEW -d "content://media/external/file/$id" -t application/apkg com.ichi2.anki >/dev/null
+  tap_text "^ *[0-9]+ +[0-9]+ +(追加|Add)$" 600 1800 || die "AnkiDroid didn't offer to import $name"
+  tap_text "(インポート|Import)$" 800 || die "AnkiDroid's import screen didn't open"
+  wait_for_text "概要|Summary" 60 || die "the import didn't finish"
+  adb shell input keyevent KEYCODE_BACK
+
+  echo "==> Starting AnkiConnect Android"
+  adb shell monkey -p com.kamwithk.ankiconnectandroid -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+  tap_text "START SERVICE" || die "AnkiConnect Android didn't open"
+  sleep 2
+  adb forward tcp:18765 tcp:8765 >/dev/null
+  podman exec "$CONTAINER" python3 -c '
+import json, urllib.request
+def anki(action, **params):
+    request = urllib.request.Request("http://127.0.0.1:18765", data=json.dumps({"action": action, "version": 6, "params": params}).encode())
+    return json.loads(urllib.request.urlopen(request, timeout=20).read())["result"]
+print("    decks:", ", ".join(anki("deckNames")))
+print("    note types:", ", ".join(anki("modelNames")))
+' || die "AnkiConnect Android doesn't answer"
+  adb shell input keyevent KEYCODE_HOME
+  echo "==> Anki is ready on the emulator's 127.0.0.1:8765, where Hiroi looks by default"
+}
+
+cmd_yomitan() {
+  require_running
+  local settings="${1:?usage: $0 yomitan <yomitan-settings.json>}" name
+  [ -f "$settings" ] || die "$settings not found"
+  name="yomitan-settings-$(date +%s).json"
+  podman cp "$settings" "$CONTAINER:/tmp/$name"
+  adb push "/tmp/$name" "/data/local/tmp/$name" >/dev/null 2>&1
+  adb shell run-as "$PACKAGE" cp "/data/local/tmp/$name" "cache/$name"
+  adb shell rm "/data/local/tmp/$name"
+  adb shell am start -a android.intent.action.VIEW -t application/json \
+    -d "file:///data/user/0/$PACKAGE/cache/$name" -n "$PACKAGE/.MainActivity" >/dev/null 2>&1
+  echo "==> Hiroi has the settings; pick the card format in its dialog (texts, then tap)"
+}
+
 cmd_fake_anki() {
   require_running
   podman cp scripts/fake-ankiconnect.py "$CONTAINER:/tmp/fake-ankiconnect.py"
@@ -169,7 +281,7 @@ cmd_app() {
   require_running
   adb shell am start -n "$PACKAGE/.MainActivity" >/dev/null 2>&1
   sleep 1
-  for _ in 1 2 3; do adb shell input swipe 540 1900 540 400 200; done
+  for _ in 1 2 3 4 5 6; do adb shell input swipe 540 1900 540 400 150; done
 }
 
 cmd_texts() {
@@ -201,6 +313,8 @@ case "$command" in
   start) cmd_start "$@" ;;
   install) cmd_install ;;
   import) cmd_import "$@" ;;
+  anki) cmd_anki "$@" ;;
+  yomitan) cmd_yomitan "$@" ;;
   fake-anki) cmd_fake_anki ;;
   view) cmd_view ;;
   settings) require_running; adb shell am start -a android.settings.SETTINGS >/dev/null ;;

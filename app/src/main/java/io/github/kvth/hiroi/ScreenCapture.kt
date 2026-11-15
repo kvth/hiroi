@@ -32,7 +32,9 @@ object AccessibilityCapture {
     private fun collect(node: AccessibilityNodeInfo, out: MutableList<TextBlock>) {
         if (!node.isVisibleToUser) return
         val text = node.text?.toString()
+        // An icon's description (back arrow, status bar icons) isn't text on screen.
         val description = node.contentDescription?.toString()
+            ?.takeUnless { node.className?.contains("Image") == true }
         if (!text.isNullOrBlank() || !description.isNullOrBlank()) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)

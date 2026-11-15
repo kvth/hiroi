@@ -9,8 +9,8 @@ import java.net.URL
 class AnkiException(message: String) : IOException(message)
 
 /**
- * Minimal AnkiConnect client (https://foosoft.net/projects/anki-connect/), limited to the actions
- * AnkiConnect Android supports as well: deckNames, findNotes and notesInfo.
+ * Minimal AnkiConnect client (https://foosoft.net/projects/anki-connect/), limited to actions
+ * AnkiConnect Android supports as well.
  * [transport] sends a request body and returns the response body; tests replace it.
  */
 class AnkiConnect(
@@ -22,6 +22,23 @@ class AnkiConnect(
     data class Note(val id: Long, val fields: Map<String, String>)
 
     fun deckNames(): List<String> = (request("deckNames") as JSONArray).strings().sorted()
+
+    fun modelNames(): List<String> = (request("modelNames") as JSONArray).strings().sorted()
+
+    fun modelFieldNames(model: String): List<String> =
+        (request("modelFieldNames", JSONObject().put("modelName", model)) as JSONArray).strings()
+
+    /** Whether [note] (addNote's note object) would be added; false for a duplicate of its first field. */
+    fun canAddNote(note: JSONObject): Boolean =
+        (request("canAddNotes", JSONObject().put("notes", JSONArray().put(note))) as JSONArray).optBoolean(0)
+
+    /** Adds [note] and returns its id. */
+    fun addNote(note: JSONObject): Long =
+        (request("addNote", JSONObject().put("note", note)) as Number).toLong()
+
+    /** Stores a media file and returns the name Anki gave it (AnkiConnect Android appends a number). */
+    fun storeMediaFile(name: String, base64: String): String =
+        request("storeMediaFile", JSONObject().put("filename", name).put("data", base64))?.toString()?.takeIf { it != "null" } ?: name
 
     fun findNotes(query: String): List<Long> {
         val ids = request("findNotes", JSONObject().put("query", query)) as JSONArray

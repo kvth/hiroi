@@ -61,6 +61,15 @@ class YomitanTest {
     }
 
     @Test
+    fun separatesALabelFromTheGlossesAfterIt() {
+        val glossary = """[{"type":"structured-content","content":[
+            {"tag":"span","data":{"class":"tag","content":"misc-info"},"content":"slang"},
+            {"tag":"ul","data":{"content":"glossary"},"content":[{"tag":"li","content":"marijuana"},{"tag":"li","content":"cannabis"}]}
+        ]}]"""
+        assertEquals(listOf("slang marijuana; cannabis"), Yomitan.glossaryItems(glossary))
+    }
+
+    @Test
     fun readsFrequenciesInAllShapes() {
         fun freq(data: String, reading: String = "たべる") =
             Yomitan.frequency(TermMeta("食べる", "freq", "[$data]"), reading)

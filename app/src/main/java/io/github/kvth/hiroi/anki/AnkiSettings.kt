@@ -24,6 +24,16 @@ class AnkiSettings(context: Context) {
 
     val enabled get() = deck.isNotEmpty() && field.isNotEmpty()
 
+    /** How cards made from the overlay look (see CardFormat). */
+    var cardFormat: CardFormat
+        get() = prefs.getString("card_format", null)?.let { runCatching { CardFormat.fromJson(it) }.getOrNull() } ?: CardFormat()
+        set(value) = prefs.edit().putString("card_format", value.toJson()).apply()
+
+    /** Fill {audio} with word audio from JapanesePod101, as Yomitan's default audio source does. */
+    var wordAudio: Boolean
+        get() = prefs.getBoolean("word_audio", true)
+        set(value) = prefs.edit().putBoolean("word_audio", value).apply()
+
     fun client() = AnkiConnect(url, apiKey.ifEmpty { null })
 
     companion object {

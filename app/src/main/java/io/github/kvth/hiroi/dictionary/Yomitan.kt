@@ -140,6 +140,7 @@ object Yomitan {
                             val content = (child as? JSONObject)?.opt("content") ?: child
                             StringBuilder().also { flatten(content, it) }.toString().trim()
                         }
+                        if (out.isNotEmpty() && !out.last().isWhitespace()) out.append(' ') // after a label
                         out.append(glosses.filter { it.isNotEmpty() }.joinToString("; "))
                     }
                     // Jitendex: part-of-speech and other labels are inline spans

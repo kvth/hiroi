@@ -3,6 +3,7 @@ package io.github.kvth.hiroi
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
@@ -15,7 +16,8 @@ class OverlayView(
     blocks: List<TextBlock>,
     /** The tapped block and the tap's screen coordinates */
     private val onBlockTap: (TextBlock, Int, Int) -> Unit,
-    private val onEmptyTap: () -> Unit,
+    /** A tap outside every box, with its screen coordinates */
+    private val onEmptyTap: (Int, Int) -> Unit,
 ) : View(context) {
 
     var blocks: List<TextBlock> = blocks
@@ -23,6 +25,14 @@ class OverlayView(
             field = value
             selected = null
         }
+
+    /** Adds boxes (from OCR) without losing the current selection. */
+    fun addBlocks(more: List<TextBlock>) {
+        if (more.isEmpty()) return
+        val keep = selected
+        blocks = blocks + more
+        selected = keep
+    }
 
     var selected: TextBlock? = null
         set(value) {
@@ -39,6 +49,7 @@ class OverlayView(
         strokeWidth = 1.5f * dp
         color = 0xCC4A90FF.toInt()
     }
+    private val ocrOutline = Paint(outline).apply { pathEffect = DashPathEffect(floatArrayOf(6 * dp, 4 * dp), 0f) }
     private val fill = Paint().apply { color = 0x1A4A90FF }
     private val selectedFill = Paint().apply { color = 0x664A90FF }
 
@@ -50,7 +61,7 @@ class OverlayView(
             rect.set(block.bounds)
             rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
             canvas.drawRoundRect(rect, radius, radius, if (block === selected) selectedFill else fill)
-            canvas.drawRoundRect(rect, radius, radius, outline)
+            canvas.drawRoundRect(rect, radius, radius, if (block.ocr) ocrOutline else outline)
         }
     }
 
@@ -60,12 +71,14 @@ class OverlayView(
             getLocationOnScreen(screenOffset)
             val x = event.x.toInt() + screenOffset[0]
             val y = event.y.toInt() + screenOffset[1]
-            // Containers and their children overlap; the smallest box is the one the user means.
-            val hit = blocks
-                .filter { it.bounds.contains(x, y) }
-                .minByOrNull { it.bounds.width().toLong() * it.bounds.height() }
-            if (hit != null) onBlockTap(hit, x, y) else onEmptyTap()
+            val hit = blockAt(x, y)
+            if (hit != null) onBlockTap(hit, x, y) else onEmptyTap(x, y)
         }
         return true
     }
+
+    /** The box at screen point ([x], [y]); containers and their children overlap, so the smallest. */
+    fun blockAt(x: Int, y: Int): TextBlock? = blocks
+        .filter { it.bounds.contains(x, y) }
+        .minByOrNull { it.bounds.width().toLong() * it.bounds.height() }
 }

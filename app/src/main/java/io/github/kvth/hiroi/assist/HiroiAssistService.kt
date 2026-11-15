@@ -2,6 +2,7 @@ package io.github.kvth.hiroi.assist
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.service.voice.VoiceInteractionSession
@@ -9,12 +10,10 @@ import android.service.voice.VoiceInteractionSessionService
 import android.speech.RecognitionService
 import android.speech.SpeechRecognizer
 import android.util.Log
-import io.github.kvth.hiroi.AccessibilityCapture
 import io.github.kvth.hiroi.AssistStructureCapture
 import io.github.kvth.hiroi.CaptureStore
 import io.github.kvth.hiroi.HiroiAccessibilityService
 import io.github.kvth.hiroi.LookupActivity
-import io.github.kvth.hiroi.TextBlock
 
 class HiroiAssistService : VoiceInteractionService()
 
@@ -41,9 +40,20 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
         launched = false
         val accessibility = HiroiAccessibilityService.instance
         Log.d(TAG, "onShow flags=$showFlags accessibility=${accessibility != null}")
+        CaptureStore.screenshot = null
         // The accessibility service sees every window (status bar, notifications, dialogs),
         // so prefer it over the assist structure, which only covers the foreground app.
-        accessibility?.let { launch(AccessibilityCapture.capture(it)) }
+        if (accessibility != null) {
+            launched = true // keeps onHandleAssist out while the capture finishes
+            accessibility.capture { launch() }
+        }
+    }
+
+    /** The assistant's own screenshot, used for OCR when the accessibility service is off. */
+    override fun onHandleScreenshot(screenshot: Bitmap?) {
+        if (CaptureStore.screenshot == null && screenshot != null) {
+            CaptureStore.screenshot = screenshot.copy(Bitmap.Config.ARGB_8888, false)
+        }
     }
 
     override fun onHide() {
@@ -54,14 +64,15 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
 
     override fun onHandleAssist(state: AssistState) {
         if (launched || !state.isFocused) return
-        launch(state.assistStructure?.let(AssistStructureCapture::capture).orEmpty())
+        launched = true
+        CaptureStore.update(state.assistStructure?.let(AssistStructureCapture::capture).orEmpty())
+        CaptureStore.sourcePackage = state.assistStructure?.activityComponent?.packageName
+        launch()
     }
 
-    private fun launch(blocks: List<TextBlock>) {
-        if (launched) return
-        launched = true
-        Log.d(TAG, "launch with ${blocks.size} text blocks")
-        CaptureStore.update(blocks)
+    /** Opens the overlay on what CaptureStore holds. */
+    private fun launch() {
+        Log.d(TAG, "launch with ${CaptureStore.blocks.size} text blocks, screenshot=${CaptureStore.screenshot != null}")
         try {
             CaptureStore.onClosed = { hide() }
             startAssistantActivity(LookupActivity.intent(context))

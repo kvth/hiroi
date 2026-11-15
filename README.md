@@ -2,7 +2,7 @@
 
 A small Android app that picks up the text on your screen, even in apps that don't let you select it, so you can copy it or send it to a dictionary app such as PopLingo or Takoboto.
 
-It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. You can also select text to copy it or send it to another dictionary app.
+It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. You can also select text to copy it or send it to another dictionary app.
 
 ## Ways to open it
 
@@ -42,6 +42,17 @@ node scripts/update-yomitan-transforms.mjs 26.11.2.0
 
 Not supported yet: images in definitions, tag descriptions (`tag_bank`), kanji frequencies (`kanji_meta_bank`), and reordering dictionaries.
 
+## OCR
+
+Apps don't expose text inside images. So as soon as the overlay opens, Hiroi reads the screenshot it took on trigger with Google ML Kit's on-device Japanese recognizer, in the background. Japanese lines it finds in images are added as dashed boxes when it's done, usually within a second, and the other boxes can be used meanwhile. If you tap an image before then, the word under your tap is looked up once its line arrives. Everything runs on the phone; the model is bundled, so it needs neither a network connection nor Play Services.
+
+- Screenshots need the accessibility service. With only the assistant trigger, Hiroi uses the screenshot Android hands to assistants, if *Use screenshot* is on in the assistant settings.
+- Apps that forbid screenshots (streaming, banking) give a black image, so there's nothing to read.
+- ML Kit reads horizontal text well; vertical text (manga) is hit and miss.
+- The first scan after starting the app takes a moment while the model loads.
+
+**Licensing:** ML Kit is closed source (Google APIs Terms of Service), while Hiroi is GPL-3.0 and contains Yomitan's GPL code. Publishing this source code is fine, and so is building the app for yourself. Distributing built APKs, which bundle ML Kit, would conflict with the GPL. A distributable build would need an open-source OCR engine (PaddleOCR, Tesseract), or ML Kit in a separate companion app.
+
 ## Anki
 
 Under *Anki* in the app, pick a deck and the field that holds the word. Lookups then show **✓ in Anki** or **not in Anki** for each headword. A field matches if its text is the word, ignoring HTML and furigana such as `使う[つかう]`.
@@ -50,7 +61,24 @@ Hiroi talks to [AnkiConnect](https://foosoft.net/projects/anki-connect/):
 - **On the phone:** AnkiDroid plus [AnkiConnect Android](https://github.com/KamWithK/AnkiconnectAndroid), with its service started. It listens on `http://127.0.0.1:8765`, Hiroi's default.
 - **Desktop Anki** with the AnkiConnect add-on: enter its address, e.g. `http://192.168.0.20:8765`. On that machine, set `"webBindAddress": "0.0.0.0"` in AnkiConnect's config. Also set an `apiKey` and enter it in Hiroi, because anyone on the network can then reach your Anki.
 
-Hiroi only uses `deckNames`, `findNotes` and `notesInfo`, which AnkiConnect Android supports as well.
+### Making cards
+
+With a card format set up under *Anki → Cards*, every result in the overlay gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a template per field using Yomitan's markers. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*); with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests templates from the field names.
+
+Markers produce the same output as Yomitan's default templates. That includes `{glossary}`, `{furigana}` and `{frequencies}`, so note types made for Yomitan (Lapis, JP Mining Note, …) show them as they would Yomitan's.
+
+| | Markers |
+|---|---|
+| Word | `{expression}` `{reading}` `{furigana}` `{furigana-plain}` `{conjugation}` `{part-of-speech}` `{tags}` |
+| Definitions | `{glossary}` and its `-brief`, `-no-dictionary`, `-first`, `-plain` variants, `{dictionary}` |
+| Sentence | `{sentence}` `{sentence-furigana}` `{sentence-furigana-plain}` `{cloze-prefix}` `{cloze-body}` `{cloze-body-kana}` `{cloze-suffix}` |
+| Frequency, pitch | `{frequencies}` `{frequency-harmonic-rank}` `{frequency-average-rank}` `{pitch-accents}` `{pitch-accent-positions}` `{pitch-accent-categories}` |
+| Media | `{audio}` (word audio from JapanesePod101, Yomitan's default source) and `{screenshot}` (the screen when the overlay opened) |
+| Other | `{document-title}` (the app the text came from) |
+
+Not supported, left empty and listed under *Cards*: custom markers from Yomitan's handlebars templates (e.g. JP Mining Note's `{jpmn-*}`), the pitch graphs, `{phonetic-transcriptions}`, and markers that don't apply on a phone (clipboard, URL). Sentence furigana comes from Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
+
+Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote` and `storeMediaFile`.
 
 ## Limitations
 
@@ -79,7 +107,9 @@ scripts/emulator.sh texts                 # text on screen and where to tap it; 
 scripts/emulator.sh trigger               # open the overlay, as long-pressing power does
 scripts/emulator.sh tap 521 1398          # tap a box, then a word in the panel
 scripts/emulator.sh screenshot            # -> build/emulator/screenshot.png
-scripts/emulator.sh fake-anki             # a fake AnkiConnect deck (Japanese::Core, field Word) to try the Anki check
+scripts/emulator.sh anki                  # AnkiDroid + AnkiConnect Android with the Lapis note type
+scripts/emulator.sh yomitan ~/Downloads/yomitan-settings.json   # take a card format from Yomitan settings
+scripts/emulator.sh fake-anki             # or: a fake AnkiConnect deck (Japanese::Core, field Word), much quicker
 scripts/emulator.sh logcat                # Hiroi's log and crashes
 ```
 
@@ -89,4 +119,4 @@ After a code change: `./podman-build-apk.sh && scripts/emulator.sh install`. Run
 
 Copyright (C) 2026 Kevin Thomas
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors).
+GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`.
