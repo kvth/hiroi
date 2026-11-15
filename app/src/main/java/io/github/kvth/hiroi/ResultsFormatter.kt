@@ -9,17 +9,29 @@ import android.text.style.StyleSpan
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Yomitan
 
+/** Whether the looked-up words have notes in the chosen Anki deck; [error] if Anki couldn't be asked. */
+class AnkiStatus(val words: Set<String>, val error: String? = null)
+
 /** Renders a [LookupResult] as styled text, laid out like a Yomitan popup. */
 class ResultsFormatter(private val secondaryColor: Int, private val accentColor: Int) {
 
-    fun format(result: LookupResult): CharSequence {
+    fun format(result: LookupResult, anki: AnkiStatus? = null): CharSequence {
         val out = SpannableStringBuilder()
+        anki?.error?.let { out.styled(it, ForegroundColorSpan(secondaryColor), RelativeSizeSpan(0.85f)) }
         for (group in result.terms) {
             if (out.isNotEmpty()) out.append("\n\n")
             out.styled(group.expression, RelativeSizeSpan(1.5f), StyleSpan(Typeface.BOLD))
             if (group.reading != group.expression) {
                 out.append("  ")
                 out.styled(group.reading, ForegroundColorSpan(secondaryColor))
+            }
+            if (anki != null && anki.error == null) {
+                out.append("  ")
+                if (group.expression in anki.words) {
+                    out.styled("✓ in Anki", ForegroundColorSpan(accentColor), StyleSpan(Typeface.BOLD), RelativeSizeSpan(0.85f))
+                } else {
+                    out.styled("not in Anki", ForegroundColorSpan(secondaryColor), RelativeSizeSpan(0.85f))
+                }
             }
 
             val badges = group.meta.mapNotNull { meta ->

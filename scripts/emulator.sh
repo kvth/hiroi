@@ -12,6 +12,9 @@
 #                            (closing it leaves the emulator running)
 #   install                  reinstall build/outputs/hiroi-debug.apk, keeping app data
 #   import <dictionary.zip>  import another Yomitan dictionary
+#   fake-anki                serve a small fake AnkiConnect deck on the emulator's 127.0.0.1:8765,
+#                            where Hiroi looks by default (scripts/fake-ankiconnect.py); then pick
+#                            the deck Japanese::Core and the field Word in Hiroi's Anki section
 #   settings                 open the Settings app (Japanese text to try Hiroi on)
 #   app                      open Hiroi, scrolled down to its example sentences
 #   trigger                  open the Hiroi overlay on the current screen, as long-pressing power does
@@ -47,6 +50,12 @@ adb() { podman exec "$CONTAINER" adb "$@"; }
 require_running() {
   [ "$(podman inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = true ] ||
     die "the emulator isn't running; start it with: $0 start"
+}
+
+# The viewer shares the emulator's network, so it has to go first.
+remove_containers() {
+  podman rm -f "$VIEWER" >/dev/null 2>&1 || true
+  podman rm -f "$CONTAINER" >/dev/null 2>&1 || true
 }
 
 wait_for_boot() {
@@ -99,7 +108,7 @@ cmd_start() {
   podman build --ulimit nofile=65536:65536 -f Containerfile.android --target emulator -t "$IMAGE" . >/dev/null
 
   echo "==> Booting Android"
-  podman rm -f "$VIEWER" "$CONTAINER" >/dev/null 2>&1 || true
+  remove_containers
   podman run -d --name "$CONTAINER" --device /dev/kvm -v "$REPO_ROOT/build/outputs:/apk:ro,Z" "$IMAGE" \
     emulator -avd test -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -memory 3072 >/dev/null
   wait_for_boot
@@ -119,10 +128,26 @@ cmd_start() {
   adb shell settings put secure enabled_accessibility_services "$PACKAGE/$PACKAGE.HiroiAccessibilityService"
   adb shell settings put secure accessibility_enabled 1
   adb shell cmd role add-role-holder android.app.role.ASSISTANT "$PACKAGE" 0
+  for _ in $(seq 1 10); do
+    adb shell dumpsys accessibility | grep -q "label=Hiroi screen text" && break
+    sleep 1
+  done
+  adb shell dumpsys accessibility | grep -q "label=Hiroi screen text" ||
+    echo "warning: the accessibility service didn't start; captures fall back to the assist data" >&2
 
   cmd_import "$dictionary"
   adb shell input keyevent KEYCODE_HOME
   echo "==> Ready. Watch and click along with: $0 view"
+}
+
+cmd_fake_anki() {
+  require_running
+  podman cp scripts/fake-ankiconnect.py "$CONTAINER:/tmp/fake-ankiconnect.py"
+  podman exec "$CONTAINER" pkill -f fake-ankiconnect.py >/dev/null 2>&1 || true
+  podman exec -d "$CONTAINER" python3 /tmp/fake-ankiconnect.py >/dev/null
+  # The phone's 127.0.0.1:8765 then reaches the fake server in the container.
+  adb reverse tcp:8765 tcp:8765 >/dev/null
+  echo "==> Fake AnkiConnect on the emulator's 127.0.0.1:8765 (deck Japanese::Core, field Word)"
 }
 
 cmd_view() {
@@ -176,6 +201,7 @@ case "$command" in
   start) cmd_start "$@" ;;
   install) cmd_install ;;
   import) cmd_import "$@" ;;
+  fake-anki) cmd_fake_anki ;;
   view) cmd_view ;;
   settings) require_running; adb shell am start -a android.settings.SETTINGS >/dev/null ;;
   app) cmd_app ;;
@@ -185,6 +211,6 @@ case "$command" in
   screenshot) cmd_screenshot "$@" ;;
   logcat) require_running; adb logcat -d -s HiroiLookup:V HiroiImport:V HiroiSession:V AndroidRuntime:E ;;
   adb) require_running; adb "$@" ;;
-  stop) podman rm -f "$VIEWER" "$CONTAINER" >/dev/null 2>&1; echo "stopped" ;;
+  stop) remove_containers; echo "stopped" ;;
   *) awk 'NR > 2 && /^#/ { sub(/^# ?/, ""); print; next } NR > 2 { exit }' "$0"; exit 1 ;;
 esac

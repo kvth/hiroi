@@ -32,6 +32,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Translator
@@ -224,7 +225,7 @@ class LookupActivity : Activity() {
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
                             Lookup.Message(getString(R.string.no_match))
                         } else {
-                            Lookup.Found(result, formatter.format(result))
+                            Lookup.Found(result, formatter.format(result, ankiStatus(result)))
                         }
                     }
                 }
@@ -239,6 +240,18 @@ class LookupActivity : Activity() {
         }
     }
 
+    /** Asks Anki which of the headwords already have a note, if a deck is set up. */
+    private fun ankiStatus(result: LookupResult): AnkiStatus? {
+        val anki = AnkiSettings(this)
+        if (!anki.enabled || result.terms.isEmpty()) return null
+        return try {
+            AnkiStatus(anki.client().wordsInDeck(anki.deck, anki.field, result.terms.map { it.expression }.distinct()))
+        } catch (e: Exception) {
+            Log.w(TAG, "Anki check failed", e)
+            AnkiStatus(emptySet(), getString(R.string.anki_unreachable, e.message ?: e.javaClass.simpleName))
+        }
+    }
+
     private sealed interface Lookup {
         class Message(val text: String) : Lookup
         class Found(val result: LookupResult, val text: CharSequence) : Lookup
@@ -248,7 +261,9 @@ class LookupActivity : Activity() {
         when (lookup) {
             is Lookup.Message -> showResultsText(lookup.text)
             is Lookup.Found -> {
-                // Select the matched word so Copy and Look up act on it.
+                // Select the matched word so Copy and Look up act on it. The selection only shows
+                // while the text has focus, which it lacks when the tap was on a box.
+                textView.requestFocus()
                 Selection.setSelection(textView.text as Spannable, lookup.result.start, lookup.result.end)
                 showResultsText(lookup.text)
             }
@@ -295,10 +310,15 @@ class LookupActivity : Activity() {
         return bottom > top
     }
 
-    private fun showBlock(block: TextBlock) {
+    private fun showBlock(block: TextBlock, x: Int, y: Int) {
         overlay.selected = block
         // Keep the panel away from the text being read.
         setPanelText(block.text, atTop = block.bounds.centerY() > resources.displayMetrics.heightPixels / 2, isText = true)
+        // Look the tapped word up right away when the app reported where its characters are.
+        val offset = CharacterLocator.characterAt(block, x, y)
+        Log.d(TAG, "Tapped character $offset in a box")
+        // After the TextView has its text, which the selection needs.
+        if (offset != null) textView.post { lookUpAt(offset) }
     }
 
     private fun showAll() {

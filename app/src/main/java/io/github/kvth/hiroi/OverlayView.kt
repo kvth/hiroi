@@ -13,7 +13,8 @@ import android.view.View
 class OverlayView(
     context: Context,
     blocks: List<TextBlock>,
-    private val onBlockTap: (TextBlock) -> Unit,
+    /** The tapped block and the tap's screen coordinates */
+    private val onBlockTap: (TextBlock, Int, Int) -> Unit,
     private val onEmptyTap: () -> Unit,
 ) : View(context) {
 
@@ -63,7 +64,7 @@ class OverlayView(
             val hit = blocks
                 .filter { it.bounds.contains(x, y) }
                 .minByOrNull { it.bounds.width().toLong() * it.bounds.height() }
-            if (hit != null) onBlockTap(hit) else onEmptyTap()
+            if (hit != null) onBlockTap(hit, x, y) else onEmptyTap()
         }
         return true
     }

@@ -12,14 +12,19 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import io.github.kvth.hiroi.anki.AnkiConnect
+import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import java.io.File
@@ -30,6 +35,7 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
 
     private val dictionaries by lazy { DictionaryDb.get(this) }
+    private val anki by lazy { AnkiSettings(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,8 +68,89 @@ class MainActivity : Activity() {
                 setPadding(0, (6 * resources.displayMetrics.density).toInt(), 0, 0)
             })
         }
+        setUpAnki()
         if (savedInstanceState == null) importFrom(intent)
     }
+
+    private fun setUpAnki() {
+        findViewById<EditText>(R.id.anki_url).apply {
+            setText(anki.url)
+            onChange { anki.url = it }
+        }
+        findViewById<EditText>(R.id.anki_key).apply {
+            setText(anki.apiKey)
+            onChange { anki.apiKey = it }
+        }
+        findViewById<Button>(R.id.anki_deck).setOnClickListener {
+            askAnki({ it.deckNames() }) { decks ->
+                choose(R.string.anki_choose_deck, decks) { deck ->
+                    if (deck != anki.deck) anki.field = ""
+                    anki.deck = deck
+                }
+            }
+        }
+        findViewById<Button>(R.id.anki_field).setOnClickListener {
+            val deck = anki.deck
+            askAnki({ it.fieldNames(deck) }) { fields ->
+                if (fields.isEmpty()) {
+                    showAnkiStatus(getString(R.string.anki_no_fields))
+                } else {
+                    choose(R.string.anki_choose_field, fields) { anki.field = it }
+                }
+            }
+        }
+        showAnkiChoices()
+    }
+
+    /** A list to pick from, with "none" first to switch the Anki check off. */
+    private fun choose(title: Int, items: List<String>, onChosen: (String) -> Unit) {
+        val choices = listOf(getString(R.string.anki_none)) + items
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setItems(choices.toTypedArray()) { _, which ->
+                onChosen(if (which == 0) "" else items[which - 1])
+                showAnkiChoices()
+            }
+            .show()
+    }
+
+    private fun <T> askAnki(call: (AnkiConnect) -> T, onResult: (T) -> Unit) {
+        showAnkiStatus(getString(R.string.anki_asking))
+        val client = anki.client()
+        background.execute {
+            val result = runCatching { call(client) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                result.fold(
+                    { showAnkiChoices(); onResult(it) },
+                    { showAnkiStatus(getString(R.string.anki_unreachable, it.message ?: it.javaClass.simpleName)) },
+                )
+            }
+        }
+    }
+
+    private fun showAnkiChoices() {
+        val none = getString(R.string.anki_none)
+        findViewById<Button>(R.id.anki_deck).text = getString(R.string.anki_deck, anki.deck.ifEmpty { none })
+        findViewById<Button>(R.id.anki_field).apply {
+            text = getString(R.string.anki_field, anki.field.ifEmpty { none })
+            isEnabled = anki.deck.isNotEmpty()
+        }
+        showAnkiStatus(if (anki.enabled) getString(R.string.anki_ready, anki.deck, anki.field) else "")
+    }
+
+    private fun showAnkiStatus(text: String) {
+        findViewById<TextView>(R.id.anki_status).apply {
+            this.text = text
+            visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
+        }
+    }
+
+    private fun EditText.onChange(save: (String) -> Unit) = addTextChangedListener(object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        override fun afterTextChanged(s: Editable?) = save(s.toString())
+    })
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)

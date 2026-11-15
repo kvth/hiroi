@@ -2,7 +2,7 @@
 
 A small Android app that picks up the text on your screen, even in apps that don't let you select it, so you can copy it or send it to a dictionary app such as PopLingo or Takoboto.
 
-It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text. Tap a box to read it, then tap a word to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. Conjugated forms are found too: 食べさせられなかった → 食べる. You can also select text to copy it or send it to another dictionary app.
+It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. You can also select text to copy it or send it to another dictionary app.
 
 ## Ways to open it
 
@@ -42,6 +42,16 @@ node scripts/update-yomitan-transforms.mjs 26.11.2.0
 
 Not supported yet: images in definitions, tag descriptions (`tag_bank`), kanji frequencies (`kanji_meta_bank`), and reordering dictionaries.
 
+## Anki
+
+Under *Anki* in the app, pick a deck and the field that holds the word. Lookups then show **✓ in Anki** or **not in Anki** for each headword. A field matches if its text is the word, ignoring HTML and furigana such as `使う[つかう]`.
+
+Hiroi talks to [AnkiConnect](https://foosoft.net/projects/anki-connect/):
+- **On the phone:** AnkiDroid plus [AnkiConnect Android](https://github.com/KamWithK/AnkiconnectAndroid), with its service started. It listens on `http://127.0.0.1:8765`, Hiroi's default.
+- **Desktop Anki** with the AnkiConnect add-on: enter its address, e.g. `http://192.168.0.20:8765`. On that machine, set `"webBindAddress": "0.0.0.0"` in AnkiConnect's config. Also set an `apiKey` and enter it in Hiroi, because anyone on the network can then reach your Anki.
+
+Hiroi only uses `deckNames`, `findNotes` and `notesInfo`, which AnkiConnect Android supports as well.
+
 ## Limitations
 
 - Only text the app exposes to accessibility is visible. Canvas-drawn text (games, images, video subtitles) needs OCR, which is not implemented yet.
@@ -69,6 +79,7 @@ scripts/emulator.sh texts                 # text on screen and where to tap it; 
 scripts/emulator.sh trigger               # open the overlay, as long-pressing power does
 scripts/emulator.sh tap 521 1398          # tap a box, then a word in the panel
 scripts/emulator.sh screenshot            # -> build/emulator/screenshot.png
+scripts/emulator.sh fake-anki             # a fake AnkiConnect deck (Japanese::Core, field Word) to try the Anki check
 scripts/emulator.sh logcat                # Hiroi's log and crashes
 ```
 

@@ -3,8 +3,16 @@ package io.github.kvth.hiroi
 import android.accessibilityservice.AccessibilityService
 import android.app.assist.AssistStructure
 import android.graphics.Rect
+import android.graphics.RectF
+import android.os.Build
+import android.os.Bundle
+import android.os.Parcelable
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH
+import android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX
+import android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY
+import io.github.kvth.hiroi.japanese.Japanese
 
 /**
  * Collects the text of every visible node in all windows. Hiroi's own windows count too (its
@@ -23,17 +31,42 @@ object AccessibilityCapture {
 
     private fun collect(node: AccessibilityNodeInfo, out: MutableList<TextBlock>) {
         if (!node.isVisibleToUser) return
-        val text = node.text?.toString()?.takeIf { it.isNotBlank() }
-            ?: node.contentDescription?.toString()
-        if (!text.isNullOrBlank()) {
+        val text = node.text?.toString()
+        val description = node.contentDescription?.toString()
+        if (!text.isNullOrBlank() || !description.isNullOrBlank()) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
-            out += TextBlock(text, bounds)
+            out += if (!text.isNullOrBlank()) TextBlock(text, bounds, characterBounds(node, text)) else TextBlock(description!!, bounds)
         }
         for (i in 0 until node.childCount) {
             node.getChild(i)?.let { collect(it, out) }
         }
     }
+
+    /**
+     * Where each character of [text] is on screen, so a tap on a box can look up the word under it
+     * (CharacterLocator). Asked for now, while the app is visible: once the overlay covers it,
+     * Android no longer lets the service query its window. Only for Japanese text, to keep the
+     * capture quick; null if the app doesn't report positions.
+     */
+    private fun characterBounds(node: AccessibilityNodeInfo, text: String): List<RectF?>? {
+        if (EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY !in node.availableExtraData) return null
+        if (text.none(Japanese::isJapanese)) return null
+        val args = Bundle().apply {
+            putInt(EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_START_INDEX, 0)
+            putInt(EXTRA_DATA_TEXT_CHARACTER_LOCATION_ARG_LENGTH, minOf(text.length, MAX_CHARACTERS))
+        }
+        if (!node.refreshWithExtraData(EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY, args)) return null
+        val array: Array<out Parcelable?>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            node.extras.getParcelableArray(EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY, RectF::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            node.extras.getParcelableArray(EXTRA_DATA_TEXT_CHARACTER_LOCATION_KEY)
+        }
+        return array?.map { it as? RectF }
+    }
+
+    private const val MAX_CHARACTERS = 5000
 }
 
 /**
