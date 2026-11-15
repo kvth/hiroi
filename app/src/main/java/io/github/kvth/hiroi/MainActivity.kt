@@ -4,10 +4,15 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.role.RoleManager
 import android.content.ActivityNotFoundException
+import android.content.ComponentName
+import android.content.ContentResolver
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -18,6 +23,7 @@ import android.widget.TextView
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import java.io.File
+import java.io.InputStream
 import java.util.concurrent.Executors
 
 /** Setup screen: shows what is enabled, links to the system settings pages and manages dictionaries. */
@@ -44,6 +50,43 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             startActivityForResult(pick, REQUEST_IMPORT)
         }
+        findViewById<Button>(R.id.import_example).setOnClickListener {
+            importDictionary { assets.open(EXAMPLE_ASSET) }
+        }
+        val examples = findViewById<LinearLayout>(R.id.example_sentences)
+        // One view per sentence, so each gets its own box in the overlay.
+        for (sentence in resources.getStringArray(R.array.example_sentences)) {
+            examples.addView(TextView(this).apply {
+                text = sentence
+                textSize = 20f
+                setPadding(0, (6 * resources.displayMetrics.density).toInt(), 0, 0)
+            })
+        }
+        if (savedInstanceState == null) importFrom(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        importFrom(intent)
+    }
+
+    /** "Open with" / "Share" a dictionary zip, e.g. right after downloading it in a browser. */
+    private fun importFrom(intent: Intent) {
+        val uri = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            }
+            else -> null
+        } ?: return
+        // file:// URIs only in debug builds, where scripts/emulator.sh imports through the app's own cache.
+        val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (uri.scheme == ContentResolver.SCHEME_CONTENT || (uri.scheme == ContentResolver.SCHEME_FILE && debuggable)) {
+            importDictionary { contentResolver.openInputStream(uri)!! }
+        }
     }
 
     @Deprecated("Deprecated in Java")
@@ -51,17 +94,19 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data
-        if (requestCode == REQUEST_IMPORT && resultCode == RESULT_OK && uri != null) importDictionary(uri)
+        if (requestCode == REQUEST_IMPORT && resultCode == RESULT_OK && uri != null) {
+            importDictionary { contentResolver.openInputStream(uri)!! }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        setStatus(R.id.accessibility_status, HiroiAccessibilityService.instance != null)
+        setStatus(R.id.accessibility_status, accessibilityServiceEnabled())
         setStatus(R.id.assistant_status, getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT))
         showDictionaries()
     }
 
-    private fun importDictionary(uri: Uri) {
+    private fun importDictionary(open: () -> InputStream) {
         val status = findViewById<TextView>(R.id.import_status)
         val button = findViewById<Button>(R.id.import_dictionary)
         button.isEnabled = false
@@ -73,13 +118,15 @@ class MainActivity : Activity() {
                 // ZipFile needs random access, so copy the picked document first.
                 val zip = File(cacheDir, "import.zip")
                 try {
-                    contentResolver.openInputStream(uri)!!.use { input -> zip.outputStream().use { input.copyTo(it) } }
+                    open().use { input -> zip.outputStream().use { input.copyTo(it) } }
                     val info = dictionaries.import(zip) { progress -> runOnUiThread { status.text = progress } }
+                    Log.i(TAG, "Imported ${info.title}: ${info.terms} terms, ${info.meta} meta, ${info.kanji} kanji")
                     getString(R.string.import_done, info.title)
                 } finally {
                     zip.delete()
                 }
             } catch (e: Exception) {
+                Log.w(TAG, "Import failed: ${e.message}", e)
                 getString(R.string.import_failed, e.message ?: e.javaClass.simpleName)
             }
             runOnUiThread {
@@ -96,6 +143,8 @@ class MainActivity : Activity() {
         val list = findViewById<LinearLayout>(R.id.dictionary_list)
         list.removeAllViews()
         val installed = dictionaries.dictionaries()
+        findViewById<Button>(R.id.import_example).visibility =
+            if (installed.any { it.title == EXAMPLE_DICTIONARY }) View.GONE else View.VISIBLE
         if (installed.isEmpty()) {
             list.addView(TextView(this).apply { setText(R.string.no_dictionaries_installed) })
         }
@@ -139,12 +188,22 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** Asks the system rather than checking for a running service, which binds a moment after the app starts. */
+    private fun accessibilityServiceEnabled(): Boolean {
+        val enabled = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty()
+        val component = ComponentName(this, HiroiAccessibilityService::class.java)
+        return enabled.split(':').any { ComponentName.unflattenFromString(it) == component }
+    }
+
     private fun setStatus(id: Int, enabled: Boolean) {
         findViewById<TextView>(id).setText(if (enabled) R.string.status_on else R.string.status_off)
     }
 
     private companion object {
+        const val TAG = "HiroiImport"
         const val REQUEST_IMPORT = 1
+        const val EXAMPLE_ASSET = "example-dictionary.zip"
+        const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py
 
         /** Imports and deletes run one at a time, and outlive the activity if the user leaves. */
         val background = Executors.newSingleThreadExecutor()

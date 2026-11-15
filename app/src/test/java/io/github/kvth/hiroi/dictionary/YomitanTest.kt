@@ -37,6 +37,30 @@ class YomitanTest {
     }
 
     @Test
+    fun rendersJitendexEntriesLikeYomitan() {
+        // Shape of Jitendex's 教える, shortened
+        val glossary = """[{"type":"structured-content","content":[
+            {"tag":"ul","data":{"content":"sense-groups"},"content":[{"tag":"li","data":{"content":"sense-group"},"content":[
+                {"tag":"span","data":{"class":"tag","content":"part-of-speech-info"},"content":"1-dan"},
+                {"tag":"span","data":{"class":"tag","content":"part-of-speech-info"},"content":"transitive"},
+                {"tag":"ol","content":[
+                    {"tag":"li","style":{"listStyleType":"\"①\""},"data":{"content":"sense"},"content":[
+                        {"tag":"ul","data":{"content":"glossary"},"content":[{"tag":"li","content":"to teach"},{"tag":"li","content":"to instruct"}]},
+                        {"tag":"div","data":{"content":"extra-info"},"content":{"tag":"span","content":[{"tag":"ruby","content":["教",{"tag":"rt","content":"おし"}]},"えてくれます。"]}}
+                    ]},
+                    {"tag":"li","style":{"listStyleType":"\"②\""},"data":{"content":"sense"},"content":[
+                        {"tag":"ul","data":{"content":"glossary"},"content":[{"tag":"li","content":"to tell"}]}
+                    ]}
+                ]}
+            ]}]}
+        ]}]"""
+        assertEquals(
+            listOf("• 1-dan transitive\n① to teach; to instruct\n教えてくれます。\n② to tell"),
+            Yomitan.glossaryItems(glossary),
+        )
+    }
+
+    @Test
     fun readsFrequenciesInAllShapes() {
         fun freq(data: String, reading: String = "たべる") =
             Yomitan.frequency(TermMeta("食べる", "freq", "[$data]"), reading)

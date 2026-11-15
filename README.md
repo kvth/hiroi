@@ -24,9 +24,13 @@ When the accessibility service is off, the assistant trigger still works. It the
    - tap a word to look it up in your dictionaries. The matched word gets selected, so **Copy** copies it;
    - or long-press to select text yourself, then pick a dictionary app in the selection menu, or tap **Look up**. The first time, you pick the app and Hiroi remembers it. Long-press **Look up** to change it.
 
+## Example
+
+The bottom of the app's setup screen has Japanese example sentences to try Hiroi on, and a button that imports a small example dictionary with every word in them (`app/src/main/assets/example-dictionary.zip`). Its definitions are entries from [Jitendex](https://jitendex.org) (CC BY-SA 4.0, by Stephen Kraus, based on JMdict by the Electronic Dictionaries Research Group and Tatoeba example sentences). `scripts/make-example-dictionary.py <jitendex-yomitan.zip>` rebuilds it.
+
 ## Dictionaries
 
-Import Yomitan dictionary zips under *Dictionaries* in the app: term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone. Dictionaries imported first are shown first.
+Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone. Dictionaries imported first are shown first.
 
 A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `app/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
 
@@ -51,6 +55,24 @@ The build runs in podman, so the Android SDK never touches the host (see `Contai
 ./podman-build-apk.sh            # -> build/outputs/hiroi-debug.apk
 ./podman-build-apk.sh --install  # also adb install -r (needs adb on the host)
 ```
+
+## Emulator
+
+`scripts/emulator.sh` runs Hiroi in an Android 15 emulator inside podman (needs `/dev/kvm`), set up like a phone in use: Japanese system language, the accessibility service on, Hiroi as the digital assistant, and a dictionary imported. The default dictionary is the app's example dictionary; you can pass your own zip instead.
+
+```bash
+scripts/emulator.sh start                 # or: scripts/emulator.sh start ~/Downloads/jitendex-yomitan.zip
+scripts/emulator.sh view                  # a window showing the emulator; click and type in it yourself
+scripts/emulator.sh app                   # Hiroi's example sentences
+scripts/emulator.sh settings              # the Settings app, which has Japanese text
+scripts/emulator.sh texts                 # text on screen and where to tap it; Hiroi's boxes sit there
+scripts/emulator.sh trigger               # open the overlay, as long-pressing power does
+scripts/emulator.sh tap 521 1398          # tap a box, then a word in the panel
+scripts/emulator.sh screenshot            # -> build/emulator/screenshot.png
+scripts/emulator.sh logcat                # Hiroi's log and crashes
+```
+
+After a code change: `./podman-build-apk.sh && scripts/emulator.sh install`. Run `scripts/emulator.sh` without arguments for all commands.
 
 ## License
 

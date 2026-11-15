@@ -23,13 +23,22 @@
     <string name="count_meta">%d frequency/pitch</string>
     <string name="count_kanji">%d kanji</string>
     <string name="usage_hint">Trigger Hiroi with the accessibility button, the accessibility shortcut, or the assistant gesture. Tap a highlighted box, then tap a word to look it up in your dictionaries. Long-press to select text yourself; Copy and \"Look up\" (which opens a dictionary app) act on the selection. Long-press \"Look up\" to pick a different app.</string>
+    <string name="step_example">4. Try it</string>
+    <string name="step_example_hint">Open Hiroi on this screen (power button or accessibility button), tap one of the sentences below, then tap a word in it. The example dictionary has every word in them, with definitions from Jitendex (jitendex.org, CC BY-SA 4.0).</string>
+    <string name="import_example">Import example dictionary</string>
+    <string-array name="example_sentences">
+        <item>昨日、友達に新しいアプリを教えてもらいました。</item>
+        <item>早速使ってみたけど、設定を変えなかったので、通知が届かなかった。</item>
+        <item>毎日、日本語を勉強しています。</item>
+        <item>子供の頃は野菜を食べさせられた。</item>
+    </string-array>
     <string name="open_accessibility">Accessibility settings</string>
     <string name="open_app_info">App info</string>
     <string name="open_assistant">Digital assistant settings</string>
     <string name="status_on">✓ enabled</string>
     <string name="status_off">✗ not enabled</string>
 
-    <string name="hint_tap">Tap a box to read it · %d text blocks found</string>
+    <string name="hint_tap">Tap a box to read it · %d found. Tap this bar to move it.</string>
     <string name="hint_none">No text found. Is the Hiroi accessibility service enabled?</string>
     <string name="copy">Copy</string>
     <string name="look_up">Look up</string>
@@ -39,6 +48,8 @@
     <string name="choose_dictionary">Look up with</string>
     <string name="no_dictionaries">No dictionaries installed. Import a Yomitan dictionary in the Hiroi app.</string>
     <string name="no_match">No dictionary entry found</string>
+    <string name="looking_up">Looking up…</string>
+    <string name="not_japanese">Tap on a Japanese word</string>
     <string name="lookup_failed">Lookup failed: %s</string>
     <string name="no_dictionary">No dictionary app found that supports text selection lookups</string>
 </resources>

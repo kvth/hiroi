@@ -15,8 +15,10 @@ import android.graphics.Insets
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.Selection
 import android.text.Spannable
+import android.util.Log
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
@@ -53,9 +55,7 @@ class LookupActivity : Activity() {
     private val dictionaries by lazy { DictionaryDb.get(this) }
     private val translator by lazy { Translator(dictionaries) }
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
-    private val formatter by lazy {
-        ResultsFormatter(themeColor(android.R.attr.textColorSecondary), themeColor(android.R.attr.colorAccent))
-    }
+    private lateinit var formatter: ResultsFormatter
     private var lookupGeneration = 0
 
     private val dp by lazy { resources.displayMetrics.density }
@@ -68,6 +68,8 @@ class LookupActivity : Activity() {
         // Edge-to-edge is the default from Android 15 on, but still has to be requested on 14.
         @Suppress("DEPRECATION")
         window.setDecorFitsSystemWindows(false)
+        // Theme colours are resolved here; the formatter itself runs on the lookup thread.
+        formatter = ResultsFormatter(themeColor(android.R.attr.textColorSecondary), themeColor(android.R.attr.colorAccent))
         setContentView(buildContent())
         showHint()
     }
@@ -77,6 +79,16 @@ class LookupActivity : Activity() {
         setIntent(intent)
         overlay.blocks = CaptureStore.blocks
         showHint()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        showing = true
+    }
+
+    override fun onStop() {
+        showing = false
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -129,6 +141,13 @@ class LookupActivity : Activity() {
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             isClickable = true // keep taps on the panel from reaching the overlay
+            setOnClickListener {
+                // Tapping the hint moves the bar to the other edge, uncovering the boxes under it.
+                if (!hasText) {
+                    panelAtTop = !panelAtTop
+                    placePanel()
+                }
+            }
             elevation = 8 * dp
             background = GradientDrawable().apply {
                 setColor(themeColor(android.R.attr.colorBackground))
@@ -193,29 +212,45 @@ class LookupActivity : Activity() {
         if (!hasText) return
         val text = textView.text.toString()
         val generation = ++lookupGeneration
+        showResultsText(getString(R.string.looking_up))
         worker.execute {
+            val started = SystemClock.elapsedRealtime()
+            // Formatting big structured-content glossaries takes a while too, so it happens here as well.
             val outcome = runCatching {
-                if (dictionaries.hasDictionaries()) translator.lookUp(text, offset) else null
+                when {
+                    !dictionaries.hasDictionaries() -> Lookup.Message(getString(R.string.no_dictionaries))
+                    else -> when (val result = translator.lookUp(text, offset)) {
+                        null -> Lookup.Message(getString(R.string.not_japanese))
+                        else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
+                            Lookup.Message(getString(R.string.no_match))
+                        } else {
+                            Lookup.Found(result, formatter.format(result))
+                        }
+                    }
+                }
+            }.getOrElse {
+                Log.e(TAG, "Lookup failed", it)
+                Lookup.Message(getString(R.string.lookup_failed, it.message ?: it.javaClass.simpleName))
             }
+            Log.d(TAG, "Lookup at $offset took ${SystemClock.elapsedRealtime() - started} ms")
             runOnUiThread {
-                if (generation == lookupGeneration && !isDestroyed) showResult(outcome)
+                if (generation == lookupGeneration && !isDestroyed) showLookup(outcome)
             }
         }
     }
 
-    private fun showResult(outcome: Result<LookupResult?>) {
-        val result = outcome.getOrElse {
-            showResultsText(getString(R.string.lookup_failed, it.message))
-            return
-        }
-        when {
-            result == null && !dictionaries.hasDictionaries() -> showResultsText(getString(R.string.no_dictionaries))
-            result == null -> resultsScroll.visibility = View.GONE // tapped on punctuation or Latin text
-            result.terms.isEmpty() && result.kanji.isEmpty() -> showResultsText(getString(R.string.no_match))
-            else -> {
+    private sealed interface Lookup {
+        class Message(val text: String) : Lookup
+        class Found(val result: LookupResult, val text: CharSequence) : Lookup
+    }
+
+    private fun showLookup(lookup: Lookup) {
+        when (lookup) {
+            is Lookup.Message -> showResultsText(lookup.text)
+            is Lookup.Found -> {
                 // Select the matched word so Copy and Look up act on it.
-                Selection.setSelection(textView.text as Spannable, result.start, result.end)
-                showResultsText(formatter.format(result))
+                Selection.setSelection(textView.text as Spannable, lookup.result.start, lookup.result.end)
+                showResultsText(lookup.text)
             }
         }
     }
@@ -243,8 +278,21 @@ class LookupActivity : Activity() {
         val count = overlay.blocks.size
         setPanelText(
             if (count == 0) getString(R.string.hint_none) else getString(R.string.hint_tap, count),
-            atTop = false, isText = false,
+            atTop = hintAtTop(), isText = false,
         )
+    }
+
+    /** The hint panel goes to the edge where it hides less of the boxes (by area). */
+    private fun hintAtTop(): Boolean {
+        val screen = window.decorView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        val height = (panel.height.takeIf { it > 0 } ?: (120 * dp).toInt()) + (16 * dp).toInt()
+        fun hidden(from: Int, to: Int) = overlay.blocks.sumOf { block ->
+            val overlap = minOf(block.bounds.bottom, to) - maxOf(block.bounds.top, from)
+            if (overlap > 0) overlap.toLong() * block.bounds.width() else 0L
+        }
+        val top = hidden(systemBars.top, systemBars.top + height)
+        val bottom = hidden(screen - systemBars.bottom - height, screen - systemBars.bottom)
+        return bottom > top
     }
 
     private fun showBlock(block: TextBlock) {
@@ -264,6 +312,9 @@ class LookupActivity : Activity() {
         hasText = isText
         lookupGeneration++
         resultsScroll.visibility = View.GONE
+        textView.textSize = if (isText) 22f else 16f
+        // The hint itself isn't selectable, so a tap on it reaches the panel, which then moves.
+        textView.setTextIsSelectable(isText)
         textView.text = text
         textActions.forEach { it.isEnabled = isText }
         scroll.scrollTo(0, 0)
@@ -347,8 +398,14 @@ class LookupActivity : Activity() {
     }
 
     companion object {
+        private const val TAG = "HiroiLookup"
         private const val PREFS = "hiroi"
         private const val KEY_DICTIONARY = "dictionary_component"
+
+        /** True while the overlay is on screen; captures then skip Hiroi's own windows. */
+        @Volatile
+        var showing = false
+            private set
 
         fun intent(context: Context): Intent =
             Intent(context, LookupActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

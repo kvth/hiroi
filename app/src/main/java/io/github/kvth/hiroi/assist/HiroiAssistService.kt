@@ -36,9 +36,20 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
 
     override fun onShow(args: Bundle?, showFlags: Int) {
         super.onShow(args, showFlags)
+        // Android hands the next trigger to a session that is still showing (e.g. when the overlay
+        // was left with Home), so every show starts over.
+        launched = false
+        val accessibility = HiroiAccessibilityService.instance
+        Log.d(TAG, "onShow flags=$showFlags accessibility=${accessibility != null}")
         // The accessibility service sees every window (status bar, notifications, dialogs),
         // so prefer it over the assist structure, which only covers the foreground app.
-        HiroiAccessibilityService.instance?.let { launch(AccessibilityCapture.capture(it)) }
+        accessibility?.let { launch(AccessibilityCapture.capture(it)) }
+    }
+
+    override fun onHide() {
+        Log.d(TAG, "onHide")
+        launched = false
+        super.onHide()
     }
 
     override fun onHandleAssist(state: AssistState) {
@@ -49,6 +60,7 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
     private fun launch(blocks: List<TextBlock>) {
         if (launched) return
         launched = true
+        Log.d(TAG, "launch with ${blocks.size} text blocks")
         CaptureStore.update(blocks)
         try {
             CaptureStore.onClosed = { hide() }

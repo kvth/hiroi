@@ -120,32 +120,60 @@ object Yomitan {
 
     private val blockTags = setOf("div", "p", "ul", "ol", "table", "tr", "thead", "tbody", "tfoot", "details", "summary")
 
-    /** Structured content as text: block elements on their own lines, list items bulleted, ruby readings dropped. */
+    /**
+     * Structured content as text: block elements on their own lines, list items marked as the
+     * dictionary says (①, ②, ...) or bulleted, ruby readings dropped.
+     */
     private fun flatten(node: Any?, out: StringBuilder) {
         when (node) {
             is String -> out.append(node)
             is JSONArray -> for (i in 0 until node.length()) flatten(node.get(i), out)
-            is JSONObject -> when (val tag = node.optString("tag")) {
-                "br" -> out.append('\n')
-                "rt", "rp", "img" -> {}
-                "li" -> {
-                    newLine(out)
-                    out.append("• ")
-                    flatten(node.opt("content"), out)
-                    newLine(out)
+            is JSONObject -> {
+                val tag = node.optString("tag")
+                val data = node.optJSONObject("data")
+                when {
+                    tag == "br" -> out.append('\n')
+                    tag == "rt" || tag == "rp" || tag == "img" -> {}
+                    // Jitendex: the glosses of one sense, on one line like Yomitan shows them
+                    data?.optString("content") == "glossary" -> {
+                        val glosses = children(node.opt("content")).map { child ->
+                            val content = (child as? JSONObject)?.opt("content") ?: child
+                            StringBuilder().also { flatten(content, it) }.toString().trim()
+                        }
+                        out.append(glosses.filter { it.isNotEmpty() }.joinToString("; "))
+                    }
+                    // Jitendex: part-of-speech and other labels are inline spans
+                    data?.optString("class") == "tag" -> {
+                        if (out.isNotEmpty() && !out.last().isWhitespace()) out.append(' ')
+                        flatten(node.opt("content"), out)
+                    }
+                    tag == "li" -> {
+                        newLine(out)
+                        val marker = node.optJSONObject("style")?.optString("listStyleType")?.trim('"', '\'', ' ')
+                            ?.takeIf { it.isNotEmpty() && it != "none" } ?: "•"
+                        val item = StringBuilder().also { flatten(node.opt("content"), it) }.toString().trimStart()
+                        out.append(marker).append(' ').append(item)
+                        newLine(out)
+                    }
+                    tag == "td" || tag == "th" -> {
+                        flatten(node.opt("content"), out)
+                        out.append(' ')
+                    }
+                    tag in blockTags -> {
+                        newLine(out)
+                        flatten(node.opt("content"), out)
+                        newLine(out)
+                    }
+                    else -> flatten(node.opt("content"), out)
                 }
-                "td", "th" -> {
-                    flatten(node.opt("content"), out)
-                    out.append(' ')
-                }
-                in blockTags -> {
-                    newLine(out)
-                    flatten(node.opt("content"), out)
-                    newLine(out)
-                }
-                else -> flatten(node.opt("content"), out)
             }
         }
+    }
+
+    private fun children(content: Any?): List<Any> = when (content) {
+        is JSONArray -> List(content.length()) { content.get(it) }
+        null -> emptyList()
+        else -> listOf(content)
     }
 
     private fun newLine(out: StringBuilder) {

@@ -6,13 +6,16 @@ import android.graphics.Rect
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
 
-/** Collects the text of every visible node in all windows except Hiroi's own. */
+/**
+ * Collects the text of every visible node in all windows. Hiroi's own windows count too (its
+ * example section), except while the overlay is showing, so the overlay never reads itself.
+ */
 object AccessibilityCapture {
     fun capture(service: AccessibilityService): List<TextBlock> {
         val out = mutableListOf<TextBlock>()
         for (window in service.windows) {
             val root = window.root ?: continue
-            if (root.packageName == service.packageName) continue
+            if (root.packageName == service.packageName && LookupActivity.showing) continue
             collect(root, out)
         }
         return out
