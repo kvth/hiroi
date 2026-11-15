@@ -1,0 +1,7 @@
+# Keep the build context (COPY . /app) small and free of host build state.
+.git
+build
+app/build
+.gradle
+.kotlin
+local.properties

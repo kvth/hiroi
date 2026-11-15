@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Text lines with a selection box over the middle one. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,38h40v5h-40z M34,64h32v5h-32z" />
+    <path
+        android:fillColor="#7FB2FF"
+        android:pathData="M38,51h32v5h-32z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#7FB2FF"
+        android:strokeWidth="2.5"
+        android:pathData="M34,47h40v13h-40z" />
+</vector>

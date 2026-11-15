@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hiroi</string>
+    <string name="accessibility_label">Hiroi screen text</string>
+    <string name="accessibility_description">Reads the text currently on screen when you press the accessibility button or invoke Hiroi as assistant, so you can copy it or look it up. Nothing is stored or sent anywhere.</string>
+
+    <string name="setup_intro">Hiroi grabs the text on your screen so you can copy it or send it to your dictionary app, even where an app doesn\'t let you select text.</string>
+    <string name="step_accessibility">1. Turn on the accessibility service</string>
+    <string name="step_accessibility_hint">Sideloaded app? If the switch is greyed out, open App info, tap ⋮ and choose \"Allow restricted settings\" first.</string>
+    <string name="step_assistant">2. Optional: make Hiroi your digital assistant app</string>
+    <string name="step_assistant_hint">Then long-pressing the power button (or swiping up from a bottom corner) opens Hiroi. Enable \"Use text from screen\" in the same settings page.</string>
+    <string name="step_usage">How to use</string>
+    <string name="step_dictionaries">3. Dictionaries</string>
+    <string name="step_dictionaries_hint">Import Yomitan dictionaries (.zip), the same files desktop Yomitan uses: e.g. Jitendex or JMdict for definitions, JPDB for frequency, Kanjium for pitch accent, KANJIDIC for kanji. Dictionaries imported first are shown first.</string>
+    <string name="import_dictionary">Import dictionary (.zip)</string>
+    <string name="import_copying">Reading file…</string>
+    <string name="import_done">Imported %s</string>
+    <string name="import_failed">Import failed: %s</string>
+    <string name="no_dictionaries_installed">No dictionaries yet.</string>
+    <string name="remove">Remove</string>
+    <string name="remove_confirm">Remove %s?</string>
+    <string name="count_terms">%d terms</string>
+    <string name="count_meta">%d frequency/pitch</string>
+    <string name="count_kanji">%d kanji</string>
+    <string name="usage_hint">Trigger Hiroi with the accessibility button, the accessibility shortcut, or the assistant gesture. Tap a highlighted box, then tap a word to look it up in your dictionaries. Long-press to select text yourself; Copy and \"Look up\" (which opens a dictionary app) act on the selection. Long-press \"Look up\" to pick a different app.</string>
+    <string name="open_accessibility">Accessibility settings</string>
+    <string name="open_app_info">App info</string>
+    <string name="open_assistant">Digital assistant settings</string>
+    <string name="status_on">✓ enabled</string>
+    <string name="status_off">✗ not enabled</string>
+
+    <string name="hint_tap">Tap a box to read it · %d text blocks found</string>
+    <string name="hint_none">No text found. Is the Hiroi accessibility service enabled?</string>
+    <string name="copy">Copy</string>
+    <string name="look_up">Look up</string>
+    <string name="all">All</string>
+    <string name="close">Close</string>
+    <string name="copied">Copied</string>
+    <string name="choose_dictionary">Look up with</string>
+    <string name="no_dictionaries">No dictionaries installed. Import a Yomitan dictionary in the Hiroi app.</string>
+    <string name="no_match">No dictionary entry found</string>
+    <string name="lookup_failed">Lookup failed: %s</string>
+    <string name="no_dictionary">No dictionary app found that supports text selection lookups</string>
+</resources>

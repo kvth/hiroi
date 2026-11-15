@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:recognitionService="io.github.kvth.hiroi.assist.StubRecognitionService"
+    android:sessionService="io.github.kvth.hiroi.assist.HiroiSessionService"
+    android:settingsActivity="io.github.kvth.hiroi.MainActivity"
+    android:supportsAssist="true" />

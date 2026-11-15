@@ -1,0 +1,59 @@
+# Builds the Hiroi APK without installing the Android SDK on the host.
+# Driven by podman-build-apk.sh, which runs
+#   podman build --target out -o type=local,dest=<dir> ...
+# so the APK is exported straight to the host with no `podman run`.
+#
+# Stages: toolchain (JDK + Android SDK, cached) -> build (copies the checkout
+# in, runs the unit tests and builds) -> out (scratch, holds only the APK).
+#
+# Versions match app/build.gradle.kts (compileSdk 35) and the build-tools
+# that AGP 8.7 defaults to.
+
+ARG BASE_IMAGE=docker.io/library/eclipse-temurin:17-jdk-jammy
+ARG ANDROID_CMDLINE_TOOLS_URL=https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+ARG ANDROID_PLATFORM=android-35
+ARG ANDROID_BUILD_TOOLS=34.0.0
+
+FROM ${BASE_IMAGE} AS toolchain
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    ANDROID_HOME=/opt/android-sdk
+ENV PATH="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl unzip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG ANDROID_CMDLINE_TOOLS_URL
+ARG ANDROID_PLATFORM
+ARG ANDROID_BUILD_TOOLS
+RUN mkdir -p "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && curl -fsSL -o /tmp/cmdline-tools.zip "${ANDROID_CMDLINE_TOOLS_URL}" \
+    && unzip -q /tmp/cmdline-tools.zip -d "${ANDROID_SDK_ROOT}/cmdline-tools" \
+    && mv "${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools" "${ANDROID_SDK_ROOT}/cmdline-tools/latest" \
+    && rm /tmp/cmdline-tools.zip \
+    && yes | sdkmanager --licenses > /dev/null \
+    && sdkmanager \
+        "platforms;${ANDROID_PLATFORM}" \
+        "build-tools;${ANDROID_BUILD_TOOLS}" > /dev/null
+
+WORKDIR /app
+
+FROM toolchain AS build
+
+COPY . /app
+
+# Cache mounts survive across builds but aren't part of any layer:
+#   /root/.gradle   Gradle distribution + dependency downloads
+#   /root/.android  debug.keystore, so every build is signed with the same
+#                   key and installs over the previous one
+RUN --mount=type=cache,target=/root/.gradle \
+    --mount=type=cache,target=/root/.android \
+    set -eux; \
+    ./gradlew --no-daemon testDebugUnitTest assembleDebug; \
+    mkdir /out; \
+    cp app/build/outputs/apk/debug/app-debug.apk /out/hiroi-debug.apk
+
+FROM scratch AS out
+COPY --from=build /out/ /
