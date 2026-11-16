@@ -39,6 +39,9 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- "Open with" / "Share" a Yomitan dictionary zip to import it -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
@@ -48,6 +51,19 @@
                 <data android:scheme="content" />
                 <data android:mimeType="application/zip" />
                 <data android:mimeType="application/x-zip-compressed" />
+            </intent-filter>
+        </activity>
+
+        <!-- Dictionary search; also "Hiroi search" in other apps' text selection menu -->
+        <activity
+            android:name=".SearchActivity"
+            android:exported="true"
+            android:label="@string/search_label"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
 

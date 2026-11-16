@@ -48,6 +48,12 @@ node scripts/update-yomitan-transforms.mjs 26.11.2.0
 
 Not supported yet: images in definitions, tag descriptions (`tag_bank`), kanji frequencies (`kanji_meta_bank`), and reordering dictionaries.
 
+## Search
+
+*Search dictionaries* on the main screen (or long-press Hiroi's launcher icon → *Search*) opens a search page like Yomitan's. Type or paste Japanese and the results come up as you type. Romaji is searched as kana, as in Yomitan's search box: `taberu` → たべる, upper case for katakana (`TEREBI` → テレビ), `nn`/`n'` for ん, `-` for ー; the **a→あ** button switches that off. The results are for the text from its first character, so a sentence gives its first word and a conjugated form its dictionary form (食べさせられた → 食べる). The text is shown below the search box too, with the matched word highlighted and the words you have in Anki marked; tap any character in it to look up the word starting there. Results look and work as in the overlay, with ＋ Anki and Open in Anki (the card's sentence is the searched text).
+
+Other apps can send text there: select it and choose **Hiroi search** in the selection menu (Android's `PROCESS_TEXT`, like the dictionary apps Hiroi's own *Look up* offers).
+
 ## OCR
 
 Apps don't expose text inside images; at most they describe the picture (Instagram: 写真、…), which doesn't stop Hiroi from reading the text in it. So as soon as the overlay opens, Hiroi reads the screenshot it took on trigger with Google ML Kit's on-device Japanese recognizer, in the background. Japanese lines it finds in images are added as dashed boxes when it's done, usually within a second, with the recognized text drawn over the picture where it was found. The other boxes can be used meanwhile. If you tap an image before then, the word under your tap is looked up once its line arrives. Everything runs on the phone; the model is bundled, so it needs neither a network connection nor Play Services.

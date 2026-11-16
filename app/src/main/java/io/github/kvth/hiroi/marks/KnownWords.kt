@@ -80,6 +80,15 @@ object KnownWords {
         return matcher
     }
 
+    /** The words from Anki in [text], in their rules' colours; none where marking is off for [app]. Call it off the main thread. */
+    fun marksIn(context: Context, text: String, app: String? = null): List<MarkedTextView.Mark> {
+        val settings = MarkSettings(context)
+        if (settings.isOffFor(app)) return emptyList()
+        val matcher = matcher(context, settings) ?: return emptyList()
+        val colors = settings.rules.filter { it.enabled }.associate { it.id to it.argb }
+        return matcher.find(text).mapNotNull { m -> colors[m.entry.ruleId]?.let { MarkedTextView.Mark(m.start, m.end, it) } }
+    }
+
     /** Syncs when the last sync is older than the setting (if marking is on at all). */
     fun syncIfDue(context: Context) {
         val settings = MarkSettings(context)

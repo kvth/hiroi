@@ -64,6 +64,7 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.open_assistant).setOnClickListener {
             open(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS), Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
         }
+        findViewById<Button>(R.id.open_search).setOnClickListener { startActivity(SearchActivity.intent(this)) }
         findViewById<Button>(R.id.import_dictionary).setOnClickListener {
             // Files apps disagree on the zip MIME type, so accept anything and let the import check it.
             val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")

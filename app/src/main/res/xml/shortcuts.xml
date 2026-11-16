@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the launcher icon: Search -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutId="search"
+        android:shortcutLongLabel="@string/search_title"
+        android:shortcutShortLabel="@string/search_short">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="io.github.kvth.hiroi.SearchActivity"
+            android:targetPackage="io.github.kvth.hiroi" />
+    </shortcut>
+</shortcuts>
