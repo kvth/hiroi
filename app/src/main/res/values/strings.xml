@@ -57,6 +57,7 @@
     <string name="anki_add">＋ Anki</string>
     <string name="anki_adding">Adding…</string>
     <string name="anki_added">✓ Added</string>
+    <string name="anki_in_deck">✓ in Anki</string>
     <string name="anki_duplicate">Already in Anki</string>
     <string name="anki_add_failed">Couldn\'t add the card: %s</string>
     <string name="step_example">5. Try it</string>

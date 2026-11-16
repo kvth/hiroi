@@ -32,6 +32,12 @@ The bottom of the app's setup screen has Japanese example sentences to try Hiroi
 
 Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone. Dictionaries imported first are shown first.
 
+Results look like Yomitan's popup:
+- the headword with furigana, then tags for the inflection, Anki status, frequencies and pitch accent,
+- the definitions, numbered and labelled with their dictionary, styled by the dictionary's own `styles.css` as in Yomitan (Jitendex's coloured labels and example-sentence boxes, for instance).
+
+The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles were supported need importing again to get theirs.
+
 A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `app/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
 
 To move to a newer Yomitan release:

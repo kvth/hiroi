@@ -75,6 +75,8 @@ def main():
         z.writestr("term_bank_1.json", json.dumps(terms, ensure_ascii=False))
         z.writestr("term_meta_bank_1.json", json.dumps(meta, ensure_ascii=False))
         z.writestr("kanji_bank_1.json", json.dumps(KANJI, ensure_ascii=False))
+        if "styles.css" in source.namelist():  # how Jitendex styles its definitions
+            z.writestr("styles.css", source.read("styles.css"))
     print(f"{out}: {len(terms)} Jitendex entries for {len(wanted)} words, {out.stat().st_size // 1024} KB")
 
 

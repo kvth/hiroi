@@ -156,7 +156,7 @@ object Markers {
     private fun ranks(term: TermGroup): List<Int>? =
         frequencyList(term).mapNotNull { it.second.value?.takeIf { value -> value > 0 } }.takeIf { it.isNotEmpty() }
 
-    private fun pitches(term: TermGroup): List<Int> =
+    fun pitches(term: TermGroup): List<Int> =
         term.meta.mapNotNull { Yomitan.pitch(it, term.reading) }
             .flatMap { Regex("\\[(\\d+)]").findAll(it).map { match -> match.groupValues[1].toInt() } }
             .distinct()
@@ -180,7 +180,7 @@ object Markers {
     }
 
     /** The reading with the high part overlined and ꜜ where the pitch drops. */
-    private fun pitchHtml(reading: String, position: Int): String {
+    fun pitchHtml(reading: String, position: Int): String {
         val morae = morae(reading)
         val (highFrom, highTo) = when (position) {
             0 -> 1 to morae.size

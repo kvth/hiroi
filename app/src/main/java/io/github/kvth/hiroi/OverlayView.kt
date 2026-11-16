@@ -34,6 +34,13 @@ class OverlayView(
         selected = keep
     }
 
+    /** The looked-up word's characters on screen, one rectangle per line. */
+    var highlight: List<RectF> = emptyList()
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     var selected: TextBlock? = null
         set(value) {
             field = value
@@ -52,6 +59,8 @@ class OverlayView(
     private val ocrOutline = Paint(outline).apply { pathEffect = DashPathEffect(floatArrayOf(6 * dp, 4 * dp), 0f) }
     private val fill = Paint().apply { color = 0x1A4A90FF }
     private val selectedFill = Paint().apply { color = 0x664A90FF }
+    private val highlightFill = Paint().apply { color = 0x66FFB300 }
+    private val highlightLine = Paint().apply { color = 0xFFFF8F00.toInt() }
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(0x33000000)
@@ -62,6 +71,12 @@ class OverlayView(
             rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
             canvas.drawRoundRect(rect, radius, radius, if (block === selected) selectedFill else fill)
             canvas.drawRoundRect(rect, radius, radius, if (block.ocr) ocrOutline else outline)
+        }
+        for (line in highlight) {
+            rect.set(line)
+            rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
+            canvas.drawRect(rect, highlightFill)
+            canvas.drawRect(rect.left, rect.bottom - 2 * dp, rect.right, rect.bottom, highlightLine)
         }
     }
 

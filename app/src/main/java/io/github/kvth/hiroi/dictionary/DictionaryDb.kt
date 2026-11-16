@@ -12,7 +12,7 @@ data class DictionaryInfo(val id: Long, val title: String, val revision: String,
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 1), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 2), DictionaryStore {
 
     init {
         setWriteAheadLoggingEnabled(true) // lookups keep working during an import
@@ -21,7 +21,7 @@ class DictionaryDb private constructor(context: Context) :
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
-                "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0)",
+                "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT)",
         )
         db.execSQL(
             "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
@@ -35,7 +35,16 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX kanji_character ON kanji (character)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        // 2: the dictionary's styles.css, which Yomitan applies to its definitions
+        if (oldVersion < 2) db.execSQL("ALTER TABLE dictionaries ADD COLUMN styles TEXT")
+    }
+
+    /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
+    fun styles(): Map<String, String> =
+        readableDatabase.rawQuery("SELECT title, styles FROM dictionaries WHERE styles IS NOT NULL", null).use { c ->
+            buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) }
+        }
 
     fun dictionaries(): List<DictionaryInfo> =
         readableDatabase.rawQuery("SELECT id, title, revision, terms, meta, kanji FROM dictionaries ORDER BY id", null).use { c ->
@@ -63,6 +72,7 @@ class DictionaryDb private constructor(context: Context) :
                 ContentValues().apply {
                     put("title", index.title)
                     put("revision", index.revision)
+                    file.getEntry("styles.css")?.let { put("styles", file.getInputStream(it).reader().readText()) }
                 },
             )
             try {

@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.RectF
 import android.graphics.Insets
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -26,6 +27,8 @@ import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowInsets
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -39,7 +42,6 @@ import io.github.kvth.hiroi.anki.DuplicateNoteException
 import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.LookupResult
-import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Translator
 import io.github.kvth.hiroi.ocr.ScreenOcr
 import java.util.concurrent.ExecutorService
@@ -62,7 +64,12 @@ class LookupActivity : Activity() {
     private val dictionaries by lazy { DictionaryDb.get(this) }
     private val translator by lazy { Translator(dictionaries) }
     private val worker: ExecutorService = Executors.newSingleThreadExecutor()
-    private lateinit var formatter: ResultsFormatter
+    private lateinit var resultsHtml: ResultsHtml
+    private lateinit var resultsWeb: WebView
+    private lateinit var resultsWebFrame: FrameLayout
+    private var shownFound: Lookup.Found? = null
+    private var shownBlock: TextBlock? = null // the box whose text the panel shows, for the on-screen highlight
+    private val dictionaryStyles by lazy { dictionaries.styles() } // read on the lookup thread
     private var lookupGeneration = 0
 
     private val dp by lazy { resources.displayMetrics.density }
@@ -79,8 +86,14 @@ class LookupActivity : Activity() {
         // Edge-to-edge is the default from Android 15 on, but still has to be requested on 14.
         @Suppress("DEPRECATION")
         window.setDecorFitsSystemWindows(false)
-        // Theme colours are resolved here; the formatter itself runs on the lookup thread.
-        formatter = ResultsFormatter(themeColor(android.R.attr.textColorSecondary), themeColor(android.R.attr.colorAccent))
+        // Theme colours are resolved here; the HTML itself is made on the lookup thread.
+        resultsHtml = ResultsHtml(
+            ResultsHtml.Colors(
+                css(themeColor(android.R.attr.textColorPrimary)),
+                css(themeColor(android.R.attr.textColorSecondary)),
+                css(themeColor(android.R.attr.colorAccent)),
+            ),
+        )
         setContentView(buildContent())
         startScan()
         showHint()
@@ -133,6 +146,24 @@ class LookupActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(0, (8 * dp).toInt(), 0, 0)
         }
+        resultsWeb = WebView(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            // Only Hiroi's own HTML: nothing from the network or files, script just for the Anki buttons.
+            settings.javaScriptEnabled = true
+            settings.blockNetworkLoads = true
+            settings.allowFileAccess = false
+            settings.allowContentAccess = false
+            addJavascriptInterface(AnkiBridge(), "Hiroi")
+        }
+        val maxResultsHeight = (resources.displayMetrics.heightPixels * 0.45f).toInt()
+        resultsWebFrame = object : FrameLayout(this) {
+            override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) = super.onMeasure(
+                widthMeasureSpec,
+                MeasureSpec.makeMeasureSpec(maxResultsHeight, MeasureSpec.AT_MOST),
+            )
+        }
+        resultsWebFrame.addView(resultsWeb, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        resultsWebFrame.visibility = View.GONE
         resultsScroll = maxHeightScrollView(0.4f)
         resultsScroll.addView(resultsList)
         resultsScroll.visibility = View.GONE
@@ -164,6 +195,7 @@ class LookupActivity : Activity() {
             setPadding(pad, (12 * dp).toInt(), pad, (4 * dp).toInt())
             addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(resultsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(resultsWebFrame, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(buttons, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
         root.addView(panel)
@@ -242,13 +274,8 @@ class LookupActivity : Activity() {
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
                             Lookup.Message(getString(R.string.no_match))
                         } else {
-                            val anki = ankiStatus(result)
-                            Lookup.Found(
-                                result, text,
-                                sections = result.terms.map { Section(it, formatter.header(it, anki), formatter.body(it)) },
-                                kanji = formatter.kanji(result),
-                                error = anki?.error?.let(formatter::error),
-                            )
+                            val cards = AnkiSettings(this).cardFormat.complete
+                            Lookup.Found(result, text, resultsHtml.document(result, ankiStatus(result), dictionaryStyles, cards))
                         }
                     }
                 }
@@ -275,19 +302,11 @@ class LookupActivity : Activity() {
         }
     }
 
-    private class Section(val term: TermGroup, val header: CharSequence, val body: CharSequence)
-
     private sealed interface Lookup {
         class Message(val text: String) : Lookup
 
-        /** [text] is the panel text the lookup ran on (for the card's sentence). */
-        class Found(
-            val result: LookupResult,
-            val text: String,
-            val sections: List<Section>,
-            val kanji: CharSequence,
-            val error: CharSequence?,
-        ) : Lookup
+        /** [text] is the panel text the lookup ran on (for a card's sentence); [html] the results page. */
+        class Found(val result: LookupResult, val text: String, val html: String) : Lookup
     }
 
     private fun showLookup(lookup: Lookup) {
@@ -298,55 +317,61 @@ class LookupActivity : Activity() {
                 // while the text has focus, which it lacks when the tap was on a box.
                 textView.requestFocus()
                 Selection.setSelection(textView.text as Spannable, lookup.result.start, lookup.result.end)
-                showFound(lookup)
+                highlightOnScreen(lookup.result.start, lookup.result.end)
+                shownFound = lookup
+                resultsScroll.visibility = View.GONE
+                resultsWebFrame.visibility = View.VISIBLE
+                resultsWeb.loadDataWithBaseURL(null, lookup.html, "text/html", "utf-8", null)
             }
         }
     }
 
     private fun showResultsText(text: CharSequence) {
+        shownFound = null
+        resultsWebFrame.visibility = View.GONE
         resultsList.removeAllViews()
-        resultsList.addView(resultText(text))
+        resultsList.addView(TextView(this).apply {
+            setTextIsSelectable(true)
+            textSize = 16f
+            this.text = text
+        })
         resultsScroll.visibility = View.VISIBLE
         resultsScroll.scrollTo(0, 0)
     }
 
-    /** Per word: headword and reading with an "＋ Anki" button if cards are set up, then the definitions. */
-    private fun showFound(found: Lookup.Found) {
-        resultsList.removeAllViews()
-        found.error?.let { resultsList.addView(resultText(it)) }
-        val canAddCards = AnkiSettings(this).cardFormat.complete
-        for ((i, section) in found.sections.withIndex()) {
-            val header = LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                if (i > 0) setPadding(0, (12 * dp).toInt(), 0, 0)
-                addView(TextView(this@LookupActivity).apply { text = section.header }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
-                if (canAddCards) addView(addCardButton(section.term, found))
-            }
-            resultsList.addView(header)
-            resultsList.addView(resultText(section.body))
+    /** Marks the matched characters in the box over the app too, where their positions are known. */
+    private fun highlightOnScreen(start: Int, end: Int) {
+        val block = shownBlock
+        val characters = block?.characters
+        if (block == null || characters == null) {
+            overlay.highlight = emptyList()
+            return
         }
-        if (found.kanji.isNotEmpty()) resultsList.addView(resultText(found.kanji).apply { setPadding(0, (12 * dp).toInt(), 0, 0) })
-        resultsScroll.visibility = View.VISIBLE
-        resultsScroll.scrollTo(0, 0)
+        // One rectangle per line the word runs over.
+        val lines = mutableListOf<RectF>()
+        for (i in start until end) {
+            val rect = characters.getOrNull(block.textOffset + i) ?: continue
+            val last = lines.lastOrNull()
+            if (last != null && rect.centerY() in last.top..last.bottom) last.union(rect) else lines += RectF(rect)
+        }
+        overlay.highlight = lines
     }
 
-    private fun resultText(text: CharSequence) = TextView(this).apply {
-        setTextIsSelectable(true)
-        textSize = 16f
-        setLineSpacing(0f, 1.1f)
-        this.text = text
+    /** The results page's "＋ Anki" buttons, by result index. */
+    private inner class AnkiBridge {
+        @JavascriptInterface
+        fun addCard(index: Int) {
+            runOnUiThread { this@LookupActivity.addCard(index) }
+        }
     }
 
-    private fun addCardButton(term: TermGroup, found: Lookup.Found) =
-        Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-            setText(R.string.anki_add)
-            setOnClickListener { addCard(this, term, found) }
-        }
-
-    /** Makes a note from [term] with the card format; the button then shows how it went. */
-    private fun addCard(button: Button, term: TermGroup, found: Lookup.Found) {
-        button.isEnabled = false
-        button.setText(R.string.anki_adding)
+    /** Makes a note from result [index] with the card format; its button then shows how it went. */
+    private fun addCard(index: Int) {
+        val found = shownFound ?: return
+        val term = found.result.terms.getOrNull(index) ?: return
+        fun button(label: Int, enabled: Boolean) =
+            resultsWeb.evaluateJavascript("setCard($index, '${getString(label)}', $enabled)", null)
+        button(R.string.anki_adding, false)
         val start = found.result.start
         val data = CardData(
             term, found.text, start, start + term.source.length,
@@ -361,16 +386,18 @@ class LookupActivity : Activity() {
         worker.execute {
             val result = runCatching { CardCreator(AnkiSettings(this)).add(data, screenshot) }
             runOnUiThread {
-                if (isDestroyed) return@runOnUiThread
+                if (isDestroyed || shownFound !== found) return@runOnUiThread
                 result.fold(
-                    { button.setText(R.string.anki_added) },
+                    {
+                        button(R.string.anki_added, false)
+                        resultsWeb.evaluateJavascript("inAnki($index, '${getString(R.string.anki_in_deck)}')", null)
+                    },
                     { error ->
                         if (error is DuplicateNoteException) {
-                            button.setText(R.string.anki_duplicate)
+                            button(R.string.anki_duplicate, false)
                         } else {
                             Log.w(TAG, "Adding a card failed", error)
-                            button.isEnabled = true
-                            button.setText(R.string.anki_add)
+                            button(R.string.anki_add, true)
                             Toast.makeText(this, getString(R.string.anki_add_failed, error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
                         }
                     },
@@ -378,6 +405,8 @@ class LookupActivity : Activity() {
             }
         }
     }
+
+    private fun css(color: Int) = String.format("#%06X", color and 0xFFFFFF)
 
     /** The app's name, e.g. for the card's {document-title}; the package name if it can't be read. */
     private fun appLabel(packageName: String?): String {
@@ -427,6 +456,7 @@ class LookupActivity : Activity() {
         overlay.selected = block
         // Keep the panel away from the text being read.
         setPanelText(block.text, atTop = block.bounds.centerY() > resources.displayMetrics.heightPixels / 2, isText = true)
+        shownBlock = block
         // Look the tapped word up right away when the app reported where its characters are.
         val offset = CharacterLocator.characterAt(block, x, y)
         Log.d(TAG, "Tapped character $offset in a box")
@@ -444,7 +474,11 @@ class LookupActivity : Activity() {
     private fun setPanelText(text: String, atTop: Boolean, isText: Boolean) {
         hasText = isText
         lookupGeneration++
+        shownBlock = null
+        shownFound = null
+        overlay.highlight = emptyList()
         resultsScroll.visibility = View.GONE
+        resultsWebFrame.visibility = View.GONE
         textView.textSize = if (isText) 22f else 16f
         // The hint itself isn't selectable, so a tap on it reaches the panel, which then moves.
         textView.setTextIsSelectable(isText)
