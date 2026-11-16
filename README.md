@@ -86,7 +86,21 @@ Not supported, left empty and listed under *Cards*: custom markers from Yomitan'
 
 Words that already have a note (with the Anki check set up), and words you just added, get an **Open in Anki** button. On the phone it opens AnkiDroid's card browser on those notes. Switch that browser to *All decks* once, because AnkiDroid's link only searches the deck it last showed. With desktop Anki, AnkiConnect's `guiBrowse` opens the browser on the computer.
 
-Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote`, `storeMediaFile` and, for desktop Anki, `guiBrowse`.
+Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote`, `storeMediaFile` and, for desktop Anki, `guiBrowse` and `notesModTime`. Requests go to Anki one at a time.
+
+### Marking the words you have
+
+Like [AnkiMark](https://github.com/kvth/ankimark) does on web pages, Hiroi can mark the words you have notes for in Anki, in the boxes over the app and in the panel. *Anki → Marks…* has the same settings as AnkiMark:
+
+- **Rules**: each an Anki search plus a colour. A word gets the colour of the first enabled rule (top to bottom) that one of its notes matches. The defaults: Leech `prop:lapses>=8` (off), Mature `prop:ivl>=21`, Learning `-is:new`, New `is:new`. Add, reorder, recolour and switch rules off, add one of the examples (`is:due`, `rated:7:1`, `prop:r<0.8`, …), and **Check searches** shows each rule's number of notes or what's wrong with its search.
+- **Base filter**, put in front of every rule: usually your deck (*Use a deck…*). Until you set one, it's the deck chosen for lookups.
+- **Fields** holding the word (none: each note's first field), and a **field script**: JavaScript that gets the note and returns more words, e.g. the other spellings Yomitan's dictionaries list as "forms" in the Glossary field (the example). It runs in a WebView of its own without network access; **Test** shows the words of a few notes.
+- **Display**: background (with its strength) or underline; conjugated forms (食べなかった → 食べる, with Yomitan's deinflection rules, as for lookups); kana words in either script (ゴミ ↔ ごみ); the shortest kana-only words to mark.
+- **On / off**: everywhere, or off for single apps. In the overlay, **Marks** (next to *All* while the hint shows) has both switches, for the app the text came from, and *Sync now*.
+- **Syncing**: when the overlay opens and the last sync is older than 1, 5, 15 or 60 minutes, or only on *Sync now*. Meanwhile the overlay uses the last sync's words. A sync reads only notes that are new or edited since the last one (`notesModTime`; AnkiConnect Android lacks it, so there only new notes, plus everything once a day). The rule searches run every time, since cards change state with every review.
+- **Backup**: export and import the settings as JSON. The files are compatible with AnkiMark's in both directions; the sites AnkiMark is off for and the apps Hiroi is off for stay with each.
+
+Matching works as in AnkiMark: fields are cleaned of HTML, furigana, cloze markers and `(する)`-style parts, lists like `食べる、喰べる` are split, and the longest known word at each position wins. While the hint shows, the panel shows how much of the screen's Japanese text is marked, in characters, and how many different words that is, per rule. Boxes whose app doesn't report character positions are only marked in the panel.
 
 ## Limitations
 
@@ -117,7 +131,7 @@ scripts/emulator.sh tap 521 1398          # tap a box, then a word in the panel
 scripts/emulator.sh screenshot            # -> build/emulator/screenshot.png
 scripts/emulator.sh anki                  # AnkiDroid + AnkiConnect Android with the Lapis note type
 scripts/emulator.sh yomitan ~/Downloads/yomitan-settings.json   # take a card format from Yomitan settings
-scripts/emulator.sh fake-anki             # or: a fake AnkiConnect deck (Japanese::Core, field Word), much quicker
+scripts/emulator.sh fake-anki             # or: a fake AnkiConnect deck (Japanese::Core, field Word, cards in every state), much quicker
 scripts/emulator.sh logcat                # Hiroi's log and crashes
 ```
 

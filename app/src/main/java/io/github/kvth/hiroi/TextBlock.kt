@@ -18,6 +18,18 @@ data class TextBlock(
     val ocr: Boolean = false,
 )
 
+/** Screen rectangles of [text]'s characters [start] to [end], one per line; empty without character positions. */
+fun TextBlock.lineRects(start: Int, end: Int): List<RectF> {
+    val characters = characters ?: return emptyList()
+    val lines = mutableListOf<RectF>()
+    for (i in start until end) {
+        val rect = characters.getOrNull(textOffset + i) ?: continue
+        val last = lines.lastOrNull()
+        if (last != null && rect.centerY() in last.top..last.bottom) last.union(rect) else lines += RectF(rect)
+    }
+    return lines
+}
+
 /** Only text with Japanese in it gets a box; the rest (English labels, numbers, icons) is noise here. */
 fun TextBlock.hasJapanese() = text.any(Japanese::isJapanese)
 

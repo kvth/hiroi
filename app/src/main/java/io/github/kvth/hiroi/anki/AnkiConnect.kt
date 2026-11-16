@@ -17,9 +17,17 @@ class AnkiConnect(
     private val apiKey: String?,
     private val transport: (String) -> String,
 ) {
-    constructor(url: String, apiKey: String?) : this(apiKey, { body -> post(url, body) })
+    /** [timeoutMs]: syncs give AnkiDroid longer for big searches than a lookup waits. */
+    constructor(url: String, apiKey: String?, timeoutMs: Int = TIMEOUT_MS) : this(apiKey, { body -> post(url, body, timeoutMs) })
 
-    data class Note(val id: Long, val fields: Map<String, String>)
+    /** [fields] in the note type's order; [mod] is when it was last edited (0 if unknown). */
+    data class Note(
+        val id: Long,
+        val fields: Map<String, String>,
+        val modelName: String = "",
+        val tags: List<String> = emptyList(),
+        val mod: Long = 0,
+    )
 
     fun deckNames(): List<String> = (request("deckNames") as JSONArray).strings().sorted()
 
@@ -45,14 +53,33 @@ class AnkiConnect(
         return List(ids.length()) { ids.getLong(it) }
     }
 
-    fun notesInfo(ids: List<Long>): List<Note> = ids.chunked(BATCH).flatMap { batch ->
-        val notes = request("notesInfo", JSONObject().put("notes", JSONArray(batch))) as JSONArray
+    fun notesInfo(ids: List<Long>, batch: Int = BATCH): List<Note> = ids.chunked(batch).flatMap { chunk ->
+        val notes = request("notesInfo", JSONObject().put("notes", JSONArray(chunk))) as JSONArray
         List(notes.length()) { i ->
             val note = notes.getJSONObject(i)
             val fields = note.getJSONObject("fields")
             val names = fields.keys().asSequence().sortedBy { fields.getJSONObject(it).optInt("order") }
-            Note(note.getLong("noteId"), names.associateWith { fields.getJSONObject(it).optString("value") })
+            Note(
+                note.getLong("noteId"),
+                names.associateWith { fields.getJSONObject(it).optString("value") },
+                note.optString("modelName"),
+                note.optJSONArray("tags")?.strings().orEmpty(),
+                note.optLong("mod"),
+            )
         }
+    }
+
+    /**
+     * When each note was last edited, or null where AnkiConnect lacks notesModTime (AnkiConnect
+     * Android, old versions). An unreachable Anki still throws.
+     */
+    fun notesModTime(ids: List<Long>): Map<Long, Long>? = try {
+        ids.chunked(1000).flatMap { chunk ->
+            val mods = request("notesModTime", JSONObject().put("notes", JSONArray(chunk))) as JSONArray
+            List(mods.length()) { mods.getJSONObject(it).let { m -> m.getLong("noteId") to m.getLong("mod") } }
+        }.toMap()
+    } catch (e: AnkiException) {
+        null
     }
 
     /** Field names of (a sample of) the notes in [deck], in the order they appear. */
@@ -103,16 +130,22 @@ class AnkiConnect(
             .replace(Regex(" ?([^\\s\\[\\]]*)\\[[^\\]]*\\]"), "$1")
             .trim()
 
-        private fun post(url: String, body: String): String {
+        /**
+         * One request at a time: AnkiConnect Android hands each straight to AnkiDroid, and a sync
+         * of the marks and a lookup may ask at once.
+         */
+        private val lock = Any()
+
+        private fun post(url: String, body: String, timeoutMs: Int): String = synchronized(lock) {
             val connection = URL(url).openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = "POST"
                 connection.connectTimeout = TIMEOUT_MS
-                connection.readTimeout = TIMEOUT_MS
+                connection.readTimeout = timeoutMs
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.outputStream.use { it.write(body.toByteArray()) }
-                return connection.inputStream.bufferedReader().use { it.readText() }
+                connection.inputStream.bufferedReader().use { it.readText() }
             } finally {
                 connection.disconnect()
             }

@@ -15,4 +15,11 @@ object Japanese {
     fun toHiragana(s: String): String = buildString(s.length) {
         for (c in s) append(if (c in 'ァ'..'ヶ' || c == 'ヽ' || c == 'ヾ') c - 0x60 else c)
     }
+
+    fun toKatakana(s: String): String = buildString(s.length) {
+        for (c in s) append(if (c in 'ぁ'..'ゖ' || c == 'ゝ' || c == 'ゞ') c + 0x60 else c)
+    }
+
+    /** Hiragana, katakana and half-width katakana only. */
+    fun isKanaOnly(s: String): Boolean = s.isNotEmpty() && s.all { it in '぀'..'ヿ' || it in 'ｦ'..'ﾟ' }
 }

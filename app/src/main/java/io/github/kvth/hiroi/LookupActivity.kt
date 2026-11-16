@@ -11,7 +11,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.graphics.RectF
 import android.graphics.Insets
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -20,6 +19,9 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.text.Selection
 import android.text.Spannable
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import android.util.Log
 import android.view.GestureDetector
 import android.view.Gravity
@@ -44,6 +46,12 @@ import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Translator
+import io.github.kvth.hiroi.japanese.Japanese
+import io.github.kvth.hiroi.marks.KnownWords
+import io.github.kvth.hiroi.marks.MarkSettings
+import io.github.kvth.hiroi.marks.MarkStyle
+import io.github.kvth.hiroi.marks.MarkedTextView
+import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.ocr.ScreenOcr
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -57,10 +65,11 @@ class LookupActivity : Activity() {
     private lateinit var overlay: OverlayView
     private lateinit var panel: LinearLayout
     private lateinit var scroll: ScrollView
-    private lateinit var textView: TextView
+    private lateinit var textView: MarkedTextView
     private lateinit var resultsScroll: ScrollView
     private lateinit var resultsList: LinearLayout
     private lateinit var textActions: List<Button>
+    private lateinit var marksButton: Button
 
     private val dictionaries by lazy { DictionaryDb.get(this) }
     private val translator by lazy { Translator(dictionaries) }
@@ -81,6 +90,11 @@ class LookupActivity : Activity() {
     private var scanning = false
     private var pendingTap: Pair<Int, Int>? = null // a tap outside the boxes while scanning
     private var captureGeneration = 0 // tells a scan's result from an older capture's
+    private val marker: ExecutorService = Executors.newSingleThreadExecutor() // words from Anki to mark
+    private var markGeneration = 0
+    private var markStats: MarkStats? = null // null: nothing to mark (not synced, or off here)
+    private var marksAvailable = false // synced at least once, so the Marks button has something to switch
+    private val onKnownWordsChanged: () -> Unit = { refreshMarks() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,6 +112,9 @@ class LookupActivity : Activity() {
         setContentView(buildContent())
         startScan()
         showHint()
+        KnownWords.listeners += onKnownWordsChanged
+        refreshMarks()
+        KnownWords.syncIfDue(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -106,6 +123,8 @@ class LookupActivity : Activity() {
         overlay.blocks = CaptureStore.blocks
         startScan()
         showHint()
+        refreshMarks()
+        KnownWords.syncIfDue(this)
     }
 
     override fun onStart() {
@@ -121,6 +140,8 @@ class LookupActivity : Activity() {
     override fun onDestroy() {
         worker.shutdownNow()
         scanner.shutdownNow()
+        marker.shutdownNow()
+        KnownWords.listeners -= onKnownWordsChanged
         if (isFinishing) {
             CaptureStore.onClosed?.invoke()
             CaptureStore.onClosed = null
@@ -134,7 +155,7 @@ class LookupActivity : Activity() {
         overlay = OverlayView(this, CaptureStore.blocks, ::showBlock, ::onEmptyTap)
         root.addView(overlay, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
-        textView = TextView(this).apply {
+        textView = MarkedTextView(this).apply {
             setTextIsSelectable(true)
             textSize = 22f
             setLineSpacing(0f, 1.2f)
@@ -176,6 +197,7 @@ class LookupActivity : Activity() {
                 setOnClickListener { onClick() }
                 buttons.addView(this)
             }
+        marksButton = action(R.string.marks_button) { showMarksMenu() }
         val copy = action(R.string.copy) { copy(selectedOrAllText()) }
         val lookUp = action(R.string.look_up) { lookUp(selectedOrAllText(), choose = false) }
         lookUp.setOnLongClickListener { lookUp(selectedOrAllText(), choose = true); true }
@@ -351,20 +373,7 @@ class LookupActivity : Activity() {
 
     /** Marks the matched characters in the box over the app too, where their positions are known. */
     private fun highlightOnScreen(start: Int, end: Int) {
-        val block = shownBlock
-        val characters = block?.characters
-        if (block == null || characters == null) {
-            overlay.highlight = emptyList()
-            return
-        }
-        // One rectangle per line the word runs over.
-        val lines = mutableListOf<RectF>()
-        for (i in start until end) {
-            val rect = characters.getOrNull(block.textOffset + i) ?: continue
-            val last = lines.lastOrNull()
-            if (last != null && rect.centerY() in last.top..last.bottom) last.union(rect) else lines += RectF(rect)
-        }
-        overlay.highlight = lines
+        overlay.highlight = shownBlock?.lineRects(start, end).orEmpty()
     }
 
     /** The results page's "＋ Anki" buttons, by result index. */
@@ -480,7 +489,137 @@ class LookupActivity : Activity() {
             scanning -> getString(R.string.hint_none_scanning)
             else -> getString(R.string.hint_none)
         }
-        setPanelText(hint, atTop = hintAtTop(), isText = false)
+        setPanelText(withCoverage(hint), atTop = hintAtTop(), isText = false)
+    }
+
+    /**
+     * The hint plus how much of the screen's Japanese text is marked, in characters, as AnkiMark's
+     * popup shows it for a page: in total, and per rule with its number of different words (notes).
+     */
+    private fun withCoverage(hint: String): CharSequence {
+        val stats = markStats
+        if (!marksAvailable) return hint
+        val out = SpannableStringBuilder(hint).append('\n')
+        if (stats == null) return out.append(getString(R.string.marks_off_here))
+        if (stats.total == 0) return out.append(getString(R.string.marks_none))
+        val known = stats.rules.sumOf { it.chars }
+        out.append(getString(R.string.marks_coverage, percent(known, stats.total), stats.unique))
+        for (rule in stats.rules) {
+            out.append("  ")
+            val start = out.length
+            out.append("■")
+            out.setSpan(ForegroundColorSpan(rule.color), start, out.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            out.append(" ").append(getString(R.string.marks_rule_count, rule.name, rule.words, percent(rule.chars, stats.total)))
+        }
+        return out
+    }
+
+    private fun percent(part: Int, total: Int): String {
+        val p = part * 100.0 / total
+        return if (p > 0 && p < 1) "<1%" else "${Math.round(p)}%"
+    }
+
+    /** Per enabled rule: its colour, the Japanese characters it marks and its number of different words. */
+    private class MarkStats(val total: Int, val unique: Int, val rules: List<RuleStats>)
+
+    private class RuleStats(val name: String, val color: Int, val chars: Int, val words: Int)
+
+    /**
+     * Finds the words from Anki in every box (off the main thread: the word list may need
+     * reading first), then marks them on screen and in the panel.
+     */
+    private fun refreshMarks() {
+        val generation = ++markGeneration
+        val blocks = overlay.blocks
+        val app = CaptureStore.sourcePackage
+        marker.execute {
+            val settings = MarkSettings(this)
+            val available = KnownWords.syncInfo(this) != null
+            val matcher = if (settings.isOffFor(app)) null else KnownWords.matcher(this, settings)
+            val rules = settings.rules.filter { it.enabled }
+            val colors = rules.associate { it.id to it.argb }
+            val marks = mutableListOf<OverlayView.Mark>()
+            var stats: MarkStats? = null
+            if (matcher != null) {
+                val chars = HashMap<String, Int>()
+                val notes = HashMap<String, MutableSet<Long>>()
+                for (block in blocks) {
+                    for (m in matcher.find(block.text)) {
+                        val rule = m.entry.ruleId
+                        chars[rule] = (chars[rule] ?: 0) + block.text.substring(m.start, m.end).count(Japanese::isJapanese)
+                        notes.getOrPut(rule) { HashSet() } += m.entry.noteId
+                        val lines = block.lineRects(m.start, m.end)
+                        if (lines.isNotEmpty()) marks += OverlayView.Mark(lines, colors[rule] ?: continue)
+                    }
+                }
+                stats = MarkStats(
+                    total = blocks.sumOf { block -> block.text.count(Japanese::isJapanese) },
+                    unique = notes.values.flatten().toSet().size,
+                    rules = rules.filter { (chars[it.id] ?: 0) > 0 }.map { RuleStats(it.name, it.argb, chars.getValue(it.id), notes.getValue(it.id).size) },
+                )
+            }
+            val style = MarkStyle.of(settings)
+            runOnUiThread {
+                if (generation != markGeneration || isDestroyed) return@runOnUiThread
+                marksAvailable = available
+                markStats = stats
+                overlay.markStyle = style
+                overlay.marks = marks
+                if (hasText) markPanel() else showHint()
+            }
+        }
+    }
+
+    /** Marks the words from Anki in the panel's text too, which also covers boxes without character positions. */
+    private fun markPanel() {
+        textView.marks = emptyList()
+        if (!hasText) return
+        val text = textView.text.toString()
+        val app = CaptureStore.sourcePackage
+        marker.execute {
+            val settings = MarkSettings(this)
+            val matcher = if (settings.isOffFor(app)) null else KnownWords.matcher(this, settings)
+            val colors = settings.rules.filter { it.enabled }.associate { it.id to it.argb }
+            val marks = matcher?.find(text).orEmpty().mapNotNull { m ->
+                colors[m.entry.ruleId]?.let { MarkedTextView.Mark(m.start, m.end, it) }
+            }
+            val style = MarkStyle.of(settings)
+            runOnUiThread {
+                if (isDestroyed || !hasText || textView.text.toString() != text) return@runOnUiThread
+                textView.markStyle = style
+                textView.marks = marks
+            }
+        }
+    }
+
+    /** Switches for the marks, like AnkiMark's popup: everywhere, and for the app the text came from. */
+    private fun showMarksMenu() {
+        val settings = MarkSettings(this)
+        val app = CaptureStore.sourcePackage
+        val items = listOfNotNull(getString(R.string.marks_on), app?.let { getString(R.string.marks_on_in, appLabel(it)) })
+        val checked = booleanArrayOf(settings.enabled, app == null || app !in settings.excludedApps)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.marks_button)
+            .setMultiChoiceItems(items.toTypedArray(), checked.copyOf(items.size)) { _, which, on ->
+                if (which == 0) settings.enabled = on else settings.setOffFor(app!!, !on)
+                refreshMarks()
+            }
+            .setNeutralButton(R.string.marks_sync) { _, _ -> syncMarks() }
+            .setNegativeButton(R.string.marks_settings) { _, _ -> startActivity(Intent(this, MarksActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            .setPositiveButton(R.string.done, null)
+            .show()
+    }
+
+    private fun syncMarks() {
+        Toast.makeText(this, R.string.marks_syncing, Toast.LENGTH_SHORT).show()
+        KnownWords.sync(this) { result ->
+            val message = result.fold(
+                { getString(R.string.marks_synced, it.words, it.notes) },
+                { getString(R.string.marks_sync_failed, it.message ?: it.javaClass.simpleName) },
+            )
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            if (!isDestroyed) refreshMarks()
+        }
     }
 
     /** The hint panel goes to the edge where it hides less of the boxes (by area). */
@@ -518,7 +657,7 @@ class LookupActivity : Activity() {
         setPanelText(lines.joinToString("\n"), atTop = false, isText = lines.isNotEmpty())
     }
 
-    private fun setPanelText(text: String, atTop: Boolean, isText: Boolean) {
+    private fun setPanelText(text: CharSequence, atTop: Boolean, isText: Boolean) {
         hasText = isText
         lookupGeneration++
         shownBlock = null
@@ -530,7 +669,10 @@ class LookupActivity : Activity() {
         // The hint itself isn't selectable, so a tap on it reaches the panel, which then moves.
         textView.setTextIsSelectable(isText)
         textView.text = text
-        textActions.forEach { it.isEnabled = isText }
+        // The hint has nothing to copy; it gets the switches for the marks instead.
+        textActions.forEach { it.visibility = if (isText) View.VISIBLE else View.GONE }
+        marksButton.visibility = if (!isText && marksAvailable) View.VISIBLE else View.GONE
+        markPanel()
         scroll.scrollTo(0, 0)
         if (panelAtTop != atTop) {
             panelAtTop = atTop
@@ -571,6 +713,7 @@ class LookupActivity : Activity() {
     private fun scanDone(lines: List<TextBlock>) {
         scanning = false
         overlay.addBlocks(lines)
+        if (lines.isNotEmpty()) refreshMarks()
         val tap = pendingTap
         pendingTap = null
         val hit = tap?.let { (x, y) -> overlay.blockAt(x, y) }?.takeIf { it.ocr }

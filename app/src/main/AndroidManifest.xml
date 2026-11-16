@@ -4,6 +4,14 @@
     <!-- AnkiConnect: AnkiConnect Android on 127.0.0.1, or desktop Anki on the local network -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- To pick apps the marks are off for -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <!-- To open notes in AnkiDroid's card browser -->
     <queries>
         <package android:name="com.ichi2.anki" />
@@ -42,6 +50,12 @@
                 <data android:mimeType="application/x-zip-compressed" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".marks.MarksActivity"
+            android:exported="false"
+            android:label="@string/marks_title"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".LookupActivity"

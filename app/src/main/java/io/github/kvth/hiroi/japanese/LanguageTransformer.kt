@@ -97,6 +97,9 @@ class LanguageTransformer(descriptorJson: String) {
 
     fun conditionFlagsFromConditionType(conditionType: String): Int = conditionFlags[conditionType] ?: 0
 
+    /** Flags of every dictionary form (v1, v5, adj-i, ...): a result with one of them can be a word as listed. */
+    val dictionaryFormFlags: Int get() = partOfSpeechFlags.values.fold(0) { flags, flag -> flags or flag }
+
     /** Conditions without sub-conditions get one bit each; the others combine their sub-conditions' bits. */
     private fun conditionFlagsMap(conditions: List<JSONObject>): Map<String, Int> {
         val flags = HashMap<String, Int>()

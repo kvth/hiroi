@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import io.github.kvth.hiroi.marks.MarkStyle
 
 /** Dims the screen and outlines every captured text block; reports which block was tapped. */
 @SuppressLint("ViewConstructor")
@@ -47,6 +48,22 @@ class OverlayView(
             invalidate()
         }
 
+    /** A word marked in its rule's [color] (from Anki, see marks/), one rectangle per line. */
+    class Mark(val lines: List<RectF>, val color: Int)
+
+    var marks: List<Mark> = emptyList()
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** How marks look: a background of [opacity] percent, or an underline. */
+    var markStyle = MarkStyle()
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     private val dp = resources.displayMetrics.density
     private val screenOffset = IntArray(2)
     private val rect = RectF()
@@ -64,6 +81,7 @@ class OverlayView(
         color = 0xFF1A1A1A.toInt()
         textAlign = Paint.Align.CENTER
     }
+    private val markPaint = Paint()
     private val highlightFill = Paint().apply { color = 0x66FFB300 }
     private val highlightLine = Paint().apply { color = 0xFFFF8F00.toInt() }
 
@@ -77,6 +95,13 @@ class OverlayView(
             if (block.ocr) drawRecognizedText(canvas, block)
             canvas.drawRoundRect(rect, radius, radius, if (block === selected) selectedFill else fill)
             canvas.drawRoundRect(rect, radius, radius, if (block.ocr) ocrOutline else outline)
+        }
+        for (mark in marks) {
+            for (line in mark.lines) {
+                rect.set(line)
+                rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
+                markStyle.draw(canvas, rect, mark.color, markPaint, dp)
+            }
         }
         for (line in highlight) {
             rect.set(line)

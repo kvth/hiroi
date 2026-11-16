@@ -40,6 +40,7 @@ import io.github.kvth.hiroi.anki.Markers
 import io.github.kvth.hiroi.anki.YomitanSettings
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
+import io.github.kvth.hiroi.marks.MarksActivity
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.Executors
@@ -140,6 +141,7 @@ class MainActivity : Activity() {
             }
         }
         setUpCards()
+        findViewById<Button>(R.id.marks_open).setOnClickListener { startActivity(Intent(this, MarksActivity::class.java)) }
         showAnkiChoices()
     }
 

@@ -34,7 +34,7 @@ class AnkiSettings(context: Context) {
         get() = prefs.getBoolean("word_audio", true)
         set(value) = prefs.edit().putBoolean("word_audio", value).apply()
 
-    fun client() = AnkiConnect(url, apiKey.ifEmpty { null })
+    fun client(timeoutMs: Int = 3000) = AnkiConnect(url, apiKey.ifEmpty { null }, timeoutMs)
 
     companion object {
         /** AnkiConnect Android on the same phone; desktop Anki's AnkiConnect uses the same port */
