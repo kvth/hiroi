@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardCreator
@@ -39,7 +40,10 @@ class DictionaryLookup(
          * [text] is the text the lookup ran on (for a card's sentence), [html] the results page,
          * [notes] each result's Anki notes (by index), growing as cards are added.
          */
-        class Found(val result: LookupResult, val text: String, val html: String, val notes: MutableMap<Int, MutableList<Long>>) : Lookup
+        class Found(val result: LookupResult, val text: String, val html: String, val notes: MutableMap<Int, MutableList<Long>>) : Lookup {
+            /** Each result's existing notes with the same first field (Yomitan's duplicate check), by index. */
+            val duplicates = HashMap<Int, List<Long>>()
+        }
     }
 
     private val worker = Executors.newSingleThreadExecutor()
@@ -67,6 +71,22 @@ class DictionaryLookup(
         settings.allowFileAccess = false
         settings.allowContentAccess = false
         addJavascriptInterface(AnkiBridge(), "Hiroi")
+        webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String?) {
+                loaded = true
+                pending.forEach { view.evaluateJavascript(it, null) }
+                pending.clear()
+            }
+        }
+    }
+
+    /** Whether the shown results page has loaded; scripts for it wait in [pending] until it has. */
+    private var loaded = false
+    private val pending = mutableListOf<String>()
+
+    /** Runs [script] on the results page once it's loaded (a duplicate check can finish before). */
+    private fun onPage(script: String) {
+        if (loaded) web.evaluateJavascript(script, null) else pending += script
     }
 
     /**
@@ -121,7 +141,59 @@ class DictionaryLookup(
     /** Shows [found] in [web]. */
     fun show(found: Lookup.Found) {
         shown = found
+        loaded = false
+        pending.clear()
         web.loadDataWithBaseURL(null, found.html, "text/html", "utf-8", null)
+        checkDuplicates(found)
+    }
+
+    /**
+     * Looks for notes each result would duplicate, after the results are shown, and changes their
+     * buttons as Yomitan does: "Already in Anki" (prevent), "Overwrite" or "＋ Anki again" (add
+     * another), with "Open in Anki" on the existing notes.
+     */
+    private fun checkDuplicates(found: Lookup.Found) {
+        val settings = AnkiSettings(activity)
+        val format = settings.cardFormat
+        if (!format.complete || !format.checkForDuplicates) return
+        val cards = found.result.terms.indices.map { cardData(found, it) }
+        worker.execute {
+            val duplicates = runCatching { CardCreator(settings).duplicates(cards) }
+                .onFailure { Log.w(TAG, "Duplicate check failed", it) }
+                .getOrNull() ?: return@execute
+            activity.runOnUiThread {
+                if (activity.isDestroyed || shown !== found) return@runOnUiThread
+                for ((i, ids) in duplicates.withIndex()) {
+                    if (ids.isEmpty()) continue
+                    found.duplicates[i] = ids
+                    val notes = found.notes.getOrPut(i) { mutableListOf() }
+                    notes += ids.filter { it !in notes }
+                    val (label, enabled) = when (format.duplicateBehavior) {
+                        "prevent" -> R.string.anki_duplicate to false
+                        "overwrite" -> R.string.anki_overwrite to true
+                        else -> R.string.anki_add_again to true
+                    }
+                    val open = if (notes.size > 1) activity.getString(R.string.anki_open_notes, notes.size) else activity.getString(R.string.anki_open)
+                    onPage("inAnki($i, '${activity.getString(R.string.anki_in_deck)}')")
+                    onPage("duplicate($i, '${activity.getString(label)}', $enabled, '$open')")
+                }
+            }
+        }
+    }
+
+    /** What a card from result [index] is made of. */
+    private fun cardData(found: Lookup.Found, index: Int): CardData {
+        val term = found.result.terms[index]
+        val start = found.result.start
+        return CardData(
+            term, found.text, start, start + term.source.length,
+            documentTitle = documentTitle(),
+            furigana = { sentence ->
+                Furigana.forText(sentence) { text, i ->
+                    translator.lookUp(text, i)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
+                }
+            },
+        )
     }
 
     fun close() {
@@ -154,32 +226,33 @@ class DictionaryLookup(
         }
     }
 
-    /** Makes a note from result [index] with the card format; its button then shows how it went. */
+    /**
+     * Makes a note from result [index] with the card format, or overwrites the note it duplicates
+     * if the format says so; its button then shows how it went.
+     */
     private fun addCard(index: Int) {
         val found = shown ?: return
-        val term = found.result.terms.getOrNull(index) ?: return
+        if (index !in found.result.terms.indices) return
         fun button(label: Int, enabled: Boolean) =
             web.evaluateJavascript("setCard($index, '${activity.getString(label)}', $enabled)", null)
-        button(R.string.anki_adding, false)
-        val start = found.result.start
-        val data = CardData(
-            term, found.text, start, start + term.source.length,
-            documentTitle = documentTitle(),
-            furigana = { sentence ->
-                Furigana.forText(sentence) { text, i ->
-                    translator.lookUp(text, i)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
-                }
-            },
-        )
+        val settings = AnkiSettings(activity)
+        val format = settings.cardFormat
+        val overwrite = found.duplicates[index]?.firstOrNull()?.takeIf { format.checkForDuplicates && format.duplicateBehavior == "overwrite" }
+        button(if (overwrite != null) R.string.anki_overwriting else R.string.anki_adding, false)
+        val data = cardData(found, index)
         val screenshot = screenshot()
         worker.execute {
-            val result = runCatching { CardCreator(AnkiSettings(activity)).add(data, screenshot) }
+            val result = runCatching {
+                val creator = CardCreator(settings)
+                if (overwrite != null) overwrite.also { creator.overwrite(it, data, screenshot) } else creator.add(data, screenshot)
+            }
             activity.runOnUiThread {
                 if (activity.isDestroyed || shown !== found) return@runOnUiThread
                 result.fold(
                     { noteId ->
-                        found.notes.getOrPut(index) { mutableListOf() } += noteId
-                        button(R.string.anki_added, false)
+                        val notes = found.notes.getOrPut(index) { mutableListOf() }
+                        if (noteId !in notes) notes += noteId
+                        button(if (overwrite != null) R.string.anki_overwritten else R.string.anki_added, false)
                         web.evaluateJavascript("inAnki($index, '${activity.getString(R.string.anki_in_deck)}')", null)
                     },
                     { error ->
@@ -187,7 +260,7 @@ class DictionaryLookup(
                             button(R.string.anki_duplicate, false)
                         } else {
                             Log.w(TAG, "Adding a card failed", error)
-                            button(R.string.anki_add, true)
+                            button(if (overwrite != null) R.string.anki_overwrite else R.string.anki_add, true)
                             toast(activity.getString(R.string.anki_add_failed, error.message ?: error.javaClass.simpleName))
                         }
                     },

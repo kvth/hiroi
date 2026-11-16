@@ -37,8 +37,19 @@ class AnkiConnect(
         (request("modelFieldNames", JSONObject().put("modelName", model)) as JSONArray).strings()
 
     /** Whether [note] (addNote's note object) would be added; false for a duplicate of its first field. */
-    fun canAddNote(note: JSONObject): Boolean =
-        (request("canAddNotes", JSONObject().put("notes", JSONArray().put(note))) as JSONArray).optBoolean(0)
+    fun canAddNote(note: JSONObject): Boolean = canAddNotes(listOf(note)).single()
+
+    /** [canAddNote] for several notes in one request. */
+    fun canAddNotes(notes: List<JSONObject>): List<Boolean> {
+        if (notes.isEmpty()) return emptyList()
+        val result = request("canAddNotes", JSONObject().put("notes", JSONArray(notes))) as JSONArray
+        return List(notes.size) { result.optBoolean(it) }
+    }
+
+    /** Replaces the given fields of note [id]; the others stay. */
+    fun updateNoteFields(id: Long, fields: Map<String, String>) {
+        request("updateNoteFields", JSONObject().put("note", JSONObject().put("id", id).put("fields", JSONObject(fields as Map<*, *>))))
+    }
 
     /** Adds [note] and returns its id. */
     fun addNote(note: JSONObject): Long =

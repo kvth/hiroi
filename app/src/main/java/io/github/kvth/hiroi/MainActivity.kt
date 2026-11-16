@@ -26,12 +26,14 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import io.github.kvth.hiroi.anki.AnkiConnect
 import io.github.kvth.hiroi.anki.AnkiSettings
@@ -183,14 +185,74 @@ class MainActivity : Activity() {
             setText(anki.cardFormat.tags.joinToString(" "))
             onChange { text -> anki.cardFormat = anki.cardFormat.copy(tags = text.split(Regex("\\s+")).filter { it.isNotEmpty() }) }
         }
-        findViewById<CheckBox>(R.id.cards_prevent_duplicates).apply {
-            isChecked = anki.cardFormat.preventDuplicates
-            setOnCheckedChangeListener { _, checked -> anki.cardFormat = anki.cardFormat.copy(preventDuplicates = checked) }
+        findViewById<CheckBox>(R.id.cards_check_duplicates).setOnCheckedChangeListener { _, checked ->
+            anki.cardFormat = anki.cardFormat.copy(checkForDuplicates = checked)
+            showDuplicateOptions()
         }
+        findViewById<CheckBox>(R.id.cards_check_all_models).setOnCheckedChangeListener { _, checked ->
+            anki.cardFormat = anki.cardFormat.copy(checkAllModels = checked)
+        }
+        findViewById<Button>(R.id.cards_duplicate_behavior).setOnClickListener {
+            pickOne(R.string.cards_check_duplicates, CardFormat.DUPLICATE_BEHAVIORS, ::behaviorLabel, anki.cardFormat.duplicateBehavior) {
+                anki.cardFormat = anki.cardFormat.copy(duplicateBehavior = it)
+                showDuplicateOptions()
+            }
+        }
+        findViewById<Button>(R.id.cards_duplicate_scope).setOnClickListener {
+            pickOne(R.string.cards_check_duplicates, CardFormat.DUPLICATE_SCOPES, ::scopeLabel, anki.cardFormat.duplicateScope) {
+                anki.cardFormat = anki.cardFormat.copy(duplicateScope = it)
+                showDuplicateOptions()
+            }
+        }
+        showDuplicateOptions()
         findViewById<CheckBox>(R.id.cards_word_audio).apply {
             isChecked = anki.wordAudio
             setOnCheckedChangeListener { _, checked -> anki.wordAudio = checked }
         }
+    }
+
+    /** Yomitan's duplicate options for cards: whether to check, what to do, where to look, which note types. */
+    private fun showDuplicateOptions() {
+        val format = anki.cardFormat
+        findViewById<CheckBox>(R.id.cards_check_duplicates).isChecked = format.checkForDuplicates
+        findViewById<CheckBox>(R.id.cards_check_all_models).apply {
+            isChecked = format.checkAllModels
+            isEnabled = format.checkForDuplicates
+        }
+        findViewById<Button>(R.id.cards_duplicate_behavior).apply {
+            text = getString(R.string.cards_duplicate_behavior, behaviorLabel(format.duplicateBehavior))
+            isEnabled = format.checkForDuplicates
+        }
+        findViewById<Button>(R.id.cards_duplicate_scope).apply {
+            text = getString(R.string.cards_duplicate_scope, scopeLabel(format.duplicateScope))
+            isEnabled = format.checkForDuplicates
+        }
+    }
+
+    private fun behaviorLabel(behavior: String) = getString(
+        when (behavior) {
+            "prevent" -> R.string.cards_duplicate_prevent
+            "overwrite" -> R.string.cards_duplicate_overwrite
+            else -> R.string.cards_duplicate_new
+        },
+    )
+
+    private fun scopeLabel(scope: String) = getString(
+        when (scope) {
+            "deck" -> R.string.cards_scope_deck
+            "deck-root" -> R.string.cards_scope_deck_root
+            else -> R.string.cards_scope_collection
+        },
+    )
+
+    private fun pickOne(title: Int, values: List<String>, label: (String) -> String, current: String, onPicked: (String) -> Unit) {
+        AlertDialog.Builder(this)
+            .setTitle(title)
+            .setSingleChoiceItems(values.map(label).toTypedArray(), values.indexOf(current)) { dialog, which ->
+                dialog.dismiss()
+                onPicked(values[which])
+            }
+            .show()
     }
 
     /** A form with a template per field of the note type, like Yomitan's card format editor. */
@@ -205,13 +267,28 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0)
         }
+        // With "overwrite the existing note", each field also says how (Yomitan's overwrite mode).
+        val overwriting = format.checkForDuplicates && format.duplicateBehavior == "overwrite"
+        val modeLabels = resources.getStringArray(R.array.cards_overwrite_modes)
+        val modes = HashMap<String, Spinner>()
         val inputs = format.fields.map { (name, template) ->
             form.addView(TextView(this).apply { text = name; setPadding(0, pad / 2, 0, 0) })
-            name to EditText(this).apply {
+            val input = EditText(this).apply {
                 setText(template)
                 textSize = 14f
                 form.addView(this)
             }
+            if (overwriting) {
+                val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+                row.addView(TextView(this).apply { setText(R.string.cards_overwrite_mode); textSize = 12f })
+                modes[name] = Spinner(this).apply {
+                    adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, modeLabels)
+                    setSelection(OVERWRITE_MODE_ORDER.indexOf(format.overwriteMode(name)))
+                    row.addView(this)
+                }
+                form.addView(row)
+            }
+            name to input
         }
         form.addView(TextView(this).apply {
             text = getString(R.string.cards_fields_help, Markers.supported.sorted().joinToString(" ") { "{$it}" })
@@ -222,7 +299,11 @@ class MainActivity : Activity() {
             .setTitle(format.model)
             .setView(ScrollView(this).apply { addView(form) })
             .setPositiveButton(R.string.save) { _, _ ->
-                anki.cardFormat = anki.cardFormat.copy(fields = inputs.associateTo(LinkedHashMap()) { (name, input) -> name to input.text.toString() })
+                anki.cardFormat = anki.cardFormat.copy(
+                    fields = inputs.associateTo(LinkedHashMap()) { (name, input) -> name to input.text.toString() },
+                    overwriteModes = if (!overwriting) anki.cardFormat.overwriteModes else
+                        modes.mapValues { (_, spinner) -> OVERWRITE_MODE_ORDER[spinner.selectedItemPosition] },
+                )
                 showAnkiChoices()
             }
             .setNegativeButton(android.R.string.cancel, null)
@@ -252,7 +333,7 @@ class MainActivity : Activity() {
     private fun useCardFormat(format: CardFormat) {
         anki.cardFormat = format
         findViewById<EditText>(R.id.cards_tags).setText(format.tags.joinToString(" "))
-        findViewById<CheckBox>(R.id.cards_prevent_duplicates).isChecked = format.preventDuplicates
+        showDuplicateOptions()
         showAnkiChoices()
     }
 
@@ -515,6 +596,9 @@ class MainActivity : Activity() {
         const val TAG = "HiroiImport"
         const val REQUEST_IMPORT = 1
         const val REQUEST_YOMITAN_SETTINGS = 2
+
+        /** Overwrite modes in the order of R.array.cards_overwrite_modes */
+        val OVERWRITE_MODE_ORDER = listOf("coalesce", "overwrite", "coalesce-new", "append", "prepend", "skip")
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py
 

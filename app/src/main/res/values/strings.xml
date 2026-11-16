@@ -61,7 +61,26 @@
     <string name="cards_fields">Field templates…</string>
     <string name="cards_fields_help">Markers: %s</string>
     <string name="cards_tags_hint">Tags (space separated)</string>
-    <string name="cards_prevent_duplicates">Don\'t add a note if the word already has one</string>
+    <string name="cards_check_duplicates">Check for duplicates (notes with the same first field)</string>
+    <string name="cards_duplicate_behavior">If there is one: %s</string>
+    <string name="cards_duplicate_new">add another note</string>
+    <string name="cards_duplicate_prevent">don\'t add a note</string>
+    <string name="cards_duplicate_overwrite">overwrite the existing note</string>
+    <string name="cards_duplicate_scope">Look in: %s</string>
+    <string name="cards_scope_collection">the whole collection</string>
+    <string name="cards_scope_deck">the card format\'s deck</string>
+    <string name="cards_scope_deck_root">its top deck with all subdecks</string>
+    <string name="cards_check_all_models">Count notes of every note type</string>
+    <string name="cards_duplicates_hint">As in Yomitan: results that would duplicate a note show it on their button (\"Already in Anki\", \"Overwrite\" or \"＋ Anki again\") and get \"Open in Anki\".</string>
+    <string name="cards_overwrite_mode">When overwriting:</string>
+    <string-array name="cards_overwrite_modes">
+        <item>new value, unless empty</item>
+        <item>always the new value</item>
+        <item>only fill if empty</item>
+        <item>append</item>
+        <item>prepend</item>
+        <item>keep the old value</item>
+    </string-array>
     <string name="cards_word_audio">Word audio for {audio} (JapanesePod101)</string>
     <string name="cards_ready">\"＋ Anki\" adds %1$s notes to %2$s (%3$d fields filled).</string>
     <string name="cards_incomplete">Choose a deck and note type, or import your card format from Yomitan.</string>
@@ -72,6 +91,12 @@
     <string name="anki_added">✓ Added</string>
     <string name="anki_in_deck">✓ in Anki</string>
     <string name="anki_duplicate">Already in Anki</string>
+    <string name="anki_add_again">＋ Anki again</string>
+    <string name="anki_overwrite">Overwrite</string>
+    <string name="anki_overwriting">Overwriting…</string>
+    <string name="anki_overwritten">✓ Overwritten</string>
+    <string name="anki_open">Open in Anki</string>
+    <string name="anki_open_notes">Open in Anki (%d)</string>
     <string name="anki_add_failed">Couldn\'t add the card: %s</string>
     <string name="search_title">Search dictionaries</string>
     <string name="search_short">Search</string>

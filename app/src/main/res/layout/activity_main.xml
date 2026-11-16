@@ -277,10 +277,31 @@
             android:inputType="text" />
 
         <CheckBox
-            android:id="@+id/cards_prevent_duplicates"
+            android:id="@+id/cards_check_duplicates"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/cards_prevent_duplicates" />
+            android:text="@string/cards_check_duplicates" />
+
+        <Button
+            android:id="@+id/cards_duplicate_behavior"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/cards_duplicate_scope"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <CheckBox
+            android:id="@+id/cards_check_all_models"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_check_all_models" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_duplicates_hint" />
 
         <CheckBox
             android:id="@+id/cards_word_audio"

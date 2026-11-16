@@ -100,9 +100,25 @@ Markers produce the same output as Yomitan's default templates. That includes `{
 
 Not supported, left empty and listed under *Cards*: custom markers from Yomitan's handlebars templates (e.g. JP Mining Note's `{jpmn-*}`), the pitch graphs, `{phonetic-transcriptions}`, and markers that don't apply on a phone (clipboard, URL). Sentence furigana comes from Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
 
+**Duplicates** are detected as in Yomitan. A duplicate is a note with the same first field. When the results show, Hiroi asks Anki which of them would be duplicates, with `canAddNotes` for all at once and then `findNotes` for the duplicates. Their **＋ Anki** button then says what tapping it would do, depending on *Cards → If there is one*:
+
+- **add another note**, Yomitan's default: the button reads *＋ Anki again*.
+- **don't add a note**: the button reads *Already in Anki* and is disabled.
+- **overwrite the existing note**: the button reads *Overwrite*. Each field is updated by its overwrite mode, chosen under *Field templates…*, with Yomitan's modes:
+  - the new value unless it's empty (the default);
+  - always the new value;
+  - only fill an empty field;
+  - append;
+  - prepend;
+  - keep the old value.
+
+  Fields that would stay the same aren't sent.
+
+Either way, *Open in Anki* opens the existing notes, with their number when there are several. *Look in* sets where to search for duplicates: the whole collection, the card format's deck, or its top deck with all subdecks. *Count notes of every note type* also counts notes of other note types. All of these are imported from Yomitan settings too, including each field's overwrite mode.
+
 Words that already have a note (with the Anki check set up), and words you just added, get an **Open in Anki** button. On the phone it opens AnkiDroid's card browser on those notes. Switch that browser to *All decks* once, because AnkiDroid's link only searches the deck it last showed. With desktop Anki, AnkiConnect's `guiBrowse` opens the browser on the computer.
 
-Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote`, `storeMediaFile` and, for desktop Anki, `guiBrowse` and `notesModTime`. Requests go to Anki one at a time.
+Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote`, `updateNoteFields`, `storeMediaFile` and, for desktop Anki, `guiBrowse` and `notesModTime`. Requests go to Anki one at a time.
 
 ### Marking the words you have
 

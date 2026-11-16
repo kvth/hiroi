@@ -41,6 +41,45 @@ class CardFormatTest {
     }
 
     @Test
+    fun importsYomitansDuplicateOptions() {
+        val formats = YomitanSettings.cardFormats(export)
+        val lapis = formats[0].second
+        assertTrue(lapis.checkForDuplicates)
+        assertEquals("new", lapis.duplicateBehavior)
+        assertEquals("coalesce", lapis.overwriteMode("Sentence"))
+        assertEquals("prevent", formats[1].second.duplicateBehavior)
+        val overwrite = YomitanSettings.cardFormats(
+            export.replace("\"duplicateBehavior\": \"new\"", "\"duplicateBehavior\": \"overwrite\", \"duplicateScopeCheckAllModels\": true")
+                .replace("\"overwriteMode\": \"coalesce\"}", "\"overwriteMode\": \"append\"}"),
+        ).first().second
+        assertEquals("overwrite", overwrite.duplicateBehavior)
+        assertTrue(overwrite.checkAllModels)
+        assertTrue(overwrite.overwriteModes.values.all { it == "append" })
+    }
+
+    @Test
+    fun readsFormatsSavedBeforeTheDuplicateOptions() {
+        val old = CardFormat.fromJson("""{"deck":"D","model":"M","fields":{"Front":"{expression}"},"tags":[],"preventDuplicates":true,"duplicateScope":"deck"}""")
+        assertEquals("prevent", old.duplicateBehavior)
+        assertTrue(old.checkForDuplicates)
+        assertEquals("deck", old.duplicateScope)
+        assertEquals("new", CardFormat.fromJson("""{"deck":"D","model":"M","fields":{},"preventDuplicates":false}""").duplicateBehavior)
+    }
+
+    @Test
+    fun overwritesLikeYomitan() {
+        assertEquals("new", CardFormat.overwrite("overwrite", "old", "new"))
+        assertEquals("", CardFormat.overwrite("overwrite", "old", ""))
+        assertEquals("new", CardFormat.overwrite("coalesce", "old", "new"))
+        assertEquals("old", CardFormat.overwrite("coalesce", "old", ""))
+        assertEquals("old", CardFormat.overwrite("coalesce-new", "old", "new"))
+        assertEquals("new", CardFormat.overwrite("coalesce-new", "", "new"))
+        assertEquals("oldnew", CardFormat.overwrite("append", "old", "new"))
+        assertEquals("newold", CardFormat.overwrite("prepend", "old", "new"))
+        assertEquals("old", CardFormat.overwrite("skip", "old", "new"))
+    }
+
+    @Test
     fun survivesStorage() {
         val format = YomitanSettings.cardFormats(export).first().second
         assertEquals(format, CardFormat.fromJson(format.toJson()))

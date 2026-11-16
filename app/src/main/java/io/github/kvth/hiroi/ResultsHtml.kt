@@ -47,6 +47,10 @@ class ResultsHtml(private val colors: Colors) {
         append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
         append("function inAnki(i, label) { var t = document.getElementById('anki' + i); if (t) { t.className = 'tag anki'; t.firstChild.textContent = label; } ")
         append("var o = document.getElementById('open' + i); if (o) o.style.display = ''; }")
+        // A note with the same first field exists: the add button says what it would do, "Open in Anki" how many there are.
+        append("function duplicate(i, label, enabled, open) { var b = document.getElementById('card' + i); ")
+        append("if (b) { b.textContent = label; b.disabled = !enabled; b.className = 'card duplicate'; } ")
+        append("var o = document.getElementById('open' + i); if (o) { o.style.display = ''; o.textContent = open; } }")
         append("</script></head><body>")
         anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
         for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies)
@@ -146,9 +150,10 @@ class ResultsHtml(private val colors: Colors) {
         .header { display: flex; align-items: flex-end; gap: 8px; }
         .headword { flex: 1; font-size: 2em; line-height: 1.25; }
         .headword rt, .glossary rt { color: ${colors.secondary}; }
-        .card { flex: none; margin-bottom: 4px; padding: 4px 10px; border: 1px solid ${colors.accent}; border-radius: 6px;
+        .card { flex: none; margin: 0 1px 4px 0; padding: 4px 10px; border: 1px solid ${colors.accent}; border-radius: 6px;
             background: none; color: ${colors.accent}; font: inherit; font-size: 0.9em; }
         .card:disabled { opacity: 0.6; }
+        .card.duplicate { border-style: dashed; }
         .inflections { color: ${colors.secondary}; font-size: 0.85em; font-style: italic; }
         .tags, .definition-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
         .tag { display: inline-flex; border-radius: 4px; overflow: hidden; font-size: 0.75em; line-height: 1.7; white-space: nowrap; }
