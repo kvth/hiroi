@@ -8,11 +8,21 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.io.File
 import java.util.zip.ZipFile
 
-data class DictionaryInfo(val id: Long, val title: String, val revision: String, val terms: Int, val meta: Int, val kanji: Int)
+/** [frequencies]: how many frequency values it has (terms and kanji); [frequencyMode] as its index.json says, if it does. */
+data class DictionaryInfo(
+    val id: Long,
+    val title: String,
+    val revision: String,
+    val terms: Int,
+    val meta: Int,
+    val kanji: Int,
+    val frequencies: Int = 0,
+    val frequencyMode: String? = null,
+)
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 2), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 3), DictionaryStore {
 
     init {
         setWriteAheadLoggingEnabled(true) // lookups keep working during an import
@@ -21,7 +31,8 @@ class DictionaryDb private constructor(context: Context) :
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
-                "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT)",
+                "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
+                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0)",
         )
         db.execSQL(
             "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
@@ -33,11 +44,24 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX term_meta_expression ON term_meta (expression)")
         db.execSQL("CREATE TABLE kanji (dict INTEGER, character TEXT, onyomi TEXT, kunyomi TEXT, tags TEXT, meanings TEXT)")
         db.execSQL("CREATE INDEX kanji_character ON kanji (character)")
+        createKanjiMeta(db)
+    }
+
+    private fun createKanjiMeta(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE kanji_meta (dict INTEGER, character TEXT, mode TEXT, data TEXT)")
+        db.execSQL("CREATE INDEX kanji_meta_character ON kanji_meta (character)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         // 2: the dictionary's styles.css, which Yomitan applies to its definitions
         if (oldVersion < 2) db.execSQL("ALTER TABLE dictionaries ADD COLUMN styles TEXT")
+        // 3: frequency lists: their mode (rank or occurrence) and size, and kanji frequencies
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE dictionaries ADD COLUMN frequency_mode TEXT")
+            db.execSQL("ALTER TABLE dictionaries ADD COLUMN frequencies INTEGER DEFAULT 0")
+            db.execSQL("UPDATE dictionaries SET frequencies = (SELECT COUNT(*) FROM term_meta m WHERE m.dict = dictionaries.id AND m.mode = 'freq')")
+            createKanjiMeta(db)
+        }
     }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
@@ -47,12 +71,41 @@ class DictionaryDb private constructor(context: Context) :
         }
 
     fun dictionaries(): List<DictionaryInfo> =
-        readableDatabase.rawQuery("SELECT id, title, revision, terms, meta, kanji FROM dictionaries ORDER BY id", null).use { c ->
+        readableDatabase.rawQuery(
+            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode FROM dictionaries ORDER BY id", null,
+        ).use { c ->
             List(c.count) {
                 c.moveToNext()
-                DictionaryInfo(c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5))
+                DictionaryInfo(
+                    c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
+                    c.getInt(6), c.getString(7),
+                )
             }
         }
+
+    /**
+     * Whether lower values mean more common words in frequency dictionary [title] (ranks), as
+     * Yomitan decides it: from the dictionary's frequencyMode, else by comparing its values for
+     * common and rare words. Null if it can't tell.
+     */
+    fun frequencyAscending(title: String): Boolean? {
+        val info = dictionaries().firstOrNull { it.title == title } ?: return null
+        when (info.frequencyMode) {
+            "rank-based" -> return true
+            "occurrence-based" -> return false
+        }
+        val values = findTermMeta(MORE_COMMON + LESS_COMMON)
+            .filter { it.dictionary == title }
+            .mapNotNull { meta -> Yomitan.frequency(meta, null)?.value?.let { meta.expression to it } }
+            .groupBy({ it.first }, { it.second })
+        var result = 0
+        for (common in MORE_COMMON.mapNotNull { values[it] }) {
+            for (rare in LESS_COMMON.mapNotNull { values[it] }) {
+                result += Integer.signum(common.max() - rare.min()) + Integer.signum(common.min() - rare.max())
+            }
+        }
+        return if (result > 0) false else if (result < 0) true else null
+    }
 
     fun hasDictionaries(): Boolean =
         readableDatabase.rawQuery("SELECT 1 FROM dictionaries LIMIT 1", null).use { it.moveToFirst() }
@@ -72,6 +125,7 @@ class DictionaryDb private constructor(context: Context) :
                 ContentValues().apply {
                     put("title", index.title)
                     put("revision", index.revision)
+                    put("frequency_mode", index.frequencyMode)
                     file.getEntry("styles.css")?.let { put("styles", file.getInputStream(it).reader().readText()) }
                 },
             )
@@ -83,13 +137,21 @@ class DictionaryDb private constructor(context: Context) :
                 var terms = 0
                 var meta = 0
                 var kanji = 0
+                var frequencies = 0
                 for ((n, bank) in banks.withIndex()) {
                     val (entry, match) = bank
                     onProgress("${index.title}: ${n + 1} / ${banks.size}")
                     val json = file.getInputStream(entry).reader().readText()
                     when (match.groupValues[1]) {
                         "term_bank" -> terms += insertTerms(db, id, Yomitan.parseTermBank(json, index.format))
-                        "term_meta_bank" -> meta += insertMeta(db, id, Yomitan.parseTermMetaBank(json))
+                        "term_meta_bank" -> Yomitan.parseTermMetaBank(json).let { rows ->
+                            meta += insertMeta(db, id, rows, "term_meta")
+                            frequencies += rows.count { it.mode == "freq" }
+                        }
+                        "kanji_meta_bank" -> Yomitan.parseTermMetaBank(json).let { rows ->
+                            meta += insertMeta(db, id, rows, "kanji_meta")
+                            frequencies += rows.count { it.mode == "freq" }
+                        }
                         "kanji_bank" -> kanji += insertKanji(db, id, Yomitan.parseKanjiBank(json, index.format))
                     }
                 }
@@ -99,10 +161,11 @@ class DictionaryDb private constructor(context: Context) :
                         put("terms", terms)
                         put("meta", meta)
                         put("kanji", kanji)
+                        put("frequencies", frequencies)
                     },
                     "id = ?", arrayOf(id.toString()),
                 )
-                return DictionaryInfo(id, index.title, index.revision, terms, meta, kanji)
+                return DictionaryInfo(id, index.title, index.revision, terms, meta, kanji, frequencies, index.frequencyMode)
             } catch (e: Exception) {
                 delete(id)
                 throw e
@@ -114,7 +177,7 @@ class DictionaryDb private constructor(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (table in listOf("terms", "term_meta", "kanji")) db.delete(table, "dict = ?", arrayOf(id.toString()))
+            for (table in listOf("terms", "term_meta", "kanji", "kanji_meta")) db.delete(table, "dict = ?", arrayOf(id.toString()))
             db.delete("dictionaries", "id = ?", arrayOf(id.toString()))
             db.setTransactionSuccessful()
         } finally {
@@ -142,8 +205,10 @@ class DictionaryDb private constructor(context: Context) :
         rows.size
     }
 
-    private fun insertMeta(db: SQLiteDatabase, dict: Long, rows: List<TermMeta>): Int = inTransaction(db) {
-        val insert = db.compileStatement("INSERT INTO term_meta (dict, expression, mode, data) VALUES (?, ?, ?, ?)")
+    /** Into [table]: term_meta, or kanji_meta (whose column is "character"). */
+    private fun insertMeta(db: SQLiteDatabase, dict: Long, rows: List<TermMeta>, table: String): Int = inTransaction(db) {
+        val key = if (table == "kanji_meta") "character" else "expression"
+        val insert = db.compileStatement("INSERT INTO $table (dict, $key, mode, data) VALUES (?, ?, ?, ?)")
         for (row in rows) {
             insert.bindLong(1, dict)
             insert.bindString(2, row.expression)
@@ -218,6 +283,18 @@ class DictionaryDb private constructor(context: Context) :
         return out
     }
 
+    override fun findKanjiMeta(character: String): List<TermMeta> =
+        readableDatabase.rawQuery(
+            "SELECT m.character, m.mode, m.data, d.title, d.id FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict " +
+                "WHERE m.character = ? ORDER BY d.id",
+            arrayOf(character),
+        ).use { c ->
+            List(c.count) {
+                c.moveToNext()
+                TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getInt(4))
+            }
+        }
+
     override fun findKanji(character: String): List<KanjiEntry> =
         readableDatabase.rawQuery(
             "SELECT k.character, k.onyomi, k.kunyomi, k.tags, k.meanings, d.title FROM kanji k " +
@@ -234,7 +311,11 @@ class DictionaryDb private constructor(context: Context) :
         }
 
     companion object {
-        private val BANK = Regex("(term_bank|term_meta_bank|kanji_bank)_(\\d+)\\.json")
+        private val BANK = Regex("(term_bank|term_meta_bank|kanji_bank|kanji_meta_bank)_(\\d+)\\.json")
+
+        // Yomitan's words for telling ranks from occurrence counts (sort-frequency-dictionary-controller.js)
+        private val MORE_COMMON = listOf("来る", "言う", "出る", "入る", "方", "男", "女", "今", "何", "時")
+        private val LESS_COMMON = listOf("行なう", "論じる", "過す", "行方", "人口", "猫", "犬", "滝", "理", "暁")
         private const val MAX_ARGS = 900
 
         @Volatile

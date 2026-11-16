@@ -46,7 +46,17 @@ To move to a newer Yomitan release:
 node scripts/update-yomitan-transforms.mjs 26.11.2.0
 ```
 
-Not supported yet: images in definitions, tag descriptions (`tag_bank`), kanji frequencies (`kanji_meta_bank`), and reordering dictionaries.
+### Frequency lists
+
+Frequency lists (JPDB, BCCWJ, Innocent Corpus, …) show as a tag per list, with all of a list's values for the reading (`JPDB 1234, 5678㋕`), on words and, from `kanji_meta_bank` files, on kanji. With **Average frequencies** on, they're compressed into one *Average* tag, the harmonic mean of each list's lowest value, as Yomitan's option of that name does. Lists of occurrence counts are left out of the mean.
+
+**Result sorting** works like Yomitan's: results are sorted by how much of the text they match, then whether they needed the text read as hiragana, then the number of conjugation steps, then whether the headword is spelled as matched. After that comes the chosen frequency list, then dictionary order, then the entries' scores. A frequency list sorts in one of two ways:
+- lower values first, for ranks;
+- higher values first, for occurrence counts.
+
+Choosing a list picks the way from its `index.json` (`frequencyMode`: `rank-based` or `occurrence-based`). For lists that don't say, Hiroi compares their values for common and rare words, with the same words Yomitan uses. Words without a value in the list come after those with one. Until you choose one, Hiroi sorts by the first frequency list you imported; choose *none* to sort without one.
+
+Not supported yet: images in definitions, tag descriptions (`tag_bank`), and reordering dictionaries.
 
 ## Search
 

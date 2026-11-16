@@ -39,6 +39,40 @@ class TranslatorTest {
         assertEquals("300", Yomitan.frequency(first.meta.single(), first.reading)?.display)
     }
 
+    /** Two readings of 日 and a kanji frequency, with a rank list (Ranks) and a count list (Counts). */
+    private val sortStore = object : DictionaryStore {
+        val terms = listOf(term("日", "ひ", "", score = 5), term("日", "にち", ""), term("日", "か", ""))
+        val meta = listOf(
+            TermMeta("日", "freq", """[{"reading":"にち","frequency":100}]""", "Ranks", 2),
+            TermMeta("日", "freq", """[{"reading":"ひ","frequency":900}]""", "Ranks", 2),
+            TermMeta("日", "freq", """[{"reading":"か","frequency":50}]""", "Counts", 3),
+            TermMeta("日", "freq", """[{"reading":"ひ","frequency":7000}]""", "Counts", 3),
+        )
+
+        override fun findTerms(forms: Collection<String>) = terms.filter { it.expression in forms || it.reading in forms }
+        override fun findTermMeta(expressions: Collection<String>) = meta.filter { it.expression in expressions }
+        override fun findKanji(character: String) = listOf(KanjiEntry("日", "ニチ", "ひ", "", listOf("day"), "Kanji"))
+        override fun findKanjiMeta(character: String) = listOf(TermMeta("日", "freq", "[12]", "Ranks", 2))
+    }
+
+    private fun readings(sort: FrequencySort?) = Translator(sortStore) { sort }.lookUp("日", 0)!!.terms.map { it.reading }
+
+    @Test
+    fun sortsByTheChosenFrequencyDictionaryLikeYomitan() {
+        // Lowest rank first; without a value, last.
+        assertEquals(listOf("にち", "ひ", "か"), readings(FrequencySort("Ranks", ascending = true)))
+        // Highest count first; without a value, after those with one.
+        assertEquals(listOf("ひ", "か", "にち"), readings(FrequencySort("Counts", ascending = false)))
+        // Without a frequency dictionary: score, then as found.
+        assertEquals("ひ", readings(null).first())
+    }
+
+    @Test
+    fun givesKanjiTheirFrequencies() {
+        val kanji = Translator(sortStore).lookUp("日", 0)!!.kanji.single()
+        assertEquals(listOf("Ranks" to Yomitan.Frequency(12, "12")), kanji.frequencies)
+    }
+
     @Test
     fun prefersTheLongestMatch() {
         val result = translator.lookUp("食べ物が好き", 0)!!

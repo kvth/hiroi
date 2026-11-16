@@ -26,6 +26,7 @@ data class TermMeta(
     val priority: Int = 0,
 )
 
+/** [frequencies]: the kanji's frequencies by dictionary (kanji meta banks), filled in by the translator. */
 data class KanjiEntry(
     val character: String,
     val onyomi: String,
@@ -33,6 +34,7 @@ data class KanjiEntry(
     val tags: String,
     val meanings: List<String>,
     val dictionary: String = "",
+    val frequencies: List<Pair<String, Yomitan.Frequency>> = emptyList(),
 )
 
 /**
@@ -40,14 +42,18 @@ data class KanjiEntry(
  * display text. See https://github.com/yomidevs/yomitan/tree/master/ext/data/schemas
  */
 object Yomitan {
-    data class Index(val title: String, val revision: String, val format: Int)
+    /** [frequencyMode]: "rank-based" or "occurrence-based" for frequency lists that say so, else null. */
+    data class Index(val title: String, val revision: String, val format: Int, val frequencyMode: String? = null)
 
     fun parseIndex(json: String): Index {
         val index = JSONObject(json)
         val format = index.optInt("format", index.optInt("version", 0))
         require(format in 1..3) { "Unsupported dictionary format $format" }
-        return Index(index.getString("title"), index.optString("revision"), format)
+        val frequencyMode = index.optString("frequencyMode").takeIf { it in FREQUENCY_MODES }
+        return Index(index.getString("title"), index.optString("revision"), format, frequencyMode)
     }
+
+    val FREQUENCY_MODES = listOf("rank-based", "occurrence-based")
 
     fun parseTermBank(json: String, format: Int): List<TermEntry> {
         val bank = JSONArray(json)
@@ -73,6 +79,7 @@ object Yomitan {
         }
     }
 
+    /** Term and kanji meta banks share a layout: [term or kanji, mode, data]. */
     fun parseTermMetaBank(json: String): List<TermMeta> {
         val bank = JSONArray(json)
         return List(bank.length()) { i ->
@@ -181,19 +188,22 @@ object Yomitan {
         if (out.isNotEmpty() && out.last() != '\n') out.append('\n')
     }
 
-    /** A frequency for [reading], or null if the meta row is for another reading or not a frequency. */
-    fun frequency(meta: TermMeta, reading: String): Frequency? {
+    /**
+     * A frequency for [reading] (null: any reading), or null if the meta row is for another reading
+     * or not a frequency.
+     */
+    fun frequency(meta: TermMeta, reading: String?): Frequency? {
         if (meta.mode != "freq") return null
         var data = JSONArray(meta.data).get(0)
         if (data is JSONObject && data.has("frequency")) {
-            if (data.optString("reading", reading) != reading) return null
+            if (reading != null && data.optString("reading", reading) != reading) return null
             data = data.get("frequency")
         }
         return when (data) {
             is Number -> Frequency(data.toInt(), data.toInt().toString())
-            is String -> Frequency(data.takeWhile { it.isDigit() }.toIntOrNull(), data)
+            is String -> Frequency(numberIn(data), data)
             is JSONObject -> {
-                val value = if (data.has("value")) data.optInt("value") else null
+                val value = if (data.has("value")) data.optDouble("value").takeIf { it.isFinite() }?.toInt() else null
                 val display = data.optString("displayValue").ifEmpty { value?.toString() ?: return null }
                 Frequency(value, display)
             }
@@ -202,6 +212,13 @@ object Yomitan {
     }
 
     data class Frequency(val value: Int?, val display: String)
+
+    /** n / (1/v1 + ... + 1/vn), rounded down as Yomitan does; for positive [values]. */
+    fun harmonicMean(values: List<Int>): Int = (values.size / values.sumOf { 1.0 / it }).toInt()
+
+    /** The first number in a text value ("1234", "~5000", "12㋕"), as Yomitan reads it; null if there's none. */
+    private fun numberIn(text: String): Int? =
+        Regex("[+-]?(\\d+(\\.\\d*)?|\\.\\d+)([eE][+-]?\\d+)?").find(text)?.value?.toDoubleOrNull()?.toInt()
 
     /** Downstep positions for [reading] as "[0]" / "[2]", or null if the meta row isn't pitch data for it. */
     fun pitch(meta: TermMeta, reading: String): String? {

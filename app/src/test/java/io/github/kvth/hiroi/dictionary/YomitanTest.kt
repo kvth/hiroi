@@ -9,6 +9,8 @@ class YomitanTest {
     fun parsesIndexOfEitherVersion() {
         assertEquals(Yomitan.Index("Jitendex", "2026.11.01", 3), Yomitan.parseIndex("""{"title":"Jitendex","revision":"2026.11.01","format":3}"""))
         assertEquals(1, Yomitan.parseIndex("""{"title":"Old","revision":"1","version":1}""").format)
+        assertEquals("rank-based", Yomitan.parseIndex("""{"title":"JPDB","format":3,"frequencyMode":"rank-based"}""").frequencyMode)
+        assertNull(Yomitan.parseIndex("""{"title":"X","format":3,"frequencyMode":"other"}""").frequencyMode)
     }
 
     @Test
@@ -71,7 +73,7 @@ class YomitanTest {
 
     @Test
     fun readsFrequenciesInAllShapes() {
-        fun freq(data: String, reading: String = "たべる") =
+        fun freq(data: String, reading: String? = "たべる") =
             Yomitan.frequency(TermMeta("食べる", "freq", "[$data]"), reading)
 
         assertEquals(Yomitan.Frequency(500, "500"), freq("500"))
@@ -79,6 +81,18 @@ class YomitanTest {
         assertEquals(Yomitan.Frequency(7, "7 (rank)"), freq("""{"value":7,"displayValue":"7 (rank)"}"""))
         assertEquals(Yomitan.Frequency(42, "42"), freq("""{"reading":"たべる","frequency":42}"""))
         assertNull(freq("""{"reading":"くう","frequency":42}"""))
+        // Any reading, for telling ranks from counts
+        assertEquals(Yomitan.Frequency(42, "42"), freq("""{"reading":"くう","frequency":42}""", null))
+        // The first number in a text, as Yomitan reads it
+        assertEquals(Yomitan.Frequency(5000, "~5000"), freq("\"~5000\""))
+        assertEquals(Yomitan.Frequency(null, "rare"), freq("\"rare\""))
+        assertEquals(Yomitan.Frequency(12, "12.5"), freq("""{"value":12.5,"displayValue":"12.5"}"""))
+    }
+
+    @Test
+    fun averagesFrequenciesWithTheHarmonicMean() {
+        assertEquals(192, Yomitan.harmonicMean(listOf(120, 480)))
+        assertEquals(7, Yomitan.harmonicMean(listOf(7)))
     }
 
     @Test

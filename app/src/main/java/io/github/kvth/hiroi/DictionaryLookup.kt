@@ -17,6 +17,7 @@ import io.github.kvth.hiroi.anki.CardData
 import io.github.kvth.hiroi.anki.DuplicateNoteException
 import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.dictionary.DictionaryDb
+import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Translator
 import java.util.concurrent.Executors
@@ -43,7 +44,7 @@ class DictionaryLookup(
 
     private val worker = Executors.newSingleThreadExecutor()
     private val dictionaries by lazy { DictionaryDb.get(activity) }
-    val translator by lazy { Translator(dictionaries) }
+    val translator by lazy { Translator(dictionaries) { DictionarySettings(activity).frequencySort(dictionaries) } }
     private val styles by lazy { dictionaries.styles() } // read on the lookup thread
     private var generation = 0
     private var shown: Lookup.Found? = null
@@ -87,8 +88,12 @@ class DictionaryLookup(
                         } else {
                             val cards = AnkiSettings(activity).cardFormat.complete
                             val anki = ankiStatus(result)
+                            val frequencies = ResultsHtml.Frequencies(
+                                average = DictionarySettings(activity).averageFrequencies,
+                                occurrenceBased = dictionaries.dictionaries().filter { it.frequencyMode == "occurrence-based" }.mapTo(HashSet()) { it.title },
+                            )
                             Lookup.Found(
-                                result, text, html.document(result, anki, styles, cards),
+                                result, text, html.document(result, anki, styles, cards, frequencies),
                                 notes = result.terms.indices.associateWithTo(HashMap()) { i ->
                                     anki?.notes?.get(result.terms[i].expression).orEmpty().toMutableList()
                                 },

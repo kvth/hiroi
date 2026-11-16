@@ -10,7 +10,13 @@ interface DictionaryStore {
     fun findTermMeta(expressions: Collection<String>): List<TermMeta>
 
     fun findKanji(character: String): List<KanjiEntry>
+
+    /** Kanji meta bank rows (frequencies) for [character]; [TermMeta.expression] is the character. */
+    fun findKanjiMeta(character: String): List<TermMeta> = emptyList()
 }
+
+/** Sorting results by one frequency dictionary, as Yomitan's "Frequency sorting dictionary"; [ascending] for ranks. */
+data class FrequencySort(val dictionary: String, val ascending: Boolean)
 
 /**
  * Entries sharing a headword and reading, from one or more dictionaries. [source] is the scanned
@@ -28,10 +34,14 @@ data class TermGroup(
 /** [start]..[end] is the longest matched text. */
 data class LookupResult(val start: Int, val end: Int, val terms: List<TermGroup>, val kanji: List<KanjiEntry>)
 
-/** Yomitan-style lookup: the longest dictionary word, as written or deinflected, starting at a position. */
-class Translator(private val store: DictionaryStore) {
+/**
+ * Yomitan-style lookup: the longest dictionary word, as written or deinflected, starting at a
+ * position. [frequencySort] gives the frequency dictionary to sort by, if any.
+ */
+class Translator(private val store: DictionaryStore, private val frequencySort: () -> FrequencySort? = { null }) {
 
-    private class Candidate(val form: String, val source: String, val conditions: Int, val inflections: List<String>)
+    /** [processed]: read as hiragana rather than as written (Yomitan's text processing). */
+    private class Candidate(val form: String, val source: String, val conditions: Int, val inflections: List<String>, val processed: Boolean)
 
     fun lookUp(text: String, start: Int): LookupResult? {
         if (start !in text.indices || !Japanese.isJapanese(text[start])) return null
@@ -43,7 +53,7 @@ class Translator(private val store: DictionaryStore) {
         for (length in end - start downTo 1) {
             val source = text.substring(start, start + length)
             for (variant in listOf(source, Japanese.toHiragana(source)).distinct()) {
-                Deinflector.deinflect(variant).mapTo(candidates) { Candidate(it.text, source, it.conditions, it.inflections) }
+                Deinflector.deinflect(variant).mapTo(candidates) { Candidate(it.text, source, it.conditions, it.inflections, variant != source) }
             }
         }
 
@@ -64,9 +74,10 @@ class Translator(private val store: DictionaryStore) {
         }
 
         val meta = if (groups.isEmpty()) emptyList() else store.findTermMeta(groups.keys.mapTo(HashSet()) { it.first })
-        val terms = groups.map { (key, group) ->
+        val sort = frequencySort()
+        val sorted = groups.map { (key, group) ->
             val (expression, reading) = key
-            TermGroup(
+            val term = TermGroup(
                 expression = expression,
                 reading = reading,
                 source = group.candidate.source,
@@ -74,20 +85,51 @@ class Translator(private val store: DictionaryStore) {
                 entries = group.entries.sortedWith(compareBy<TermEntry> { it.priority }.thenByDescending { it.score }),
                 meta = meta.filter { it.expression == expression }.sortedBy { it.priority },
             )
-        }.sortedWith(
-            compareByDescending<TermGroup> { it.source.length }
-                .thenBy { it.inflections.size }
-                .thenBy { group -> group.meta.mapNotNull { Yomitan.frequency(it, group.reading)?.value }.minOrNull() ?: Int.MAX_VALUE }
-                .thenByDescending { group -> group.entries.maxOf { it.score } },
-        ).take(MAX_RESULTS)
+            Sortable(term, group.candidate.processed, group.candidate.form == expression, frequencyOrder(term, sort))
+        }.sortedWith(ORDER)
+        val terms = sorted.map { it.term }.take(MAX_RESULTS)
 
-        val kanji = if (Japanese.isKanji(text[start])) store.findKanji(text[start].toString()) else emptyList()
+        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
+            val character = text[start].toString()
+            val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
+            store.findKanji(character).map { it.copy(frequencies = frequencies) }
+        }
         val matched = terms.firstOrNull()?.source?.length ?: 1
         return LookupResult(start, start + matched, terms, kanji)
+    }
+
+    /** A result with what it's sorted by besides itself; [exact]: the headword is spelled as it was matched. */
+    private class Sortable(val term: TermGroup, val processed: Boolean, val exact: Boolean, val frequencyOrder: Long)
+
+    /**
+     * The term's place by the sorting frequency dictionary, as Yomitan computes it: its lowest
+     * value for ranks, its highest (negated) for occurrence counts; without a value, after all
+     * others. 0 for every term when no dictionary is chosen.
+     */
+    private fun frequencyOrder(term: TermGroup, sort: FrequencySort?): Long {
+        if (sort == null) return 0
+        val values = term.meta.filter { it.dictionary == sort.dictionary }.mapNotNull { Yomitan.frequency(it, term.reading)?.value }
+        return when {
+            values.isEmpty() -> if (sort.ascending) Long.MAX_VALUE else 0
+            sort.ascending -> values.min().toLong()
+            else -> -values.max().toLong()
+        }
     }
 
     private companion object {
         const val MAX_LENGTH = 20
         const val MAX_RESULTS = 20
+
+        /** Yomitan's order (translator.js, _sortTermDictionaryEntries). */
+        val ORDER: Comparator<Sortable> = compareByDescending<Sortable> { it.term.source.length }
+            .thenBy { it.processed }
+            .thenBy { it.term.inflections.size }
+            .thenByDescending { it.exact }
+            .thenBy { it.frequencyOrder }
+            .thenBy { s -> s.term.entries.minOf { it.priority } }
+            .thenByDescending { s -> s.term.entries.maxOf { it.score } }
+            .thenByDescending { it.term.expression.length }
+            .thenBy { it.term.expression }
+            .thenByDescending { it.term.entries.size }
     }
 }

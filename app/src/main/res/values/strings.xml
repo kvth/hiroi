@@ -21,6 +21,19 @@
     <string name="remove_confirm">Remove %s?</string>
     <string name="count_terms">%d terms</string>
     <string name="count_meta">%d frequency/pitch</string>
+    <string name="count_frequencies">frequency list (%s)</string>
+    <string name="frequency_rank">ranks</string>
+    <string name="frequency_occurrence">occurrence counts</string>
+    <string name="frequency_unknown">ranks or counts not stated</string>
+    <string name="sort_title">Result sorting</string>
+    <string name="sort_hint">As in Yomitan: results are sorted by how much of the text they match, then by fewer conjugation steps, then by this frequency list, then by dictionary order. A list counts as ranks (lower = more common) or occurrence counts (higher = more common) as its index.json says; otherwise Hiroi compares its values for common and rare words, as Yomitan does.</string>
+    <string name="sort_dictionary">By frequency: %s</string>
+    <string name="sort_none">none</string>
+    <string name="sort_no_lists">Import a frequency list (e.g. JPDB, BCCWJ) to sort by it.</string>
+    <string name="sort_ascending">Lower first (ranks)</string>
+    <string name="sort_descending">Higher first (counts)</string>
+    <string name="average_frequencies">Average frequencies</string>
+    <string name="average_frequencies_hint">Compress the frequency tags into one \"Average\" tag, the harmonic mean of each list\'s value, as Yomitan\'s option does. Lists of occurrence counts are left out of it.</string>
     <string name="count_kanji">%d kanji</string>
     <string name="usage_hint">Trigger Hiroi with the accessibility button, the accessibility shortcut, or the assistant gesture, then tap a word in one of the boxes to look it up. Text in images has no box: tap it, and Hiroi reads the screen with OCR. In the panel, long-press to select text yourself; Copy and \"Look up\" (which opens a dictionary app) act on the selection. Long-press \"Look up\" to pick a different app.</string>
     <string name="step_anki">4. Optional: Anki</string>

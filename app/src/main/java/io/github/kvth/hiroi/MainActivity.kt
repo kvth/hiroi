@@ -40,6 +40,7 @@ import io.github.kvth.hiroi.anki.Markers
 import io.github.kvth.hiroi.anki.YomitanSettings
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
+import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.marks.MarksActivity
 import java.io.File
 import java.io.InputStream
@@ -75,6 +76,16 @@ class MainActivity : Activity() {
             val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
             @Suppress("DEPRECATION")
             startActivityForResult(pick, REQUEST_YOMITAN_SETTINGS)
+        }
+        findViewById<Button>(R.id.sort_dictionary).setOnClickListener { chooseSortDictionary() }
+        findViewById<Button>(R.id.sort_order).setOnClickListener {
+            val settings = DictionarySettings(this)
+            settings.sortAscending = !settings.sortAscending
+            showSorting()
+        }
+        findViewById<CheckBox>(R.id.average_frequencies).apply {
+            isChecked = DictionarySettings(this@MainActivity).averageFrequencies
+            setOnCheckedChangeListener { _, checked -> DictionarySettings(this@MainActivity).averageFrequencies = checked }
         }
         findViewById<Button>(R.id.import_example).setOnClickListener {
             importDictionary { assets.open(EXAMPLE_ASSET) }
@@ -399,6 +410,7 @@ class MainActivity : Activity() {
         if (installed.isEmpty()) {
             list.addView(TextView(this).apply { setText(R.string.no_dictionaries_installed) })
         }
+        showSorting()
         for (info in installed) {
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
             row.addView(
@@ -422,8 +434,57 @@ class MainActivity : Activity() {
             info.terms.takeIf { it > 0 }?.let { getString(R.string.count_terms, it) },
             info.meta.takeIf { it > 0 }?.let { getString(R.string.count_meta, it) },
             info.kanji.takeIf { it > 0 }?.let { getString(R.string.count_kanji, it) },
+            info.takeIf { it.frequencies > 0 }?.let {
+                getString(
+                    R.string.count_frequencies,
+                    getString(
+                        when (it.frequencyMode) {
+                            "rank-based" -> R.string.frequency_rank
+                            "occurrence-based" -> R.string.frequency_occurrence
+                            else -> R.string.frequency_unknown
+                        },
+                    ),
+                )
+            },
         )
         if (counts.isNotEmpty()) append('\n').append(counts.joinToString(" · "))
+    }
+
+    /** The frequency list results are sorted by, and its order (picked automatically until chosen). */
+    private fun showSorting() {
+        val settings = DictionarySettings(this)
+        val dictionary = findViewById<Button>(R.id.sort_dictionary)
+        val order = findViewById<Button>(R.id.sort_order)
+        background.execute {
+            val sort = settings.frequencySort(dictionaries)
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                dictionary.text = getString(R.string.sort_dictionary, sort?.dictionary ?: getString(R.string.sort_none))
+                order.setText(if (sort?.ascending != false) R.string.sort_ascending else R.string.sort_descending)
+                order.isEnabled = sort != null
+            }
+        }
+    }
+
+    private fun chooseSortDictionary() {
+        val lists = dictionaries.dictionaries().filter { it.frequencies > 0 }.map { it.title }
+        if (lists.isEmpty()) {
+            AlertDialog.Builder(this).setMessage(R.string.sort_no_lists).setPositiveButton(android.R.string.ok, null).show()
+            return
+        }
+        val choices = listOf(getString(R.string.sort_none)) + lists
+        val current = DictionarySettings(this).sortDictionary
+        AlertDialog.Builder(this)
+            .setTitle(R.string.sort_title)
+            .setSingleChoiceItems(choices.toTypedArray(), if (current.isNullOrEmpty()) 0 else lists.indexOf(current) + 1) { dialog, which ->
+                dialog.dismiss()
+                val title = if (which == 0) "" else lists[which - 1]
+                background.execute {
+                    DictionarySettings(this).choose(dictionaries, title)
+                    runOnUiThread { if (!isDestroyed) showSorting() }
+                }
+            }
+            .show()
     }
 
     private fun confirmDelete(info: DictionaryInfo) {

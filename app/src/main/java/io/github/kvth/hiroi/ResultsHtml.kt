@@ -23,7 +23,19 @@ class ResultsHtml(private val colors: Colors) {
     /** CSS colours from the app theme, so the results match the panel. */
     data class Colors(val text: String, val secondary: String, val accent: String)
 
-    fun document(result: LookupResult, anki: AnkiStatus?, styles: Map<String, String>, cards: Boolean): String = buildString {
+    /**
+     * [average]: one "Average" tag with the harmonic mean instead of a tag per frequency list,
+     * as Yomitan's "Average frequencies" option; lists of [occurrenceBased] counts stay out of it.
+     */
+    data class Frequencies(val average: Boolean = false, val occurrenceBased: Set<String> = emptySet())
+
+    fun document(
+        result: LookupResult,
+        anki: AnkiStatus?,
+        styles: Map<String, String>,
+        cards: Boolean,
+        frequencies: Frequencies = Frequencies(),
+    ): String = buildString {
         append("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">")
         append("<style>").append(css())
         // Each dictionary's styles only apply inside its own definitions (CSS nesting, as Jitendex itself uses).
@@ -37,12 +49,12 @@ class ResultsHtml(private val colors: Colors) {
         append("var o = document.getElementById('open' + i); if (o) o.style.display = ''; }")
         append("</script></head><body>")
         anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
-        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards)
-        for (kanji in result.kanji) kanji(kanji)
+        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies)
+        for (kanji in result.kanji) kanji(kanji, frequencies)
         append("</body></html>")
     }
 
-    private fun StringBuilder.term(index: Int, term: TermGroup, anki: AnkiStatus?, cards: Boolean) {
+    private fun StringBuilder.term(index: Int, term: TermGroup, anki: AnkiStatus?, cards: Boolean, frequencies: Frequencies) {
         append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
         append(Furigana.html(Furigana.distribute(term.expression, term.reading)))
         append("</span>")
@@ -61,9 +73,7 @@ class ResultsHtml(private val colors: Colors) {
         if (anki != null && anki.error == null) {
             if (term.expression in anki.notes) tags.tag("anki", "✓ in Anki", id = "anki$index") else tags.tag("not-anki", "not in Anki", id = "anki$index")
         }
-        for (meta in term.meta) {
-            Yomitan.frequency(meta, term.reading)?.let { tags.tag("frequency", meta.dictionary, Html.escape(it.display)) }
-        }
+        tags.frequencyTags(term.meta.mapNotNull { meta -> Yomitan.frequency(meta, term.reading)?.let { meta.dictionary to it } }, frequencies)
         val pitches = Markers.pitches(term)
         if (pitches.isNotEmpty()) {
             val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
@@ -87,10 +97,28 @@ class ResultsHtml(private val colors: Colors) {
         append("</div></li>")
     }
 
-    private fun StringBuilder.kanji(kanji: KanjiEntry) {
+    /**
+     * One tag per dictionary with all its values, as Yomitan groups them; or, with
+     * [Frequencies.average], one "Average" tag: the harmonic mean of each list's lowest value.
+     */
+    private fun StringBuilder.frequencyTags(list: List<Pair<String, Yomitan.Frequency>>, frequencies: Frequencies) {
+        val byDictionary = list.groupBy({ it.first }, { it.second })
+        if (frequencies.average) {
+            val ranks = byDictionary.filterKeys { it !in frequencies.occurrenceBased }
+                .values.mapNotNull { values -> values.mapNotNull { it.value?.takeIf { v -> v > 0 } }.minOrNull() }
+            if (ranks.isNotEmpty()) {
+                tag("frequency", "Average", Yomitan.harmonicMean(ranks).toString())
+                return
+            }
+        }
+        for ((dictionary, values) in byDictionary) tag("frequency", dictionary, Html.escape(values.map { it.display }.distinct().joinToString(", ")))
+    }
+
+    private fun StringBuilder.kanji(kanji: KanjiEntry, frequencies: Frequencies) {
         append("<div class=\"entry kanji\"><div class=\"header\"><span class=\"character\" lang=\"ja\">")
         append(Html.escape(kanji.character)).append("</span></div><div class=\"tags\">")
         tag("dictionary", kanji.dictionary)
+        frequencyTags(kanji.frequencies, frequencies)
         append("</div><table>")
         for ((label, readings) in listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi)) {
             if (readings.isNotBlank()) append("<tr><th>$label</th><td lang=\"ja\">").append(Html.escape(readings.replace(" ", "、"))).append("</td></tr>")

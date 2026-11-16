@@ -78,7 +78,7 @@ object Markers {
             "dictionary", "dictionary-alias" -> term.entries.firstOrNull()?.dictionary.orEmpty()
             "document-title" -> data.documentTitle
             "frequencies" -> frequencies(term)
-            "frequency-harmonic-rank" -> ranks(term)?.let { values -> (values.size / values.sumOf { 1.0 / it }).toInt().toString() } ?: NO_FREQUENCY
+            "frequency-harmonic-rank" -> ranks(term)?.let { Yomitan.harmonicMean(it).toString() } ?: NO_FREQUENCY
             "frequency-average-rank" -> ranks(term)?.let { values -> (values.sum() / values.size).toInt().toString() } ?: NO_FREQUENCY
             "frequency-harmonic-occurrence", "frequency-average-occurrence" -> "0" // occurrence-based lists aren't told apart from ranks
             "pitch-accents" -> pitches(term).list { position -> pitchHtml(term.reading, position) }

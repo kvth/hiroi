@@ -4,6 +4,7 @@ import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -41,6 +42,29 @@ class ResultsHtmlTest {
         assertTrue(html, "<ul><li>to reach</li><li>to arrive</li></ul>" in html)
         assertTrue("dictionary names are escaped", "JMdict &lt;b&gt;" in html)
         assertFalse(html, "JMdict <b>" in html)
+    }
+
+    private fun frequencyTags(average: Boolean, occurrenceBased: Set<String> = emptySet()): List<String> {
+        val meta = listOf(
+            TermMeta("届く", "freq", """[{"reading":"とどく","frequency":120}]""", "JPDB", 3),
+            TermMeta("届く", "freq", """[{"reading":"とどく","frequency":{"value":200,"displayValue":"200㋕"}}]""", "JPDB", 3),
+            TermMeta("届く", "freq", "[480]", "BCCWJ", 5),
+            TermMeta("届く", "freq", "[30000]", "Counts", 6),
+        )
+        val html = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(
+            LookupResult(0, 2, listOf(term.copy(meta = meta)), emptyList()), null, emptyMap(), cards = false,
+            frequencies = ResultsHtml.Frequencies(average, occurrenceBased),
+        )
+        return Regex("<span class=\"tag frequency\"><span class=\"label\">([^<]*)</span><span class=\"value\">([^<]*)</span>")
+            .findAll(html).map { "${it.groupValues[1]}: ${it.groupValues[2]}" }.toList()
+    }
+
+    @Test
+    fun groupsFrequenciesByDictionaryOrAveragesThem() {
+        assertEquals(listOf("JPDB: 120, 200㋕", "BCCWJ: 480", "Counts: 30000"), frequencyTags(average = false))
+        // Harmonic mean of each list's lowest value: 3 / (1/120 + 1/480 + 1/30000)
+        assertEquals(listOf("Average: 287"), frequencyTags(average = true))
+        assertEquals(listOf("Average: 192"), frequencyTags(average = true, occurrenceBased = setOf("Counts")))
     }
 
     @Test
