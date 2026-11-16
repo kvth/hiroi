@@ -11,8 +11,8 @@ import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
 import org.json.JSONArray
 
-/** Whether the looked-up words have notes in the chosen Anki deck; [error] if Anki couldn't be asked. */
-class AnkiStatus(val words: Set<String>, val error: String? = null)
+/** The looked-up words' notes in the chosen Anki deck, by word; [error] if Anki couldn't be asked. */
+class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null)
 
 /**
  * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana, tags for
@@ -33,7 +33,8 @@ class ResultsHtml(private val colors: Colors) {
         }
         append("</style><script>")
         append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
-        append("function inAnki(i, label) { var t = document.getElementById('anki' + i); if (t) { t.className = 'tag anki'; t.firstChild.textContent = label; } }")
+        append("function inAnki(i, label) { var t = document.getElementById('anki' + i); if (t) { t.className = 'tag anki'; t.firstChild.textContent = label; } ")
+        append("var o = document.getElementById('open' + i); if (o) o.style.display = ''; }")
         append("</script></head><body>")
         anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
         for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards)
@@ -45,6 +46,11 @@ class ResultsHtml(private val colors: Colors) {
         append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
         append(Furigana.html(Furigana.distribute(term.expression, term.reading)))
         append("</span>")
+        // Shown when the word has a note (or once one was added), like Yomitan's "view note" button.
+        val hasNote = anki?.notes?.containsKey(term.expression) == true
+        append("<button class=\"card\" id=\"open$index\" onclick=\"Hiroi.openNote($index)\"")
+        if (!hasNote) append(" style=\"display:none\"")
+        append(">Open in Anki</button>")
         if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"Hiroi.addCard($index)\">＋ Anki</button>")
         append("</div>")
         if (term.inflections.isNotEmpty()) {
@@ -53,7 +59,7 @@ class ResultsHtml(private val colors: Colors) {
 
         val tags = StringBuilder()
         if (anki != null && anki.error == null) {
-            if (term.expression in anki.words) tags.tag("anki", "✓ in Anki", id = "anki$index") else tags.tag("not-anki", "not in Anki", id = "anki$index")
+            if (term.expression in anki.notes) tags.tag("anki", "✓ in Anki", id = "anki$index") else tags.tag("not-anki", "not in Anki", id = "anki$index")
         }
         for (meta in term.meta) {
             Yomitan.frequency(meta, term.reading)?.let { tags.tag("frequency", meta.dictionary, Html.escape(it.display)) }

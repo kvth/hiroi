@@ -14,6 +14,7 @@ import android.graphics.Color
 import android.graphics.RectF
 import android.graphics.Insets
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -275,7 +276,13 @@ class LookupActivity : Activity() {
                             Lookup.Message(getString(R.string.no_match))
                         } else {
                             val cards = AnkiSettings(this).cardFormat.complete
-                            Lookup.Found(result, text, resultsHtml.document(result, ankiStatus(result), dictionaryStyles, cards))
+                            val anki = ankiStatus(result)
+                            Lookup.Found(
+                                result, text, resultsHtml.document(result, anki, dictionaryStyles, cards),
+                                notes = result.terms.indices.associateWithTo(HashMap()) { i ->
+                                    anki?.notes?.get(result.terms[i].expression).orEmpty().toMutableList()
+                                },
+                            )
                         }
                     }
                 }
@@ -295,18 +302,21 @@ class LookupActivity : Activity() {
         val anki = AnkiSettings(this)
         if (!anki.enabled || result.terms.isEmpty()) return null
         return try {
-            AnkiStatus(anki.client().wordsInDeck(anki.deck, anki.field, result.terms.map { it.expression }.distinct()))
+            AnkiStatus(anki.client().notesInDeck(anki.deck, anki.field, result.terms.map { it.expression }.distinct()))
         } catch (e: Exception) {
             Log.w(TAG, "Anki check failed", e)
-            AnkiStatus(emptySet(), getString(R.string.anki_unreachable, e.message ?: e.javaClass.simpleName))
+            AnkiStatus(emptyMap(), getString(R.string.anki_unreachable, e.message ?: e.javaClass.simpleName))
         }
     }
 
     private sealed interface Lookup {
         class Message(val text: String) : Lookup
 
-        /** [text] is the panel text the lookup ran on (for a card's sentence); [html] the results page. */
-        class Found(val result: LookupResult, val text: String, val html: String) : Lookup
+        /**
+         * [text] is the panel text the lookup ran on (for a card's sentence), [html] the results
+         * page, [notes] each result's Anki notes (by index), growing as cards are added.
+         */
+        class Found(val result: LookupResult, val text: String, val html: String, val notes: MutableMap<Int, MutableList<Long>>) : Lookup
     }
 
     private fun showLookup(lookup: Lookup) {
@@ -363,6 +373,11 @@ class LookupActivity : Activity() {
         fun addCard(index: Int) {
             runOnUiThread { this@LookupActivity.addCard(index) }
         }
+
+        @JavascriptInterface
+        fun openNote(index: Int) {
+            runOnUiThread { this@LookupActivity.openNote(index) }
+        }
     }
 
     /** Makes a note from result [index] with the card format; its button then shows how it went. */
@@ -388,7 +403,8 @@ class LookupActivity : Activity() {
             runOnUiThread {
                 if (isDestroyed || shownFound !== found) return@runOnUiThread
                 result.fold(
-                    {
+                    { noteId ->
+                        found.notes.getOrPut(index) { mutableListOf() } += noteId
                         button(R.string.anki_added, false)
                         resultsWeb.evaluateJavascript("inAnki($index, '${getString(R.string.anki_in_deck)}')", null)
                     },
@@ -402,6 +418,34 @@ class LookupActivity : Activity() {
                         }
                     },
                 )
+            }
+        }
+    }
+
+    /**
+     * Shows result [index]'s notes in Anki's card browser: AnkiDroid's own link when Anki is on
+     * this phone (Hiroi is in the foreground, so it may open it; AnkiConnect Android in the
+     * background may not), AnkiConnect's guiBrowse for desktop Anki.
+     */
+    private fun openNote(index: Int) {
+        val ids = shownFound?.notes?.get(index).orEmpty()
+        if (ids.isEmpty()) return
+        val query = "nid:" + ids.joinToString(",")
+        val settings = AnkiSettings(this)
+        val local = Uri.parse(settings.url).host in setOf("127.0.0.1", "localhost")
+        val ankiDroid = Intent(Intent.ACTION_VIEW, Uri.parse("anki://x-callback-url/browser?search=" + Uri.encode(query)))
+            .setPackage(ANKIDROID)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        if (local && ankiDroid.resolveActivity(packageManager) != null) {
+            startActivity(ankiDroid)
+            return
+        }
+        worker.execute {
+            val result = runCatching { settings.client().guiBrowse(query) }
+            result.exceptionOrNull()?.let { error ->
+                runOnUiThread {
+                    Toast.makeText(this, getString(R.string.anki_unreachable, error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -457,6 +501,9 @@ class LookupActivity : Activity() {
         // Keep the panel away from the text being read.
         setPanelText(block.text, atTop = block.bounds.centerY() > resources.displayMetrics.heightPixels / 2, isText = true)
         shownBlock = block
+        // A box without character positions may cover a picture (Instagram describes whole posts):
+        // while its text is being read, look up what's under the tap when that's done.
+        if (scanning && block.characters == null) pendingTap = x to y
         // Look the tapped word up right away when the app reported where its characters are.
         val offset = CharacterLocator.characterAt(block, x, y)
         Log.d(TAG, "Tapped character $offset in a box")
@@ -526,7 +573,7 @@ class LookupActivity : Activity() {
         overlay.addBlocks(lines)
         val tap = pendingTap
         pendingTap = null
-        val hit = tap?.let { (x, y) -> overlay.blockAt(x, y) }
+        val hit = tap?.let { (x, y) -> overlay.blockAt(x, y) }?.takeIf { it.ocr }
         when {
             hit != null -> showBlock(hit, tap.first, tap.second) // tapped an image while it was being read
             !hasText -> showHint() // new count, no more "looking"
@@ -604,6 +651,7 @@ class LookupActivity : Activity() {
 
     companion object {
         private const val TAG = "HiroiLookup"
+        private const val ANKIDROID = "com.ichi2.anki"
         private const val PREFS = "hiroi"
         private const val KEY_DICTIONARY = "dictionary_component"
 

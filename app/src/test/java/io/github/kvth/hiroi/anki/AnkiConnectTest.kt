@@ -33,8 +33,8 @@ class AnkiConnectTest {
     @Test
     fun findsWhichWordsHaveNotesIgnoringMarkup() {
         val found = anki("<b>食べる</b>", "使う[つかう]", "<ruby>友達<rt>ともだち</rt></ruby>", "食べ物")
-            .wordsInDeck("Japanese::Core", "Word", listOf("食べる", "使う", "友達", "届く"))
-        assertEquals(setOf("食べる", "使う", "友達"), found)
+            .notesInDeck("Japanese::Core", "Word", listOf("食べる", "使う", "友達", "届く"))
+        assertEquals(mapOf("食べる" to listOf(1L), "使う" to listOf(2L), "友達" to listOf(3L)), found)
 
         val find = requests.first { it.getString("action") == "findNotes" }
         assertEquals(6, find.getInt("version"))

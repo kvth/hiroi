@@ -59,6 +59,11 @@ class OverlayView(
     private val ocrOutline = Paint(outline).apply { pathEffect = DashPathEffect(floatArrayOf(6 * dp, 4 * dp), 0f) }
     private val fill = Paint().apply { color = 0x1A4A90FF }
     private val selectedFill = Paint().apply { color = 0x664A90FF }
+    private val ocrBackground = Paint().apply { color = 0xEEFFFFFF.toInt() }
+    private val ocrText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF1A1A1A.toInt()
+        textAlign = Paint.Align.CENTER
+    }
     private val highlightFill = Paint().apply { color = 0x66FFB300 }
     private val highlightLine = Paint().apply { color = 0xFFFF8F00.toInt() }
 
@@ -69,6 +74,7 @@ class OverlayView(
         for (block in blocks) {
             rect.set(block.bounds)
             rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
+            if (block.ocr) drawRecognizedText(canvas, block)
             canvas.drawRoundRect(rect, radius, radius, if (block === selected) selectedFill else fill)
             canvas.drawRoundRect(rect, radius, radius, if (block.ocr) ocrOutline else outline)
         }
@@ -77,6 +83,30 @@ class OverlayView(
             rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
             canvas.drawRect(rect, highlightFill)
             canvas.drawRect(rect.left, rect.bottom - 2 * dp, rect.right, rect.bottom, highlightLine)
+        }
+    }
+
+    /**
+     * OCR text drawn over the picture where it was found, each character in its own box, so it's
+     * visible what was read (works for vertical text too, whose boxes run downwards).
+     */
+    private fun drawRecognizedText(canvas: Canvas, block: TextBlock) {
+        val characters = block.characters
+        val dx = -screenOffset[0].toFloat()
+        val dy = -screenOffset[1].toFloat()
+        val area = RectF(block.bounds).apply { offset(dx, dy) }
+        canvas.drawRect(area, ocrBackground)
+        if (characters == null) {
+            ocrText.textSize = minOf(area.height() * 0.8f, area.width() / maxOf(block.text.length, 1) * 1.1f)
+            canvas.drawText(block.text, area.centerX(), area.centerY() - (ocrText.ascent() + ocrText.descent()) / 2, ocrText)
+            return
+        }
+        for (i in block.text.indices) {
+            val box = characters.getOrNull(block.textOffset + i) ?: continue
+            ocrText.textSize = maxOf(box.height(), box.width()) * 0.9f
+            val x = box.centerX() + dx
+            val y = box.centerY() + dy - (ocrText.ascent() + ocrText.descent()) / 2
+            canvas.drawText(block.text, i, i + 1, x, y, ocrText)
         }
     }
 

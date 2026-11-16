@@ -59,14 +59,21 @@ class AnkiConnect(
     fun fieldNames(deck: String): List<String> =
         notesInfo(findNotes(deckQuery(deck)).take(FIELD_SAMPLE)).flatMap { it.fields.keys }.distinct()
 
-    /** Which of [words] have a note in [deck] whose [field] is that word (ignoring HTML and furigana). */
-    fun wordsInDeck(deck: String, field: String, words: Collection<String>): Set<String> {
-        if (words.isEmpty()) return emptySet()
+    /** The notes in [deck] whose [field] is one of [words] (ignoring HTML and furigana), by word. */
+    fun notesInDeck(deck: String, field: String, words: Collection<String>): Map<String, List<Long>> {
+        if (words.isEmpty()) return emptyMap()
         // A contains-search finds notes whose field has extra markup; the exact check happens below.
         val terms = words.joinToString(" OR ") { "\"${escape(field)}:*${escape(it)}*\"" }
         val ids = findNotes("${deckQuery(deck)} ($terms)").take(MAX_NOTES)
         val wanted = words.toSet()
-        return notesInfo(ids).mapNotNullTo(HashSet()) { note -> note.fields[field]?.let(::fieldText)?.takeIf { it in wanted } }
+        return notesInfo(ids)
+            .mapNotNull { note -> note.fields[field]?.let(::fieldText)?.takeIf { it in wanted }?.let { it to note.id } }
+            .groupBy({ it.first }, { it.second })
+    }
+
+    /** Opens Anki's card browser on [query] (on the computer, for desktop Anki). */
+    fun guiBrowse(query: String) {
+        request("guiBrowse", JSONObject().put("query", query))
     }
 
     private fun request(action: String, params: JSONObject = JSONObject()): Any? {

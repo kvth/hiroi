@@ -4,6 +4,11 @@
     <!-- AnkiConnect: AnkiConnect Android on 127.0.0.1, or desktop Anki on the local network -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- To open notes in AnkiDroid's card browser -->
+    <queries>
+        <package android:name="com.ichi2.anki" />
+    </queries>
+
     <!-- Needed to list dictionary apps (PopLingo, Takoboto, ...) in the text selection toolbar and the picker. -->
     <queries>
         <intent>

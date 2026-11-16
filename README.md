@@ -50,7 +50,7 @@ Not supported yet: images in definitions, tag descriptions (`tag_bank`), kanji f
 
 ## OCR
 
-Apps don't expose text inside images. So as soon as the overlay opens, Hiroi reads the screenshot it took on trigger with Google ML Kit's on-device Japanese recognizer, in the background. Japanese lines it finds in images are added as dashed boxes when it's done, usually within a second, and the other boxes can be used meanwhile. If you tap an image before then, the word under your tap is looked up once its line arrives. Everything runs on the phone; the model is bundled, so it needs neither a network connection nor Play Services.
+Apps don't expose text inside images; at most they describe the picture (Instagram: 写真、…), which doesn't stop Hiroi from reading the text in it. So as soon as the overlay opens, Hiroi reads the screenshot it took on trigger with Google ML Kit's on-device Japanese recognizer, in the background. Japanese lines it finds in images are added as dashed boxes when it's done, usually within a second, with the recognized text drawn over the picture where it was found. The other boxes can be used meanwhile. If you tap an image before then, the word under your tap is looked up once its line arrives. Everything runs on the phone; the model is bundled, so it needs neither a network connection nor Play Services.
 
 - Screenshots need the accessibility service. With only the assistant trigger, Hiroi uses the screenshot Android hands to assistants, if *Use screenshot* is on in the assistant settings.
 - Apps that forbid screenshots (streaming, banking) give a black image, so there's nothing to read.
@@ -84,7 +84,9 @@ Markers produce the same output as Yomitan's default templates. That includes `{
 
 Not supported, left empty and listed under *Cards*: custom markers from Yomitan's handlebars templates (e.g. JP Mining Note's `{jpmn-*}`), the pitch graphs, `{phonetic-transcriptions}`, and markers that don't apply on a phone (clipboard, URL). Sentence furigana comes from Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
 
-Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote` and `storeMediaFile`.
+Words that already have a note (with the Anki check set up), and words you just added, get an **Open in Anki** button. On the phone it opens AnkiDroid's card browser on those notes. Switch that browser to *All decks* once, because AnkiDroid's link only searches the deck it last showed. With desktop Anki, AnkiConnect's `guiBrowse` opens the browser on the computer.
+
+Hiroi uses only actions AnkiConnect Android supports: `deckNames`, `modelNames`, `modelFieldNames`, `findNotes`, `notesInfo`, `canAddNotes`, `addNote`, `storeMediaFile` and, for desktop Anki, `guiBrowse`.
 
 ## Limitations
 

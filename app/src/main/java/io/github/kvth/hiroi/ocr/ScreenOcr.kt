@@ -53,14 +53,22 @@ object ScreenOcr {
         return TextBlock(text.toString(), bounds, characters, ocr = true)
     }
 
-    /** Whether [block] (from OCR) mostly lies inside text the app already provides, so it adds nothing. */
+    /**
+     * Whether [block] (from OCR) repeats text the app already provides: it mostly lies inside an
+     * app box that has the same text. Lying inside isn't enough: apps like Instagram describe a
+     * whole picture ("写真、…"), and the text in the picture must still count.
+     */
     fun duplicates(block: TextBlock, appText: List<TextBlock>): Boolean {
         val area = block.bounds.width().toLong() * block.bounds.height()
         if (area <= 0) return true
+        val text = compact(block.text)
         return appText.any { other ->
             val overlap = Rect()
             overlap.setIntersect(block.bounds, other.bounds) &&
-                overlap.width().toLong() * overlap.height() * 2 >= area
+                overlap.width().toLong() * overlap.height() * 2 >= area &&
+                compact(other.text).let { it.contains(text) || text.contains(it) }
         }
     }
+
+    private fun compact(text: String) = text.filterNot { it.isWhitespace() }
 }

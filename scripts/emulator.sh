@@ -221,6 +221,12 @@ cmd_anki() {
   wait_for_text "概要|Summary" 60 || die "the import didn't finish"
   adb shell input keyevent KEYCODE_BACK
 
+  # Hiroi's "Open in Anki" link only searches the card browser's last deck: make that all decks.
+  adb shell am start -a android.intent.action.VIEW -d "anki://x-callback-url/browser" com.ichi2.anki >/dev/null
+  tap_text "(デフォルト|Default)$" 0 400 || die "AnkiDroid's card browser didn't open"
+  tap_text "(すべてのデッキ|All decks)$" || die "no deck list in the card browser"
+  adb shell input keyevent KEYCODE_HOME
+
   echo "==> Starting AnkiConnect Android"
   adb shell monkey -p com.kamwithk.ankiconnectandroid -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
   tap_text "START SERVICE" || die "AnkiConnect Android didn't open"

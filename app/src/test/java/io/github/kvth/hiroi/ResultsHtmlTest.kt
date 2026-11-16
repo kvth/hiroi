@@ -19,7 +19,7 @@ class ResultsHtmlTest {
     )
     private val html = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(
         LookupResult(0, 6, listOf(term), emptyList()),
-        AnkiStatus(setOf("届く")),
+        AnkiStatus(mapOf("届く" to listOf(42L))),
         styles = mapOf("Jitendex" to "span[data-sc-class=\"tag\"] { color: red; }"),
         cards = true,
     )
@@ -32,6 +32,7 @@ class ResultsHtmlTest {
         assertTrue(html, "<span class=\"tag frequency\"><span class=\"label\">JPDB</span><span class=\"value\">2412</span></span>" in html)
         assertTrue(html, "class=\"tag pitch\"><span class=\"label\">NHK</span>" in html)
         assertTrue(html, "onclick=\"Hiroi.addCard(0)\"" in html)
+        assertTrue("an existing note can be opened", "<button class=\"card\" id=\"open0\" onclick=\"Hiroi.openNote(0)\">Open in Anki</button>" in html)
     }
 
     @Test
