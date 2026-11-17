@@ -90,6 +90,18 @@ class MainActivity : Activity() {
             isChecked = DictionarySettings(this@MainActivity).averageFrequencies
             setOnCheckedChangeListener { _, checked -> DictionarySettings(this@MainActivity).averageFrequencies = checked }
         }
+        findViewById<Button>(R.id.export_collection).setOnClickListener {
+            val create = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                .setType("application/json")
+                .putExtra(Intent.EXTRA_TITLE, "hiroi-dictionaries-${java.time.LocalDate.now()}.json")
+            @Suppress("DEPRECATION")
+            startActivityForResult(create, REQUEST_EXPORT_COLLECTION)
+        }
+        findViewById<Button>(R.id.import_collection).setOnClickListener {
+            val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+            @Suppress("DEPRECATION")
+            startActivityForResult(pick, REQUEST_IMPORT_COLLECTION)
+        }
         findViewById<Button>(R.id.import_example).setOnClickListener {
             importDictionary { assets.open(EXAMPLE_ASSET) }
         }
@@ -342,6 +354,13 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** A dictionary collection (Dexie export) starts with {"formatName":"dexie"; Yomitan's settings don't. */
+    private fun isCollection(uri: Uri): Boolean = runCatching {
+        val start = ByteArray(200)
+        val read = contentResolver.openInputStream(uri)!!.use { it.read(start) }
+        String(start, 0, maxOf(read, 0)).replace(Regex("\\s"), "").contains("\"formatName\":\"dexie\"")
+    }.getOrDefault(false)
+
     /** Takes a card format from a Yomitan settings export; with several profiles, the user picks one. */
     private fun importYomitanSettings(uri: Uri) {
         val formats = try {
@@ -468,9 +487,13 @@ class MainActivity : Activity() {
         // file:// URIs only in debug builds, where scripts/emulator.sh imports through the app's own cache.
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (uri.scheme == ContentResolver.SCHEME_CONTENT || (uri.scheme == ContentResolver.SCHEME_FILE && debuggable)) {
-            // A JSON file is a Yomitan settings export (scripts/emulator.sh yomitan); anything else a dictionary.
-            if (intent.type == "application/json" || uri.path.orEmpty().endsWith(".json")) importYomitanSettings(uri)
-            else importDictionary { contentResolver.openInputStream(uri)!! }
+            // A JSON file is a dictionary collection or a Yomitan settings export (scripts/emulator.sh yomitan);
+            // anything else a dictionary.
+            when {
+                intent.type != "application/json" && !uri.path.orEmpty().endsWith(".json") -> importDictionary { contentResolver.openInputStream(uri)!! }
+                isCollection(uri) -> importCollection(uri)
+                else -> importYomitanSettings(uri)
+            }
         }
     }
 
@@ -483,6 +506,52 @@ class MainActivity : Activity() {
             importDictionary { contentResolver.openInputStream(uri)!! }
         }
         if (requestCode == REQUEST_YOMITAN_SETTINGS && resultCode == RESULT_OK && uri != null) importYomitanSettings(uri)
+        if (requestCode == REQUEST_EXPORT_COLLECTION && resultCode == RESULT_OK && uri != null) exportCollection(uri)
+        if (requestCode == REQUEST_IMPORT_COLLECTION && resultCode == RESULT_OK && uri != null) importCollection(uri)
+    }
+
+    /** Runs [work] in the background with its progress in the import status line, keeping the screen on. */
+    private fun dictionaryWork(start: Int, work: ((String) -> Unit) -> String) {
+        val status = findViewById<TextView>(R.id.import_status)
+        val buttons = listOf(R.id.import_dictionary, R.id.export_collection, R.id.import_collection).map { findViewById<Button>(it) }
+        buttons.forEach { it.isEnabled = false }
+        status.visibility = View.VISIBLE
+        status.setText(start)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        background.execute {
+            val message = try {
+                work { progress -> runOnUiThread { status.text = progress } }
+            } catch (e: Exception) {
+                Log.w(TAG, "Dictionary collection failed: ${e.message}", e)
+                getString(R.string.collection_failed, e.message ?: e.javaClass.simpleName)
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                buttons.forEach { it.isEnabled = true }
+                status.text = message
+                showDictionaries()
+            }
+        }
+    }
+
+    /** All dictionaries as one file, in Yomitan's format, so Yomitan (or Hiroi on another phone) can import them. */
+    private fun exportCollection(uri: Uri) = dictionaryWork(R.string.collection_exporting) { progress ->
+        contentResolver.openOutputStream(uri, "wt")!!.use { out ->
+            dictionaries.exportCollection(out) { progress(getString(R.string.collection_export_progress, it)) }
+        }
+        getString(R.string.collection_exported, dictionaries.dictionaries().size)
+    }
+
+    /** Dictionaries from a collection file (Yomitan's export or Hiroi's), added after the ones here. */
+    private fun importCollection(uri: Uri) = dictionaryWork(R.string.collection_importing) { progress ->
+        val result = contentResolver.openInputStream(uri)!!.use { input ->
+            dictionaries.importCollection(input) { progress(getString(R.string.collection_import_progress, it)) }
+        }
+        listOfNotNull(
+            getString(R.string.collection_imported, result.added.size, result.added.joinToString(", ")),
+            result.skipped.takeIf { it.isNotEmpty() }?.let { getString(R.string.collection_skipped, it.joinToString(", ")) },
+        ).joinToString("\n")
     }
 
     override fun onResume() {
@@ -541,6 +610,19 @@ class MainActivity : Activity() {
                 TextView(this).apply { text = describe(info) },
                 LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
             )
+            // The order is the priority, as in Yomitan: results show higher dictionaries first.
+            for ((label, by) in listOf("▲" to -1, "▼" to 1)) {
+                row.addView(
+                    Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                        text = label
+                        minWidth = 0
+                        minimumWidth = 0
+                        contentDescription = getString(if (by < 0) R.string.dictionary_up else R.string.dictionary_down)
+                        isEnabled = if (by < 0) info != installed.first() else info != installed.last()
+                        setOnClickListener { moveDictionary(info, by) }
+                    },
+                )
+            }
             row.addView(
                 Button(this, null, android.R.attr.borderlessButtonStyle).apply {
                     setText(R.string.remove)
@@ -548,6 +630,13 @@ class MainActivity : Activity() {
                 },
             )
             list.addView(row)
+        }
+    }
+
+    private fun moveDictionary(info: DictionaryInfo, by: Int) {
+        background.execute {
+            dictionaries.move(info.id, by)
+            runOnUiThread { if (!isDestroyed) showDictionaries() }
         }
     }
 
@@ -639,6 +728,8 @@ class MainActivity : Activity() {
         const val TAG = "HiroiImport"
         const val REQUEST_IMPORT = 1
         const val REQUEST_YOMITAN_SETTINGS = 2
+        const val REQUEST_EXPORT_COLLECTION = 3
+        const val REQUEST_IMPORT_COLLECTION = 4
 
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py

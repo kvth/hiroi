@@ -43,6 +43,8 @@ dependencies {
     // On-device Japanese OCR with the model bundled. Closed source (Google APIs Terms of Service):
     // fine for building it yourself, but see the README before distributing APKs.
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    // Streaming JSON for dictionary collections, which can be hundreds of MB (Yomitan's Dexie export format)
+    implementation("com.google.code.gson:gson:2.11.0")
     testImplementation("junit:junit:4.13.2")
     // android.jar only has stubs of org.json; unit tests need the real thing.
     testImplementation("org.json:json:20240303")

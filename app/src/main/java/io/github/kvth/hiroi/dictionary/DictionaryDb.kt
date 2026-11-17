@@ -6,6 +6,8 @@ import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.zip.ZipFile
 
 /** [frequencies]: how many frequency values it has (terms and kanji); [frequencyMode] as its index.json says, if it does. */
@@ -22,7 +24,7 @@ data class DictionaryInfo(
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 4), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 5), DictionaryStore {
 
     init {
         setWriteAheadLoggingEnabled(true) // lookups keep working during an import
@@ -32,7 +34,7 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL(
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
                 "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
-                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0)",
+                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT)",
         )
         db.execSQL(
             "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
@@ -70,6 +72,12 @@ class DictionaryDb private constructor(context: Context) :
         }
         // 4: tag banks, for Anki cards rendered with Yomitan's templates (dictionaries need importing again to get theirs)
         if (oldVersion < 4) createTags(db)
+        // 5: the order of the dictionaries (their priority), and what their index.json says, for exporting them
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE dictionaries ADD COLUMN position INTEGER DEFAULT 0")
+            db.execSQL("ALTER TABLE dictionaries ADD COLUMN summary TEXT")
+            db.execSQL("UPDATE dictionaries SET position = id")
+        }
     }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
@@ -80,7 +88,7 @@ class DictionaryDb private constructor(context: Context) :
 
     fun dictionaries(): List<DictionaryInfo> =
         readableDatabase.rawQuery(
-            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode FROM dictionaries ORDER BY id", null,
+            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode FROM dictionaries ORDER BY position, id", null,
         ).use { c ->
             List(c.count) {
                 c.moveToNext()
@@ -123,7 +131,8 @@ class DictionaryDb private constructor(context: Context) :
         ZipFile(zip).use { file ->
             val indexEntry = file.getEntry("index.json")
                 ?: throw IllegalArgumentException("Not a Yomitan dictionary (no index.json)")
-            val index = Yomitan.parseIndex(file.getInputStream(indexEntry).reader().readText())
+            val indexJson = file.getInputStream(indexEntry).reader().readText()
+            val index = Yomitan.parseIndex(indexJson)
             val db = writableDatabase
             require(DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM dictionaries WHERE title = ?", arrayOf(index.title)) == 0L) {
                 "\"${index.title}\" is already imported"
@@ -134,6 +143,8 @@ class DictionaryDb private constructor(context: Context) :
                     put("title", index.title)
                     put("revision", index.revision)
                     put("frequency_mode", index.frequencyMode)
+                    put("position", nextPosition(db))
+                    put("summary", YomitanCollection.summaryFromIndex(indexJson))
                     file.getEntry("styles.css")?.let { put("styles", file.getInputStream(it).reader().readText()) }
                 },
             )
@@ -178,6 +189,177 @@ class DictionaryDb private constructor(context: Context) :
             } catch (e: Exception) {
                 delete(id)
                 throw e
+            }
+        }
+    }
+
+    /** What importing a collection did: the dictionaries it added, and those it left out because they were already there. */
+    class CollectionImport(val added: List<String>, val skipped: List<String>)
+
+    /**
+     * Writes every dictionary, in their order, as a Yomitan dictionary collection
+     * ([YomitanCollection]), which Yomitan can import too.
+     */
+    fun exportCollection(out: OutputStream, onProgress: (String) -> Unit) {
+        val db = readableDatabase
+        val dictionaries = dictionaries()
+        fun count(table: String) = DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM $table", null).toInt()
+        fun byDict(sql: String): Map<Long, Int> = db.rawQuery(sql, null).use { c -> buildMap { while (c.moveToNext()) put(c.getLong(0), c.getInt(1)) } }
+        fun byDictMode(table: String): Map<Long, Map<String, Int>> = db.rawQuery("SELECT dict, mode, COUNT(*) FROM $table GROUP BY dict, mode", null).use { c ->
+            val out = HashMap<Long, HashMap<String, Int>>()
+            while (c.moveToNext()) out.getOrPut(c.getLong(0)) { HashMap() }[c.getString(1)] = c.getInt(2)
+            out
+        }
+        val terms = byDict("SELECT dict, COUNT(*) FROM terms GROUP BY dict")
+        val kanji = byDict("SELECT dict, COUNT(*) FROM kanji GROUP BY dict")
+        val tags = byDict("SELECT dict, COUNT(*) FROM tags GROUP BY dict")
+        val termMeta = byDictMode("term_meta")
+        val kanjiMeta = byDictMode("kanji_meta")
+        val stored = db.rawQuery("SELECT id, summary, styles FROM dictionaries", null).use { c ->
+            buildMap { while (c.moveToNext()) put(c.getLong(0), c.getString(1) to c.getString(2)) }
+        }
+        val total = listOf("terms", "term_meta", "kanji", "kanji_meta", "tags").sumOf(::count)
+        var written = 0
+        fun progress() {
+            if (++written % 10_000 == 0) onProgress("$written / $total")
+        }
+        YomitanCollection.Writer(out.bufferedWriter()).use { writer ->
+            writer.begin(
+                mapOf(
+                    "dictionaries" to dictionaries.size, "kanji" to count("kanji"), "kanjiMeta" to count("kanji_meta"),
+                    "tagMeta" to count("tags"), "termMeta" to count("term_meta"), "terms" to count("terms"),
+                ),
+            )
+            for (table in YomitanCollection.TABLES.keys) writer.table(table) {
+                when (table) {
+                    "dictionaries" -> for (info in dictionaries) {
+                        val counts = YomitanCollection.Counts(
+                            terms[info.id] ?: 0, termMeta[info.id].orEmpty(), kanji[info.id] ?: 0, kanjiMeta[info.id].orEmpty(), tags[info.id] ?: 0,
+                        )
+                        val (summary, styles) = stored[info.id] ?: (null to null)
+                        writer.dictionary(YomitanCollection.summary(summary, info, styles, counts, System.currentTimeMillis()))
+                    }
+                    "terms" -> rows(
+                        "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, d.title " +
+                            "FROM terms t JOIN dictionaries d ON d.id = t.dict",
+                    ) { c ->
+                        writer.term(
+                            TermEntry(
+                                c.getString(0), c.getString(1), c.getString(2).orEmpty(), c.getString(3).orEmpty(), c.getInt(4),
+                                c.getString(5), c.getLong(6), c.getString(7).orEmpty(), c.getString(8),
+                            ),
+                        )
+                        progress()
+                    }
+                    "termMeta" -> rows("SELECT m.expression, m.mode, m.data, d.title FROM term_meta m JOIN dictionaries d ON d.id = m.dict") { c ->
+                        writer.meta(TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3)), "expression")
+                        progress()
+                    }
+                    "kanjiMeta" -> rows("SELECT m.character, m.mode, m.data, d.title FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict") { c ->
+                        writer.meta(TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3)), "character")
+                        progress()
+                    }
+                    "kanji" -> rows("SELECT k.character, k.onyomi, k.kunyomi, k.tags, k.meanings, d.title FROM kanji k JOIN dictionaries d ON d.id = k.dict") { c ->
+                        writer.kanji(
+                            KanjiEntry(
+                                c.getString(0), c.getString(1).orEmpty(), c.getString(2).orEmpty(), c.getString(3).orEmpty(),
+                                c.getString(4).orEmpty().split('\n').filter { it.isNotEmpty() }, c.getString(5),
+                            ),
+                        )
+                        progress()
+                    }
+                    "tagMeta" -> rows("SELECT t.name, t.category, t.ord, t.notes, t.score, d.title FROM tags t JOIN dictionaries d ON d.id = t.dict") { c ->
+                        writer.tag(TagInfo(c.getString(0), c.getString(1).orEmpty(), c.getInt(2), c.getString(3).orEmpty(), c.getInt(4), c.getString(5)))
+                        progress()
+                    }
+                }
+            }
+            writer.end()
+        }
+    }
+
+    private inline fun rows(sql: String, each: (android.database.Cursor) -> Unit) {
+        readableDatabase.rawQuery(sql, null).use { c -> while (c.moveToNext()) each(c) }
+    }
+
+    /**
+     * Adds the dictionaries of a Yomitan dictionary collection (Yomitan's export, or Hiroi's),
+     * after the ones already here; those already imported (by title) are left as they are. A
+     * failed import leaves nothing behind.
+     */
+    fun importCollection(input: InputStream, onProgress: (String) -> Unit): CollectionImport {
+        val db = writableDatabase
+        val existing = dictionaries().mapTo(HashSet()) { it.title }
+        val ids = LinkedHashMap<String, Long>()
+        val skipped = LinkedHashSet<String>()
+        /** The dictionary [title] is imported into; null if it was already there. */
+        fun dict(title: String): Long? {
+            if (title in existing) {
+                skipped += title
+                return null
+            }
+            return ids.getOrPut(title) {
+                db.insertOrThrow("dictionaries", null, ContentValues().apply {
+                    put("title", title)
+                    put("position", nextPosition(db))
+                })
+            }
+        }
+        fun <T> insert(rows: List<T>, title: (T) -> String, add: (Long, List<T>) -> Unit) {
+            for ((name, group) in rows.groupBy(title)) dict(name)?.let { add(it, group) }
+        }
+        try {
+            YomitanCollection.read(input.bufferedReader(), object : YomitanCollection.Sink {
+                override fun dictionary(summary: org.json.JSONObject) {
+                    val id = dict(summary.optString("title")) ?: return
+                    db.update("dictionaries", ContentValues().apply {
+                        put("revision", summary.optString("revision"))
+                        put("frequency_mode", summary.optString("frequencyMode").takeIf { it in Yomitan.FREQUENCY_MODES })
+                        put("styles", summary.optString("styles").takeIf { it.isNotEmpty() })
+                        put("summary", summary.toString())
+                    }, "id = ?", arrayOf(id.toString()))
+                }
+                override fun terms(rows: List<TermEntry>) = insert(rows, { it.dictionary }) { id, group -> insertTerms(db, id, group) }
+                override fun termMeta(rows: List<TermMeta>) = insert(rows, { it.dictionary }) { id, group -> insertMeta(db, id, group, "term_meta") }
+                override fun kanji(rows: List<KanjiEntry>) = insert(rows, { it.dictionary }) { id, group -> insertKanji(db, id, group) }
+                override fun kanjiMeta(rows: List<TermMeta>) = insert(rows, { it.dictionary }) { id, group -> insertMeta(db, id, group, "kanji_meta") }
+                override fun tags(rows: List<TagInfo>) = insert(rows, { it.dictionary }) { id, group -> insertTags(db, id, group) }
+            }) { read -> onProgress("$read") }
+            for (id in ids.values) updateCounts(db, id)
+        } catch (e: Exception) {
+            ids.values.forEach(::delete)
+            throw e
+        }
+        return CollectionImport(ids.keys.toList(), skipped.toList())
+    }
+
+    /** The counts shown in the dictionary list, from the rows themselves. */
+    private fun updateCounts(db: SQLiteDatabase, id: Long) {
+        fun count(sql: String) = DatabaseUtils.longForQuery(db, sql, arrayOf(id.toString()))
+        db.update("dictionaries", ContentValues().apply {
+            put("terms", count("SELECT COUNT(*) FROM terms WHERE dict = ?"))
+            put("meta", count("SELECT COUNT(*) FROM term_meta WHERE dict = ?") + count("SELECT COUNT(*) FROM kanji_meta WHERE dict = ?"))
+            put("kanji", count("SELECT COUNT(*) FROM kanji WHERE dict = ?"))
+            put("frequencies", count("SELECT COUNT(*) FROM term_meta WHERE dict = ? AND mode = 'freq'") + count("SELECT COUNT(*) FROM kanji_meta WHERE dict = ? AND mode = 'freq'"))
+        }, "id = ?", arrayOf(id.toString()))
+    }
+
+    private fun nextPosition(db: SQLiteDatabase): Long =
+        DatabaseUtils.longForQuery(db, "SELECT COALESCE(MAX(position), 0) + 1 FROM dictionaries", null)
+
+    /**
+     * Moves dictionary [id] up ([by] < 0) or down in the order, which is their priority as in
+     * Yomitan: results show the definitions and frequencies of dictionaries higher up first.
+     */
+    fun move(id: Long, by: Int) {
+        val order = dictionaries().map { it.id }.toMutableList()
+        val from = order.indexOf(id)
+        val to = from + by
+        if (from < 0 || to !in order.indices) return
+        order.add(to, order.removeAt(from))
+        inTransaction(writableDatabase) {
+            for ((i, dict) in order.withIndex()) {
+                writableDatabase.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
             }
         }
     }
@@ -273,7 +455,7 @@ class DictionaryDb private constructor(context: Context) :
             val placeholders = chunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
-                    "d.title, d.id FROM terms t JOIN dictionaries d ON d.id = t.dict " +
+                    "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict " +
                     "WHERE t.expression IN ($placeholders) OR t.reading IN ($placeholders)",
                 (chunk + chunk).toTypedArray(),
             ).use { c ->
@@ -294,7 +476,7 @@ class DictionaryDb private constructor(context: Context) :
         for (chunk in expressions.chunked(MAX_ARGS)) {
             val placeholders = chunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
-                "SELECT m.expression, m.mode, m.data, d.title, d.id FROM term_meta m JOIN dictionaries d ON d.id = m.dict " +
+                "SELECT m.expression, m.mode, m.data, d.title, d.position FROM term_meta m JOIN dictionaries d ON d.id = m.dict " +
                     "WHERE m.expression IN ($placeholders)",
                 chunk.toTypedArray(),
             ).use { c ->
@@ -323,8 +505,8 @@ class DictionaryDb private constructor(context: Context) :
 
     override fun findKanjiMeta(character: String): List<TermMeta> =
         readableDatabase.rawQuery(
-            "SELECT m.character, m.mode, m.data, d.title, d.id FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict " +
-                "WHERE m.character = ? ORDER BY d.id",
+            "SELECT m.character, m.mode, m.data, d.title, d.position FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict " +
+                "WHERE m.character = ? ORDER BY d.position",
             arrayOf(character),
         ).use { c ->
             List(c.count) {
@@ -336,7 +518,7 @@ class DictionaryDb private constructor(context: Context) :
     override fun findKanji(character: String): List<KanjiEntry> =
         readableDatabase.rawQuery(
             "SELECT k.character, k.onyomi, k.kunyomi, k.tags, k.meanings, d.title FROM kanji k " +
-                "JOIN dictionaries d ON d.id = k.dict WHERE k.character = ? ORDER BY d.id",
+                "JOIN dictionaries d ON d.id = k.dict WHERE k.character = ? ORDER BY d.position",
             arrayOf(character),
         ).use { c ->
             List(c.count) {

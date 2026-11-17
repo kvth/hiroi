@@ -30,7 +30,15 @@ The bottom of the app's setup screen has Japanese example sentences to try Hiroi
 
 ## Dictionaries
 
-Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone. Dictionaries imported first are shown first.
+Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone.
+
+The order of the dictionaries is their priority, as in Yomitan: results show the definitions, frequencies and pitch accents of dictionaries higher up first. Anki cards see this order too, and so does the default sort list. New dictionaries go to the end; **▲▼** in the list move them.
+
+**Collections**: *Export collection* writes all dictionaries into one file, in their order, and *Import collection* reads one, as Yomitan's *Backup → Export / Import dictionary collection* do. The files are Yomitan's own format, Dexie's export of its dictionary database (version 60, with Yomitan's tables and indexes), so they work both ways:
+- **into Hiroi:** a collection exported from Yomitan, instead of every dictionary zip again;
+- **out of Hiroi:** one into Yomitan, or onto another phone.
+
+Unlike Yomitan's import, which replaces everything, Hiroi's adds the dictionaries that aren't there yet, after the others, and leaves those already imported (by title) as they are. Both read and write as a stream, so collections of hundreds of MB are fine. Dictionary images aren't kept by Hiroi, so they're neither imported nor exported. Opening a collection file with Hiroi (*Open with*) imports it too.
 
 Results look like Yomitan's popup:
 - the headword with furigana, then tags for the inflection, Anki status, frequencies and pitch accent,
