@@ -29,6 +29,21 @@ class AnkiSettings(context: Context) {
         get() = prefs.getString("card_format", null)?.let { runCatching { CardFormat.fromJson(it) }.getOrNull() } ?: CardFormat()
         set(value) = prefs.edit().putString("card_format", value.toJson()).apply()
 
+    /** Yomitan's Anki card templates (Handlebars) the fields are rendered with; null for Yomitan's default ones. */
+    var fieldTemplates: String?
+        get() = prefs.getString("field_templates", null)
+        set(value) = prefs.edit().putString("field_templates", value).apply()
+
+    /** Yomitan's "compact" glossary layout: {glossary} without the list around single definitions' entries. */
+    var compactGlossaries: Boolean
+        get() = prefs.getBoolean("compact_glossaries", false)
+        set(value) = prefs.edit().putBoolean("compact_glossaries", value).apply()
+
+    /** Yomitan's "compact tags": a definition's tags left out where they repeat the previous definition's. */
+    var compactTags: Boolean
+        get() = prefs.getBoolean("compact_tags", false)
+        set(value) = prefs.edit().putBoolean("compact_tags", value).apply()
+
     /** Fill {audio} with word audio from JapanesePod101, as Yomitan's default audio source does. */
     var wordAudio: Boolean
         get() = prefs.getBoolean("word_audio", true)

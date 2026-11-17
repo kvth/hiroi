@@ -22,7 +22,7 @@ data class DictionaryInfo(
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 3), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 4), DictionaryStore {
 
     init {
         setWriteAheadLoggingEnabled(true) // lookups keep working during an import
@@ -45,6 +45,12 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL("CREATE TABLE kanji (dict INTEGER, character TEXT, onyomi TEXT, kunyomi TEXT, tags TEXT, meanings TEXT)")
         db.execSQL("CREATE INDEX kanji_character ON kanji (character)")
         createKanjiMeta(db)
+        createTags(db)
+    }
+
+    private fun createTags(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE tags (dict INTEGER, name TEXT, category TEXT, ord INTEGER, notes TEXT, score INTEGER)")
+        db.execSQL("CREATE INDEX tags_name ON tags (name)")
     }
 
     private fun createKanjiMeta(db: SQLiteDatabase) {
@@ -62,6 +68,8 @@ class DictionaryDb private constructor(context: Context) :
             db.execSQL("UPDATE dictionaries SET frequencies = (SELECT COUNT(*) FROM term_meta m WHERE m.dict = dictionaries.id AND m.mode = 'freq')")
             createKanjiMeta(db)
         }
+        // 4: tag banks, for Anki cards rendered with Yomitan's templates (dictionaries need importing again to get theirs)
+        if (oldVersion < 4) createTags(db)
     }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
@@ -148,6 +156,7 @@ class DictionaryDb private constructor(context: Context) :
                             meta += insertMeta(db, id, rows, "term_meta")
                             frequencies += rows.count { it.mode == "freq" }
                         }
+                        "tag_bank" -> insertTags(db, id, Yomitan.parseTagBank(json))
                         "kanji_meta_bank" -> Yomitan.parseTermMetaBank(json).let { rows ->
                             meta += insertMeta(db, id, rows, "kanji_meta")
                             frequencies += rows.count { it.mode == "freq" }
@@ -177,7 +186,7 @@ class DictionaryDb private constructor(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (table in listOf("terms", "term_meta", "kanji", "kanji_meta")) db.delete(table, "dict = ?", arrayOf(id.toString()))
+            for (table in listOf("terms", "term_meta", "kanji", "kanji_meta", "tags")) db.delete(table, "dict = ?", arrayOf(id.toString()))
             db.delete("dictionaries", "id = ?", arrayOf(id.toString()))
             db.setTransactionSuccessful()
         } finally {
@@ -214,6 +223,20 @@ class DictionaryDb private constructor(context: Context) :
             insert.bindString(2, row.expression)
             insert.bindString(3, row.mode)
             insert.bindString(4, row.data)
+            insert.executeInsert()
+        }
+        rows.size
+    }
+
+    private fun insertTags(db: SQLiteDatabase, dict: Long, rows: List<TagInfo>): Int = inTransaction(db) {
+        val insert = db.compileStatement("INSERT INTO tags (dict, name, category, ord, notes, score) VALUES (?, ?, ?, ?, ?, ?)")
+        for (row in rows) {
+            insert.bindLong(1, dict)
+            insert.bindString(2, row.name)
+            insert.bindString(3, row.category)
+            insert.bindLong(4, row.order.toLong())
+            insert.bindString(5, row.notes)
+            insert.bindLong(6, row.score.toLong())
             insert.executeInsert()
         }
         rows.size
@@ -283,6 +306,21 @@ class DictionaryDb private constructor(context: Context) :
         return out
     }
 
+    override fun findTags(dictionary: String, names: Collection<String>): List<TagInfo> {
+        if (names.isEmpty()) return emptyList()
+        val placeholders = names.joinToString(",") { "?" }
+        return readableDatabase.rawQuery(
+            "SELECT t.name, t.category, t.ord, t.notes, t.score FROM tags t JOIN dictionaries d ON d.id = t.dict " +
+                "WHERE d.title = ? AND t.name IN ($placeholders)",
+            (listOf(dictionary) + names).toTypedArray(),
+        ).use { c ->
+            List(c.count) {
+                c.moveToNext()
+                TagInfo(c.getString(0), c.getString(1).orEmpty(), c.getInt(2), c.getString(3).orEmpty(), c.getInt(4), dictionary)
+            }
+        }
+    }
+
     override fun findKanjiMeta(character: String): List<TermMeta> =
         readableDatabase.rawQuery(
             "SELECT m.character, m.mode, m.data, d.title, d.id FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict " +
@@ -311,7 +349,7 @@ class DictionaryDb private constructor(context: Context) :
         }
 
     companion object {
-        private val BANK = Regex("(term_bank|term_meta_bank|kanji_bank|kanji_meta_bank)_(\\d+)\\.json")
+        private val BANK = Regex("(term_bank|term_meta_bank|kanji_bank|kanji_meta_bank|tag_bank)_(\\d+)\\.json")
 
         // Yomitan's words for telling ranks from occurrence counts (sort-frequency-dictionary-controller.js)
         private val MORE_COMMON = listOf("来る", "言う", "出る", "入る", "方", "男", "女", "今", "何", "時")

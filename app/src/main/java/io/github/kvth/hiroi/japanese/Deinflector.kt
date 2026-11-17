@@ -17,6 +17,10 @@ object Deinflector {
     }
 
     private val names by lazy { transformer.transforms.associate { it.id to it.name } }
+    private val descriptions by lazy { transformer.transforms.associate { it.name to it.description } }
+
+    /** What an inflection (by its name, as in [Deinflection.inflections]) does, as Yomitan describes it. */
+    fun description(name: String): String? = descriptions[name]?.takeIf { it.isNotEmpty() }
     private val suru by lazy { transformer.conditionFlagsFromConditionType("vs") }
 
     /** [text] itself (first) and every form it could be an inflection of, fewest steps first. */

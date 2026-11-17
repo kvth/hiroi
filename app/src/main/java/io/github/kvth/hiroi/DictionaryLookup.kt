@@ -2,6 +2,7 @@ package io.github.kvth.hiroi
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -32,6 +33,8 @@ class DictionaryLookup(
     private val activity: Activity,
     private val documentTitle: () -> String,
     private val screenshot: () -> Bitmap?,
+    /** The text selected where the word was looked up, for {popup-selection-text}. */
+    private val selection: () -> String = { "" },
 ) {
     sealed interface Lookup {
         class Message(val text: String) : Lookup
@@ -156,9 +159,9 @@ class DictionaryLookup(
         val settings = AnkiSettings(activity)
         val format = settings.cardFormat
         if (!format.complete || !format.checkForDuplicates) return
-        val cards = found.result.terms.indices.map { cardData(found, it) }
+        val terms = found.result.terms
         worker.execute {
-            val duplicates = runCatching { CardCreator(settings).duplicates(cards) }
+            val duplicates = runCatching { CardCreator(activity, settings).duplicates(terms) }
                 .onFailure { Log.w(TAG, "Duplicate check failed", it) }
                 .getOrNull() ?: return@execute
             activity.runOnUiThread {
@@ -188,11 +191,12 @@ class DictionaryLookup(
         return CardData(
             term, found.text, start, start + term.source.length,
             documentTitle = documentTitle(),
-            furigana = { sentence ->
+            parse = { sentence ->
                 Furigana.forText(sentence) { text, i ->
                     translator.lookUp(text, i)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
                 }
             },
+            selection = selection(),
         )
     }
 
@@ -243,15 +247,17 @@ class DictionaryLookup(
         val screenshot = screenshot()
         worker.execute {
             val result = runCatching {
-                val creator = CardCreator(settings)
-                if (overwrite != null) overwrite.also { creator.overwrite(it, data, screenshot) } else creator.add(data, screenshot)
+                val creator = CardCreator(activity, settings, ::clipboardText)
+                if (overwrite != null) creator.overwrite(overwrite, data, screenshot) else creator.add(data, screenshot)
             }
             activity.runOnUiThread {
                 if (activity.isDestroyed || shown !== found) return@runOnUiThread
                 result.fold(
-                    { noteId ->
+                    { added ->
                         val notes = found.notes.getOrPut(index) { mutableListOf() }
-                        if (noteId !in notes) notes += noteId
+                        if (added.noteId !in notes) notes += added.noteId
+                        // Fields whose templates failed show {marker-render-error}, as in Yomitan; say which.
+                        if (added.errors.isNotEmpty()) toast(activity.getString(R.string.anki_template_errors, added.errors.joinToString("\n")))
                         button(if (overwrite != null) R.string.anki_overwritten else R.string.anki_added, false)
                         web.evaluateJavascript("inAnki($index, '${activity.getString(R.string.anki_in_deck)}')", null)
                     },
@@ -294,6 +300,10 @@ class DictionaryLookup(
             }
         }
     }
+
+    /** The clipboard's text, for {clipboard-text}; Hiroi is in the foreground, so it may read it. */
+    private fun clipboardText(): String? =
+        activity.getSystemService(ClipboardManager::class.java)?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(activity)?.toString()
 
     private fun toast(text: String) = Toast.makeText(activity, text, Toast.LENGTH_LONG).show()
 

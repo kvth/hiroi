@@ -13,6 +13,9 @@ interface DictionaryStore {
 
     /** Kanji meta bank rows (frequencies) for [character]; [TermMeta.expression] is the character. */
     fun findKanjiMeta(character: String): List<TermMeta> = emptyList()
+
+    /** What the tags [names] of [dictionary] mean, from its tag bank; unknown tags are left out. */
+    fun findTags(dictionary: String, names: Collection<String>): List<TagInfo> = emptyList()
 }
 
 /** Sorting results by one frequency dictionary, as Yomitan's "Frequency sorting dictionary"; [ascending] for ranks. */
@@ -20,7 +23,9 @@ data class FrequencySort(val dictionary: String, val ascending: Boolean)
 
 /**
  * Entries sharing a headword and reading, from one or more dictionaries. [source] is the scanned
- * text they matched; [inflections] the transforms from the headword to [source] (empty if it matched as written).
+ * text they matched; [inflections] the transforms from the headword to [source] (empty if it
+ * matched as written); [deinflected] the form that was looked up (the headword, or its reading),
+ * and [processed] whether [source] was read as hiragana for that.
  */
 data class TermGroup(
     val expression: String,
@@ -29,6 +34,8 @@ data class TermGroup(
     val inflections: List<String>,
     val entries: List<TermEntry>,
     val meta: List<TermMeta>,
+    val deinflected: String = expression,
+    val processed: Boolean = false,
 )
 
 /** [start]..[end] is the longest matched text. */
@@ -84,6 +91,8 @@ class Translator(private val store: DictionaryStore, private val frequencySort: 
                 inflections = group.candidate.inflections,
                 entries = group.entries.sortedWith(compareBy<TermEntry> { it.priority }.thenByDescending { it.score }),
                 meta = meta.filter { it.expression == expression }.sortedBy { it.priority },
+                deinflected = group.candidate.form,
+                processed = group.candidate.processed,
             )
             Sortable(term, group.candidate.processed, group.candidate.form == expression, frequencyOrder(term, sort))
         }.sortedWith(ORDER)

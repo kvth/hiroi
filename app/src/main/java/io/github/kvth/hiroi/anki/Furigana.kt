@@ -36,11 +36,12 @@ object Furigana {
     }
 
     /**
-     * Furigana for running text (a sentence), word by word: [lookUp] gives the dictionary word at a
-     * position, as the overlay finds it. Only words starting with kanji are looked up.
+     * Running text (a sentence) split into words with readings, as Yomitan's text parser gives
+     * them for sentence furigana: [lookUp] gives the dictionary word at a position, as the overlay
+     * finds it. Only words starting with kanji are looked up; other characters are words of their own.
      */
-    fun forText(text: String, lookUp: (String, Int) -> TermGroupLike?): List<Segment> {
-        val out = mutableListOf<Segment>()
+    fun forText(text: String, lookUp: (String, Int) -> TermGroupLike?): List<List<Segment>> {
+        val out = mutableListOf<List<Segment>>()
         var i = 0
         while (i < text.length) {
             val term = if (Japanese.isKanji(text[i])) lookUp(text, i) else null
@@ -48,17 +49,11 @@ object Furigana {
                 out += forSource(term.source, term.expression, term.reading)
                 i += term.source.length
             } else {
-                out += Segment(text[i].toString(), null)
+                out += listOf(Segment(text[i].toString(), null))
                 i++
             }
         }
-        // Join the kana in between, so the plain form doesn't get stray spaces.
-        return out.fold(mutableListOf()) { merged, segment ->
-            val last = merged.lastOrNull()
-            if (last != null && last.reading == null && segment.reading == null) merged[merged.lastIndex] = Segment(last.text + segment.text, null)
-            else merged += segment
-            merged
-        }
+        return out
     }
 
     /** The parts of a looked-up word [forText] needs. */

@@ -24,18 +24,20 @@ class CardFormatTest {
     @Test
     fun importsTermCardFormatsFromYomitanSettings() {
         val formats = YomitanSettings.cardFormats(export)
-        assertEquals(listOf("Default: Expression", "strict: Expression"), formats.map { it.first })
+        assertEquals(listOf("Default: Expression", "strict: Expression"), formats.map { it.name })
 
-        val lapis = formats[0].second
+        val lapis = formats[0].format
         assertEquals("Lapis", lapis.deck)
         // Android keeps the export's field order; the JSON library in unit tests doesn't, hence a set
         assertEquals(setOf("Expression", "Sentence", "PAGraphs"), lapis.fields.keys)
         assertEquals("{cloze-prefix}<b>{cloze-body}</b>{cloze-suffix}", lapis.fields["Sentence"])
         assertEquals(listOf("yomitan"), lapis.tags)
         assertFalse(lapis.preventDuplicates)
-        assertEquals(listOf("jpmn-pitch-accent-graphs"), lapis.unsupported)
+        // Markers the templates don't define (here: JP Mining Note's, without its templates)
+        val templates = listOf("expression", "cloze-prefix", "cloze-body", "cloze-suffix").joinToString("") { "{{#*inline \"$it\"}}{{/inline}}" }
+        assertEquals(listOf("jpmn-pitch-accent-graphs"), AnkiTemplates.unknownMarkers(lapis, templates, emptyList()))
 
-        val strict = formats[1].second
+        val strict = formats[1].format
         assertTrue(strict.preventDuplicates)
         assertEquals("deck", strict.duplicateScope)
     }
@@ -43,18 +45,32 @@ class CardFormatTest {
     @Test
     fun importsYomitansDuplicateOptions() {
         val formats = YomitanSettings.cardFormats(export)
-        val lapis = formats[0].second
+        val lapis = formats[0].format
         assertTrue(lapis.checkForDuplicates)
         assertEquals("new", lapis.duplicateBehavior)
         assertEquals("coalesce", lapis.overwriteMode("Sentence"))
-        assertEquals("prevent", formats[1].second.duplicateBehavior)
+        assertEquals("prevent", formats[1].format.duplicateBehavior)
         val overwrite = YomitanSettings.cardFormats(
             export.replace("\"duplicateBehavior\": \"new\"", "\"duplicateBehavior\": \"overwrite\", \"duplicateScopeCheckAllModels\": true")
                 .replace("\"overwriteMode\": \"coalesce\"}", "\"overwriteMode\": \"append\"}"),
-        ).first().second
+        ).first().format
         assertEquals("overwrite", overwrite.duplicateBehavior)
         assertTrue(overwrite.checkAllModels)
         assertTrue(overwrite.overwriteModes.values.all { it == "append" })
+    }
+
+    @Test
+    fun importsTheProfilesTemplatesAndLayout() {
+        val custom = YomitanSettings.cardFormats(
+            export.replace("\"tags\": [\"yomitan\"],", "\"tags\": [\"yomitan\"], \"fieldTemplates\": \"{{#*inline \\\"mine\\\"}}x{{/inline}}\",")
+                .replace("{\"name\": \"Default\", \"options\": {", "{\"name\": \"Default\", \"options\": {\"general\": {\"glossaryLayoutMode\": \"compact-popup-anki\", \"compactTags\": true}, "),
+        ).first()
+        assertEquals("{{#*inline \"mine\"}}x{{/inline}}", custom.templates)
+        assertTrue(custom.compactGlossaries)
+        assertTrue(custom.compactTags)
+        val plain = YomitanSettings.cardFormats(export).first()
+        assertEquals(null, plain.templates)
+        assertFalse(plain.compactGlossaries)
     }
 
     @Test
@@ -70,10 +86,11 @@ class CardFormatTest {
     fun overwritesLikeYomitan() {
         assertEquals("new", CardFormat.overwrite("overwrite", "old", "new"))
         assertEquals("", CardFormat.overwrite("overwrite", "old", ""))
-        assertEquals("new", CardFormat.overwrite("coalesce", "old", "new"))
-        assertEquals("old", CardFormat.overwrite("coalesce", "old", ""))
-        assertEquals("old", CardFormat.overwrite("coalesce-new", "old", "new"))
-        assertEquals("new", CardFormat.overwrite("coalesce-new", "", "new"))
+        // coalesce ("Fill if empty", Yomitan's default) keeps what's there; coalesce-new ("Overwrite if available") prefers the new value
+        assertEquals("old", CardFormat.overwrite("coalesce", "old", "new"))
+        assertEquals("new", CardFormat.overwrite("coalesce", "", "new"))
+        assertEquals("new", CardFormat.overwrite("coalesce-new", "old", "new"))
+        assertEquals("old", CardFormat.overwrite("coalesce-new", "old", ""))
         assertEquals("oldnew", CardFormat.overwrite("append", "old", "new"))
         assertEquals("newold", CardFormat.overwrite("prepend", "old", "new"))
         assertEquals("old", CardFormat.overwrite("skip", "old", "new"))
@@ -81,7 +98,7 @@ class CardFormatTest {
 
     @Test
     fun survivesStorage() {
-        val format = YomitanSettings.cardFormats(export).first().second
+        val format = YomitanSettings.cardFormats(export).first().format
         assertEquals(format, CardFormat.fromJson(format.toJson()))
     }
 

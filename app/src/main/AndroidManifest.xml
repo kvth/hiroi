@@ -68,6 +68,12 @@
         </activity>
 
         <activity
+            android:name=".TemplatesActivity"
+            android:exported="false"
+            android:label="@string/templates_title"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".marks.MarksActivity"
             android:exported="false"
             android:label="@string/marks_title"

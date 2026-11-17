@@ -26,11 +26,8 @@ data class CardFormat(
 
     val preventDuplicates get() = checkForDuplicates && duplicateBehavior == "prevent"
 
-    /** How overwriting a duplicate treats [field]; Yomitan's default keeps the old value where the new one is empty. */
+    /** How overwriting a duplicate treats [field]; Yomitan's default only fills it if it's empty. */
     fun overwriteMode(field: String) = overwriteModes[field]?.takeIf { it in OVERWRITE_MODES } ?: "coalesce"
-
-    /** Markers in the templates that Hiroi can't fill (custom handlebars templates, graphs, ...). */
-    val unsupported get() = fields.values.flatMap { Markers.used(it) }.filter { it !in Markers.supported }.distinct()
 
     fun toJson(): String = JSONObject()
         .put("deck", deck)
@@ -69,20 +66,20 @@ data class CardFormat(
         val DUPLICATE_SCOPES = listOf("collection", "deck", "deck-root")
 
         /**
-         * Yomitan's overwrite modes, applied to each field when a duplicate is overwritten: the new
-         * value always, the new value unless empty, the old value unless empty, old + new, new + old,
-         * or the old value.
+         * Yomitan's overwrite modes (display-anki.js, _getOverwrittenField), in the order of its
+         * settings: keep the old value, new + old, old + new, the new value only if the field is
+         * empty (Yomitan's default), the new value unless it's empty, the new value always.
          */
-        val OVERWRITE_MODES = listOf("overwrite", "coalesce", "coalesce-new", "append", "prepend", "skip")
+        val OVERWRITE_MODES = listOf("skip", "prepend", "append", "coalesce", "coalesce-new", "overwrite")
 
-        /** [field]'s value after overwriting [old] with [new] in [mode]. */
+        /** A field's value after overwriting [old] with [new] in [mode]. */
         fun overwrite(mode: String, old: String, new: String): String = when (mode) {
             "overwrite" -> new
-            "coalesce-new" -> old.ifEmpty { new }
+            "skip" -> old
             "append" -> old + new
             "prepend" -> new + old
-            "skip" -> old
-            else -> new.ifEmpty { old } // coalesce
+            "coalesce-new" -> new.ifEmpty { old }
+            else -> old.ifEmpty { new } // coalesce
         }
 
         /** Templates for a note type's fields, guessed from their names like Yomitan suggests them. */
@@ -107,16 +104,30 @@ data class CardFormat(
     }
 }
 
+/**
+ * A card format from Yomitan settings with what else shapes its fields there: the profile's
+ * Anki card templates (null: Yomitan's default ones) and its glossary and tag layout.
+ */
+class YomitanCardFormat(
+    val name: String,
+    val format: CardFormat,
+    val templates: String?,
+    val compactGlossaries: Boolean,
+    val compactTags: Boolean,
+)
+
 /** Reads the Anki card formats out of a Yomitan settings export (Settings > Backup > Export settings). */
 object YomitanSettings {
     /** One entry per profile and term card format that has a note type set, named "profile: format". */
-    fun cardFormats(json: String): List<Pair<String, CardFormat>> {
+    fun cardFormats(json: String): List<YomitanCardFormat> {
         val options = JSONObject(json).let { it.optJSONObject("options") ?: it }
         val profiles = options.optJSONArray("profiles") ?: return emptyList()
-        val out = mutableListOf<Pair<String, CardFormat>>()
+        val out = mutableListOf<YomitanCardFormat>()
         for (i in 0 until profiles.length()) {
             val profile = profiles.getJSONObject(i)
             val anki = profile.optJSONObject("options")?.optJSONObject("anki") ?: continue
+            val general = profile.optJSONObject("options")?.optJSONObject("general")
+            val templates = anki.opt("fieldTemplates") as? String
             val tags = anki.optJSONArray("tags")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
             val formats = anki.optJSONArray("cardFormats") ?: legacyFormats(anki)
             for (j in 0 until formats.length()) {
@@ -124,7 +135,7 @@ object YomitanSettings {
                 if (format.optString("type", "term") != "term" || format.optString("model").isEmpty()) continue
                 val fields = format.optJSONObject("fields") ?: continue
                 val names = fields.keys().asSequence().toList()
-                out += "${profile.optString("name")}: ${format.optString("name", "Expression")}" to CardFormat(
+                val cardFormat = CardFormat(
                     deck = format.optString("deck"),
                     model = format.optString("model"),
                     fields = names.associateWithTo(LinkedHashMap()) { name ->
@@ -141,6 +152,11 @@ object YomitanSettings {
                     overwriteModes = names.mapNotNull { name ->
                         (fields.get(name) as? JSONObject)?.optString("overwriteMode")?.takeIf { it in CardFormat.OVERWRITE_MODES }?.let { name to it }
                     }.toMap(),
+                )
+                out += YomitanCardFormat(
+                    "${profile.optString("name")}: ${format.optString("name", "Expression")}", cardFormat, templates,
+                    compactGlossaries = general?.optString("glossaryLayoutMode") == "compact-popup-anki",
+                    compactTags = general?.optBoolean("compactTags") == true,
                 )
             }
         }

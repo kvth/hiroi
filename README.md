@@ -56,7 +56,7 @@ Frequency lists (JPDB, BCCWJ, Innocent Corpus, …) show as a tag per list, with
 
 Choosing a list picks the way from its `index.json` (`frequencyMode`: `rank-based` or `occurrence-based`). For lists that don't say, Hiroi compares their values for common and rare words, with the same words Yomitan uses. Words without a value in the list come after those with one. Until you choose one, Hiroi sorts by the first frequency list you imported; choose *none* to sort without one.
 
-Not supported yet: images in definitions, tag descriptions (`tag_bank`), and reordering dictionaries.
+Not supported yet: images in definitions and reordering dictionaries. Tag banks are only used for Anki cards so far.
 
 ## Search
 
@@ -85,32 +85,44 @@ Hiroi talks to [AnkiConnect](https://foosoft.net/projects/anki-connect/):
 
 ### Making cards
 
-With a card format set up under *Anki → Cards*, every result in the overlay gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a template per field using Yomitan's markers. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*); with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests templates from the field names.
+With a card format set up under *Anki → Cards*, every result in the overlay and on the search page gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a value per field with markers such as `{expression}` or `{glossary}`. *Fields…* edits them, and its **{…}** menu lists the markers: Yomitan's standard ones, one pair per dictionary (`{single-glossary-jitendex}`, `{single-frequency-number-jpdb}`), and those your own templates add. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*), together with that profile's Anki card templates and its compact glossary and tag settings; with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests field values from the field names.
 
-Markers produce the same output as Yomitan's default templates. That includes `{glossary}`, `{furigana}` and `{frequencies}`, so note types made for Yomitan (Lapis, JP Mining Note, …) show them as they would Yomitan's.
+#### Templates
 
-| | Markers |
-|---|---|
-| Word | `{expression}` `{reading}` `{furigana}` `{furigana-plain}` `{conjugation}` `{part-of-speech}` `{tags}` |
-| Definitions | `{glossary}` and its `-brief`, `-no-dictionary`, `-first`, `-plain` variants, `{dictionary}` |
-| Sentence | `{sentence}` `{sentence-furigana}` `{sentence-furigana-plain}` `{cloze-prefix}` `{cloze-body}` `{cloze-body-kana}` `{cloze-suffix}` |
-| Frequency, pitch | `{frequencies}` `{frequency-harmonic-rank}` `{frequency-average-rank}` `{pitch-accents}` `{pitch-accent-positions}` `{pitch-accent-categories}` |
-| Media | `{audio}` (word audio from JapanesePod101, Yomitan's default source) and `{screenshot}` (the screen when the overlay opened) |
-| Other | `{document-title}` (the app the text came from) |
+Fields are filled by **Yomitan's own code**: its `AnkiNoteBuilder`, its Handlebars template renderer with all its helpers (`furigana`, `regexReplace`, `formatGlossary`, `pronunciation`, `set`/`get`, …), and its default Anki card templates. Each `{marker}` is the template of that name (`{{#*inline "expression"}}…{{/inline}}`), so fields come out exactly as Yomitan fills them, and so does anything built on them: JP Mining Note's `{jpmn-*}` markers, the pitch graphs, `{phonetic-transcriptions}`, Lapis's fields, or markers of your own.
 
-Not supported, left empty and listed under *Cards*: custom markers from Yomitan's handlebars templates (e.g. JP Mining Note's `{jpmn-*}`), the pitch graphs, `{phonetic-transcriptions}`, and markers that don't apply on a phone (clipboard, URL). Sentence furigana comes from Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
+*Anki card templates…* is Yomitan's templates page:
+- the template text, saved as you leave the page, and **Reset to Yomitan's default**;
+- a **test**: a text to look up and a field value with markers, filled for the first word in the text, with the templates' errors;
+- **Compact glossaries** (Yomitan's *Compact Popup and Anki* layout) and **Compact tags**.
+
+A marker the templates don't define comes out as `{marker-render-error}`, as in Yomitan. *Cards* lists such markers, and adding a card says which templates failed.
+
+Hiroi gives the templates what Yomitan's translator would: the dictionary entry with its headword, inflections, definitions (the dictionaries' structured content as is), tags from the dictionaries' tag banks, frequencies and pitch accents, and the note context (sentence, document title: the app the text came from). Dictionaries imported before tag banks were supported need importing again to get their tag categories and notes. Media go through the same two passes as in Yomitan: the first rendering tells which ones the fields need, then Hiroi provides them and the fields are rendered again:
+- `{audio}`: word audio from JapanesePod101, Yomitan's default source;
+- `{screenshot}`: the screen when the overlay opened;
+- `{clipboard-text}`: the clipboard;
+- `{popup-selection-text}`: the panel's selection;
+- `{sentence-furigana}`: the sentence parsed with Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
+
+Images from dictionaries and `{clipboard-image}` stay empty.
+
+The templates run in a WebView of their own, without network or file access. `scripts/update-yomitan-anki.mjs` bundles Yomitan's code for it (`app/src/main/assets/yomitan/`) from a Yomitan release:
+
+```bash
+podman run --rm -v "$PWD":/work:Z -w /work docker.io/library/node:24-slim node scripts/update-yomitan-anki.mjs 26.11.2.0
+```
 
 **Duplicates** are detected as in Yomitan. A duplicate is a note with the same first field. When the results show, Hiroi asks Anki which of them would be duplicates, with `canAddNotes` for all at once and then `findNotes` for the duplicates. Their **＋ Anki** button then says what tapping it would do, depending on *Cards → If there is one*:
 
 - **add another note**, Yomitan's default: the button reads *＋ Anki again*.
 - **don't add a note**: the button reads *Already in Anki* and is disabled.
 - **overwrite the existing note**: the button reads *Overwrite*. Each field is updated by its overwrite mode, chosen under *Field templates…*, with Yomitan's modes:
-  - the new value unless it's empty (the default);
-  - always the new value;
-  - only fill an empty field;
-  - append;
-  - prepend;
-  - keep the old value.
+  - *Fill if empty* (the default): the new value only where the field is empty;
+  - *Overwrite if available*: the new value unless it's empty;
+  - *Overwrite*: always the new value;
+  - *Append*, *Prepend*;
+  - *Skip*: keep the old value.
 
   Fields that would stay the same aren't sent.
 
@@ -173,4 +185,4 @@ After a code change: `./podman-build-apk.sh && scripts/emulator.sh install`. Run
 
 Copyright (C) 2026 Kevin Thomas
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`.
+GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`.

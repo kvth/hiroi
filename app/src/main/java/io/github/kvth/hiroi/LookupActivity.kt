@@ -83,7 +83,7 @@ class LookupActivity : Activity() {
         // Edge-to-edge is the default from Android 15 on, but still has to be requested on 14.
         @Suppress("DEPRECATION")
         window.setDecorFitsSystemWindows(false)
-        lookup = DictionaryLookup(this, { appLabel(CaptureStore.sourcePackage) }, { CaptureStore.screenshot })
+        lookup = DictionaryLookup(this, { appLabel(CaptureStore.sourcePackage) }, { CaptureStore.screenshot }, ::selectedText)
         setContentView(buildContent())
         startScan()
         showHint()
@@ -529,6 +529,13 @@ class LookupActivity : Activity() {
             hit != null -> showBlock(hit, tap.first, tap.second) // tapped an image while it was being read
             !hasText -> showHint() // new count, no more "looking"
         }
+    }
+
+    /** The panel's selection: the looked-up word, or what the user selected. */
+    private fun selectedText(): String {
+        val start = minOf(textView.selectionStart, textView.selectionEnd)
+        val end = maxOf(textView.selectionStart, textView.selectionEnd)
+        return if (start >= 0 && start < end) textView.text.subSequence(start, end).toString() else ""
     }
 
     private fun selectedOrAllText(): String {

@@ -262,11 +262,22 @@
                 android:singleLine="true" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/cards_fields"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/cards_fields" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <Button
+                android:id="@+id/cards_fields"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/cards_fields" />
+
+            <Button
+                android:id="@+id/cards_templates"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/cards_templates" />
+        </LinearLayout>
 
         <EditText
             android:id="@+id/cards_tags"

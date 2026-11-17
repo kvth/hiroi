@@ -27,6 +27,9 @@ data class TermMeta(
 )
 
 /** [frequencies]: the kanji's frequencies by dictionary (kanji meta banks), filled in by the translator. */
+/** A tag bank row: what a tag such as "v1" or "★" means, as Yomitan shows and sorts it. */
+data class TagInfo(val name: String, val category: String, val order: Int, val notes: String, val score: Int, val dictionary: String = "")
+
 data class KanjiEntry(
     val character: String,
     val onyomi: String,
@@ -76,6 +79,15 @@ object Yomitan {
                 sequence = if (format == 1) 0 else row.optLong(6),
                 termTags = if (format == 1) "" else row.str(7),
             )
+        }
+    }
+
+    /** tag_bank rows: [name, category, order, notes, score]. */
+    fun parseTagBank(json: String): List<TagInfo> {
+        val bank = JSONArray(json)
+        return List(bank.length()) { i ->
+            val row = bank.getJSONArray(i)
+            TagInfo(row.getString(0), row.str(1), row.optInt(2), row.str(3), row.optInt(4))
         }
     }
 

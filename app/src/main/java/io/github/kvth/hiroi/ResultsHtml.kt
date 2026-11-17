@@ -2,7 +2,7 @@ package io.github.kvth.hiroi
 
 import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.anki.Html
-import io.github.kvth.hiroi.anki.Markers
+import io.github.kvth.hiroi.anki.PitchAccent
 import io.github.kvth.hiroi.anki.StructuredHtml
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
@@ -78,10 +78,10 @@ class ResultsHtml(private val colors: Colors) {
             if (term.expression in anki.notes) tags.tag("anki", "✓ in Anki", id = "anki$index") else tags.tag("not-anki", "not in Anki", id = "anki$index")
         }
         tags.frequencyTags(term.meta.mapNotNull { meta -> Yomitan.frequency(meta, term.reading)?.let { meta.dictionary to it } }, frequencies)
-        val pitches = Markers.pitches(term)
+        val pitches = PitchAccent.positions(term)
         if (pitches.isNotEmpty()) {
             val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
-            tags.tag("pitch", dictionary, pitches.joinToString(" ") { Markers.pitchHtml(term.reading, it) })
+            tags.tag("pitch", dictionary, pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
         }
         if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
 

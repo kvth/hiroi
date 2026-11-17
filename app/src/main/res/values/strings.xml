@@ -51,15 +51,35 @@
     <string name="anki_choose_field">Field holding the word</string>
     <string name="anki_choose_model">Note type</string>
     <string name="cards_title">Cards</string>
-    <string name="cards_hint">Add notes from the overlay with \"＋ Anki\". Fields are filled from templates with Yomitan\'s markers ({expression}, {glossary}, {sentence}, …), so you can take your card format from Yomitan.</string>
+    <string name="cards_hint">Add notes from the overlay with \"＋ Anki\". Fields are filled by Yomitan\'s own Anki card templates, with its markers ({expression}, {glossary}, {sentence}, …) and your own, so you can take your card format and templates from Yomitan.</string>
     <string name="cards_import">Import from Yomitan settings…</string>
     <string name="cards_import_choose">Card format to use</string>
     <string name="cards_import_none">No Anki card formats with a note type in that file.</string>
     <string name="cards_import_failed">Couldn\'t read Yomitan settings: %s</string>
     <string name="cards_deck">Deck: %s</string>
     <string name="cards_model">Note type: %s</string>
-    <string name="cards_fields">Field templates…</string>
-    <string name="cards_fields_help">Markers: %s</string>
+    <string name="cards_fields">Fields…</string>
+    <string name="cards_fields_help">Each field is text with markers such as {expression} or {glossary}, filled by the Anki card templates as Yomitan fills them. {…} lists the markers: Yomitan\'s, one per dictionary ({single-glossary-…}), and those your templates add.</string>
+    <string name="templates_title">Anki card templates</string>
+    <string name="templates_intro">The Handlebars templates that fill the fields, Yomitan\'s own (%s): every {marker} is the template of that name ({{#*inline \"expression\"}}…{{/inline}}), filled from the looked-up word as in Yomitan. Change them, or add your own markers, as described in Yomitan\'s docs (docs/templates.md). Changes are saved as you leave this page.</string>
+    <string name="templates_compact_glossaries">Compact glossaries (Yomitan\'s \"Compact Popup and Anki\" layout)</string>
+    <string name="templates_compact_tags">Compact tags (only tags that differ from the previous definition\'s)</string>
+    <string name="templates_test_title">Test</string>
+    <string name="templates_test_word">Text to look up</string>
+    <string name="templates_test_word_default">毎日、日本語を勉強しています。</string>
+    <string name="templates_test_field">Field value with markers</string>
+    <string name="templates_test">Fill the field</string>
+    <string name="templates_test_no_word">No dictionary entry for that text.</string>
+    <string name="templates_test_errors">Errors:\n%s</string>
+    <string name="templates_test_media">Needs (empty in this test): %s</string>
+    <string name="templates_test_failed">Failed: %s</string>
+    <string name="templates_editor_title">Templates</string>
+    <string name="templates_reset">Reset to Yomitan\'s default</string>
+    <string name="templates_reset_confirm">Replace the templates with Yomitan\'s default ones? Your own markers in them are lost.</string>
+    <string name="cards_marker_menu">Add a marker</string>
+    <string name="cards_templates">Anki card templates…</string>
+    <string name="cards_templates_default">Fields are filled with Yomitan\'s default templates (%s).</string>
+    <string name="cards_templates_custom">Fields are filled with your own templates (Yomitan %s).</string>
     <string name="cards_tags_hint">Tags (space separated)</string>
     <string name="cards_check_duplicates">Check for duplicates (notes with the same first field)</string>
     <string name="cards_duplicate_behavior">If there is one: %s</string>
@@ -73,18 +93,19 @@
     <string name="cards_check_all_models">Count notes of every note type</string>
     <string name="cards_duplicates_hint">As in Yomitan: results that would duplicate a note show it on their button (\"Already in Anki\", \"Overwrite\" or \"＋ Anki again\") and get \"Open in Anki\".</string>
     <string name="cards_overwrite_mode">When overwriting:</string>
+    <!-- Yomitan's overwrite modes, in CardFormat.OVERWRITE_MODES order -->
     <string-array name="cards_overwrite_modes">
-        <item>new value, unless empty</item>
-        <item>always the new value</item>
-        <item>only fill if empty</item>
-        <item>append</item>
-        <item>prepend</item>
-        <item>keep the old value</item>
+        <item>Skip (keep the existing value)</item>
+        <item>Prepend</item>
+        <item>Append</item>
+        <item>Fill if empty</item>
+        <item>Overwrite if available (new value not empty)</item>
+        <item>Overwrite (even if the new value is empty)</item>
     </string-array>
     <string name="cards_word_audio">Word audio for {audio} (JapanesePod101)</string>
     <string name="cards_ready">\"＋ Anki\" adds %1$s notes to %2$s (%3$d fields filled).</string>
     <string name="cards_incomplete">Choose a deck and note type, or import your card format from Yomitan.</string>
-    <string name="cards_unsupported">Left empty, not supported in Hiroi: %s</string>
+    <string name="cards_unsupported">Not defined in the templates, these come out as {…-render-error}: %s</string>
     <string name="save">Save</string>
     <string name="anki_add">＋ Anki</string>
     <string name="anki_adding">Adding…</string>
@@ -97,6 +118,7 @@
     <string name="anki_overwritten">✓ Overwritten</string>
     <string name="anki_open">Open in Anki</string>
     <string name="anki_open_notes">Open in Anki (%d)</string>
+    <string name="anki_template_errors">Added, but some templates failed:\n%s</string>
     <string name="anki_add_failed">Couldn\'t add the card: %s</string>
     <string name="search_title">Search dictionaries</string>
     <string name="search_short">Search</string>

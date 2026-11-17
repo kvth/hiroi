@@ -38,7 +38,8 @@ import android.widget.TextView
 import io.github.kvth.hiroi.anki.AnkiConnect
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardFormat
-import io.github.kvth.hiroi.anki.Markers
+import io.github.kvth.hiroi.anki.AnkiTemplates
+import io.github.kvth.hiroi.anki.YomitanCardFormat
 import io.github.kvth.hiroi.anki.YomitanSettings
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
@@ -181,6 +182,7 @@ class MainActivity : Activity() {
             }
         }
         findViewById<Button>(R.id.cards_fields).setOnClickListener { editFieldTemplates() }
+        findViewById<Button>(R.id.cards_templates).setOnClickListener { startActivity(Intent(this, TemplatesActivity::class.java)) }
         findViewById<EditText>(R.id.cards_tags).apply {
             setText(anki.cardFormat.tags.joinToString(" "))
             onChange { text -> anki.cardFormat = anki.cardFormat.copy(tags = text.split(Regex("\\s+")).filter { it.isNotEmpty() }) }
@@ -255,6 +257,16 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /**
+     * The markers a field can use, in the order of Yomitan's field menu: its standard ones, one
+     * per dictionary, then the user's own (inline templates their templates add).
+     */
+    private fun markerChoices(): List<String> {
+        val default = AnkiTemplates.defaultTemplates(this)
+        val custom = anki.fieldTemplates?.let { AnkiTemplates.inlineMarkers(it) - AnkiTemplates.inlineMarkers(default).toSet() }.orEmpty()
+        return (AnkiTemplates.standardMarkers(this) + AnkiTemplates.dynamicMarkers(dictionaries.dictionaries()) + custom).distinct()
+    }
+
     /** A form with a template per field of the note type, like Yomitan's card format editor. */
     private fun editFieldTemplates() {
         val format = anki.cardFormat
@@ -271,19 +283,39 @@ class MainActivity : Activity() {
         val overwriting = format.checkForDuplicates && format.duplicateBehavior == "overwrite"
         val modeLabels = resources.getStringArray(R.array.cards_overwrite_modes)
         val modes = HashMap<String, Spinner>()
+        val markers = markerChoices()
         val inputs = format.fields.map { (name, template) ->
             form.addView(TextView(this).apply { text = name; setPadding(0, pad / 2, 0, 0) })
             val input = EditText(this).apply {
                 setText(template)
                 textSize = 14f
-                form.addView(this)
             }
+            // Like Yomitan's field menu: pick a marker to put in at the cursor.
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            row.addView(input, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = "{…}"
+                minWidth = 0
+                minimumWidth = 0
+                contentDescription = getString(R.string.cards_marker_menu)
+                setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(R.string.cards_marker_menu)
+                        .setItems(markers.map { "{$it}" }.toTypedArray()) { _, which ->
+                            val start = maxOf(input.selectionStart, 0)
+                            val end = maxOf(input.selectionEnd, 0)
+                            input.text.replace(minOf(start, end), maxOf(start, end), "{${markers[which]}}")
+                        }
+                        .show()
+                }
+            })
+            form.addView(row)
             if (overwriting) {
                 val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
                 row.addView(TextView(this).apply { setText(R.string.cards_overwrite_mode); textSize = 12f })
                 modes[name] = Spinner(this).apply {
                     adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, modeLabels)
-                    setSelection(OVERWRITE_MODE_ORDER.indexOf(format.overwriteMode(name)))
+                    setSelection(CardFormat.OVERWRITE_MODES.indexOf(format.overwriteMode(name)))
                     row.addView(this)
                 }
                 form.addView(row)
@@ -291,7 +323,7 @@ class MainActivity : Activity() {
             name to input
         }
         form.addView(TextView(this).apply {
-            text = getString(R.string.cards_fields_help, Markers.supported.sorted().joinToString(" ") { "{$it}" })
+            setText(R.string.cards_fields_help)
             textSize = 12f
             setPadding(0, pad, 0, pad)
         })
@@ -302,7 +334,7 @@ class MainActivity : Activity() {
                 anki.cardFormat = anki.cardFormat.copy(
                     fields = inputs.associateTo(LinkedHashMap()) { (name, input) -> name to input.text.toString() },
                     overwriteModes = if (!overwriting) anki.cardFormat.overwriteModes else
-                        modes.mapValues { (_, spinner) -> OVERWRITE_MODE_ORDER[spinner.selectedItemPosition] },
+                        modes.mapValues { (_, spinner) -> CardFormat.OVERWRITE_MODES[spinner.selectedItemPosition] },
                 )
                 showAnkiChoices()
             }
@@ -320,18 +352,23 @@ class MainActivity : Activity() {
         }
         when (formats.size) {
             0 -> showCardStatus(getString(R.string.cards_import_none))
-            1 -> useCardFormat(formats.single().second)
+            1 -> useCardFormat(formats.single())
             else -> AlertDialog.Builder(this)
                 .setTitle(R.string.cards_import_choose)
-                .setItems(formats.map { (name, format) -> "$name (${format.model} → ${format.deck})" }.toTypedArray()) { _, which ->
-                    useCardFormat(formats[which].second)
+                .setItems(formats.map { "${it.name} (${it.format.model} → ${it.format.deck})" }.toTypedArray()) { _, which ->
+                    useCardFormat(formats[which])
                 }
                 .show()
         }
     }
 
-    private fun useCardFormat(format: CardFormat) {
+    /** A card format from Yomitan, with its profile's templates and glossary and tag layout. */
+    private fun useCardFormat(imported: YomitanCardFormat) {
+        val format = imported.format
         anki.cardFormat = format
+        anki.fieldTemplates = imported.templates
+        anki.compactGlossaries = imported.compactGlossaries
+        anki.compactTags = imported.compactTags
         findViewById<EditText>(R.id.cards_tags).setText(format.tags.joinToString(" "))
         showDuplicateOptions()
         showAnkiChoices()
@@ -386,8 +423,14 @@ class MainActivity : Activity() {
                 getString(R.string.cards_incomplete)
             } else {
                 val ready = getString(R.string.cards_ready, format.model, format.deck, format.fields.values.count { it.isNotBlank() })
-                val unsupported = format.unsupported
-                if (unsupported.isEmpty()) ready else ready + "\n" + getString(R.string.cards_unsupported, unsupported.joinToString(" ") { "{$it}" })
+                val templates = anki.fieldTemplates
+                val unknown = AnkiTemplates.unknownMarkers(format, templates ?: AnkiTemplates.defaultTemplates(this), dictionaries.dictionaries())
+                val lines = listOfNotNull(
+                    ready,
+                    getString(if (templates == null) R.string.cards_templates_default else R.string.cards_templates_custom, AnkiTemplates.version(this)),
+                    unknown.takeIf { it.isNotEmpty() }?.let { getString(R.string.cards_unsupported, it.joinToString(" ") { m -> "{$m}" }) },
+                )
+                lines.joinToString("\n")
             },
         )
     }
@@ -597,8 +640,6 @@ class MainActivity : Activity() {
         const val REQUEST_IMPORT = 1
         const val REQUEST_YOMITAN_SETTINGS = 2
 
-        /** Overwrite modes in the order of R.array.cards_overwrite_modes */
-        val OVERWRITE_MODE_ORDER = listOf("coalesce", "overwrite", "coalesce-new", "append", "prepend", "skip")
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py
 
