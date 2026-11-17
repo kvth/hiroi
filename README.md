@@ -32,7 +32,7 @@ The bottom of the app's setup screen has Japanese example sentences to try Hiroi
 
 Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone.
 
-The order of the dictionaries is their priority, as in Yomitan: results show the definitions, frequencies and pitch accents of dictionaries higher up first. Anki cards see this order too, and so does the default sort list. New dictionaries go to the end; **▲▼** in the list move them.
+The order of the dictionaries is their priority, as in Yomitan: results show the definitions, frequencies and pitch accents of dictionaries higher up first. Anki cards see this order too, and so does the default sort list. New dictionaries go to the end; **▲▼** in the list move them. The checkbox in front of each turns it off or on, as Yomitan's switch per dictionary does: one that's off stays installed but is left out of lookups, frequency sorting, Anki's per-dictionary markers and the dictionary info Anki templates get. Collections export every dictionary, on or off, since Yomitan's format has no such flag.
 
 **Collections**: *Export collection* writes all dictionaries into one file, in their order, and *Import collection* reads one, as Yomitan's *Backup → Export / Import dictionary collection* do. The files are Yomitan's own format, Dexie's export of its dictionary database (version 60, with Yomitan's tables and indexes), so they work both ways:
 - **into Hiroi:** a collection exported from Yomitan, instead of every dictionary zip again;

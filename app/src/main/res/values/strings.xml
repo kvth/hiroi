@@ -11,7 +11,7 @@
     <string name="step_assistant_hint">Then long-pressing the power button (or swiping up from a bottom corner) opens Hiroi. Enable \"Use text from screen\" in the same settings page.</string>
     <string name="step_usage">How to use</string>
     <string name="step_dictionaries">3. Dictionaries</string>
-    <string name="step_dictionaries_hint">Import Yomitan dictionaries (.zip), the same files desktop Yomitan uses: e.g. Jitendex or JMdict for definitions, JPDB for frequency, Kanjium for pitch accent, KANJIDIC for kanji. Dictionaries higher up in the list are shown first; ▲▼ change the order.</string>
+    <string name="step_dictionaries_hint">Import Yomitan dictionaries (.zip), the same files desktop Yomitan uses: e.g. Jitendex or JMdict for definitions, JPDB for frequency, Kanjium for pitch accent, KANJIDIC for kanji. Dictionaries higher up in the list are shown first; ▲▼ change the order. Untick a dictionary to turn it off without removing it.</string>
     <string name="import_dictionary">Import dictionary (.zip)</string>
     <string name="export_collection">Export collection</string>
     <string name="import_collection">Import collection</string>
@@ -24,6 +24,8 @@
     <string name="collection_imported">Imported %1$d dictionaries: %2$s</string>
     <string name="collection_skipped">Already here, left as they are: %s</string>
     <string name="collection_failed">Failed: %s</string>
+    <string name="dictionary_enabled">Use %s</string>
+    <string name="no_enabled_dictionaries">All dictionaries are turned off. Turn one on in the Hiroi app.</string>
     <string name="dictionary_up">Move up</string>
     <string name="dictionary_down">Move down</string>
     <string name="import_copying">Reading file…</string>

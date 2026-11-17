@@ -20,11 +20,12 @@ data class DictionaryInfo(
     val kanji: Int,
     val frequencies: Int = 0,
     val frequencyMode: String? = null,
+    val enabled: Boolean = true,
 )
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 5), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 6), DictionaryStore {
 
     init {
         setWriteAheadLoggingEnabled(true) // lookups keep working during an import
@@ -34,7 +35,7 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL(
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
                 "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
-                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT)",
+                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1)",
         )
         db.execSQL(
             "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
@@ -78,6 +79,8 @@ class DictionaryDb private constructor(context: Context) :
             db.execSQL("ALTER TABLE dictionaries ADD COLUMN summary TEXT")
             db.execSQL("UPDATE dictionaries SET position = id")
         }
+        // 6: dictionaries can be turned off, as in Yomitan
+        if (oldVersion < 6) db.execSQL("ALTER TABLE dictionaries ADD COLUMN enabled INTEGER DEFAULT 1")
     }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
@@ -88,13 +91,13 @@ class DictionaryDb private constructor(context: Context) :
 
     fun dictionaries(): List<DictionaryInfo> =
         readableDatabase.rawQuery(
-            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode FROM dictionaries ORDER BY position, id", null,
+            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled FROM dictionaries ORDER BY position, id", null,
         ).use { c ->
             List(c.count) {
                 c.moveToNext()
                 DictionaryInfo(
                     c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
-                    c.getInt(6), c.getString(7),
+                    c.getInt(6), c.getString(7), c.getInt(8) != 0,
                 )
             }
         }
@@ -125,6 +128,17 @@ class DictionaryDb private constructor(context: Context) :
 
     fun hasDictionaries(): Boolean =
         readableDatabase.rawQuery("SELECT 1 FROM dictionaries LIMIT 1", null).use { it.moveToFirst() }
+
+    /** The dictionaries lookups use, in their order: those turned on. */
+    fun enabledDictionaries(): List<DictionaryInfo> = dictionaries().filter { it.enabled }
+
+    /**
+     * Turns dictionary [id] on or off, as Yomitan's switch per dictionary: one that's off stays
+     * installed but is left out of lookups, frequency sorting and Anki's per-dictionary markers.
+     */
+    fun setEnabled(id: Long, enabled: Boolean) {
+        writableDatabase.update("dictionaries", ContentValues().apply { put("enabled", if (enabled) 1 else 0) }, "id = ?", arrayOf(id.toString()))
+    }
 
     /** Imports a Yomitan dictionary zip; [onProgress] gets short status lines. A failed import leaves nothing behind. */
     fun import(zip: File, onProgress: (String) -> Unit): DictionaryInfo {
@@ -456,7 +470,7 @@ class DictionaryDb private constructor(context: Context) :
             readableDatabase.rawQuery(
                 "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
                     "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict " +
-                    "WHERE t.expression IN ($placeholders) OR t.reading IN ($placeholders)",
+                    "WHERE (t.expression IN ($placeholders) OR t.reading IN ($placeholders)) AND d.enabled = 1",
                 (chunk + chunk).toTypedArray(),
             ).use { c ->
                 while (c.moveToNext()) {
@@ -477,7 +491,7 @@ class DictionaryDb private constructor(context: Context) :
             val placeholders = chunk.joinToString(",") { "?" }
             readableDatabase.rawQuery(
                 "SELECT m.expression, m.mode, m.data, d.title, d.position FROM term_meta m JOIN dictionaries d ON d.id = m.dict " +
-                    "WHERE m.expression IN ($placeholders)",
+                    "WHERE m.expression IN ($placeholders) AND d.enabled = 1",
                 chunk.toTypedArray(),
             ).use { c ->
                 while (c.moveToNext()) {
@@ -506,7 +520,7 @@ class DictionaryDb private constructor(context: Context) :
     override fun findKanjiMeta(character: String): List<TermMeta> =
         readableDatabase.rawQuery(
             "SELECT m.character, m.mode, m.data, d.title, d.position FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict " +
-                "WHERE m.character = ? ORDER BY d.position",
+                "WHERE m.character = ? AND d.enabled = 1 ORDER BY d.position",
             arrayOf(character),
         ).use { c ->
             List(c.count) {
@@ -518,7 +532,7 @@ class DictionaryDb private constructor(context: Context) :
     override fun findKanji(character: String): List<KanjiEntry> =
         readableDatabase.rawQuery(
             "SELECT k.character, k.onyomi, k.kunyomi, k.tags, k.meanings, d.title FROM kanji k " +
-                "JOIN dictionaries d ON d.id = k.dict WHERE k.character = ? ORDER BY d.position",
+                "JOIN dictionaries d ON d.id = k.dict WHERE k.character = ? AND d.enabled = 1 ORDER BY d.position",
             arrayOf(character),
         ).use { c ->
             List(c.count) {

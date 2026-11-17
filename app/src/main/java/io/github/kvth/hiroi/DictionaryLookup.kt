@@ -104,6 +104,7 @@ class DictionaryLookup(
             val outcome = runCatching {
                 when {
                     !dictionaries.hasDictionaries() -> Lookup.Message(activity.getString(R.string.no_dictionaries))
+                    dictionaries.enabledDictionaries().isEmpty() -> Lookup.Message(activity.getString(R.string.no_enabled_dictionaries))
                     else -> when (val result = translator.lookUp(text, offset)) {
                         null -> Lookup.Message(activity.getString(R.string.not_japanese))
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
@@ -113,7 +114,7 @@ class DictionaryLookup(
                             val anki = ankiStatus(result)
                             val frequencies = ResultsHtml.Frequencies(
                                 average = DictionarySettings(activity).averageFrequencies,
-                                occurrenceBased = dictionaries.dictionaries().filter { it.frequencyMode == "occurrence-based" }.mapTo(HashSet()) { it.title },
+                                occurrenceBased = dictionaries.enabledDictionaries().filter { it.frequencyMode == "occurrence-based" }.mapTo(HashSet()) { it.title },
                             )
                             Lookup.Found(
                                 result, text, html.document(result, anki, styles, cards, frequencies),

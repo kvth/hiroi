@@ -57,7 +57,7 @@ class YomitanRenderer(
     private val templates: String? = settings.fieldTemplates,
 ) : NoteRenderer {
     private val db = DictionaryDb.get(context)
-    private val noteData by lazy { YomitanNoteData(db, db.dictionaries()) }
+    private val noteData by lazy { YomitanNoteData(db, db.enabledDictionaries()) }
     private val dictionaries by lazy { noteData.dictionariesJson(db.styles()) }
 
     override fun render(data: CardData, requirements: JSONArray?, media: JSONObject?): RenderedNote {

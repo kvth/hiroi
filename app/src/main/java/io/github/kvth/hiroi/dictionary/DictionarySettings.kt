@@ -26,10 +26,12 @@ class DictionarySettings(context: Context) {
      * frequencies, in the order it says or Yomitan's check finds; that choice is then kept.
      */
     fun frequencySort(db: DictionaryDb): FrequencySort? {
-        val dictionaries = db.dictionaries()
+        val all = db.dictionaries()
+        val dictionaries = all.filter { it.enabled }
         val chosen = sortDictionary
         if (chosen == "") return null
-        if (chosen != null && dictionaries.any { it.title == chosen }) return FrequencySort(chosen, sortAscending)
+        // One that's turned off sorts nothing, but stays chosen for when it's on again.
+        if (chosen != null && all.any { it.title == chosen }) return FrequencySort(chosen, sortAscending).takeIf { dictionaries.any { it.title == chosen } }
         // Not chosen yet, or the chosen one was removed.
         val first = dictionaries.firstOrNull { it.frequencies > 0 } ?: return null
         choose(db, first.title)

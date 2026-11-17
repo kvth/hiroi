@@ -276,7 +276,7 @@ class MainActivity : Activity() {
     private fun markerChoices(): List<String> {
         val default = AnkiTemplates.defaultTemplates(this)
         val custom = anki.fieldTemplates?.let { AnkiTemplates.inlineMarkers(it) - AnkiTemplates.inlineMarkers(default).toSet() }.orEmpty()
-        return (AnkiTemplates.standardMarkers(this) + AnkiTemplates.dynamicMarkers(dictionaries.dictionaries()) + custom).distinct()
+        return (AnkiTemplates.standardMarkers(this) + AnkiTemplates.dynamicMarkers(dictionaries.enabledDictionaries()) + custom).distinct()
     }
 
     /** A form with a template per field of the note type, like Yomitan's card format editor. */
@@ -443,7 +443,7 @@ class MainActivity : Activity() {
             } else {
                 val ready = getString(R.string.cards_ready, format.model, format.deck, format.fields.values.count { it.isNotBlank() })
                 val templates = anki.fieldTemplates
-                val unknown = AnkiTemplates.unknownMarkers(format, templates ?: AnkiTemplates.defaultTemplates(this), dictionaries.dictionaries())
+                val unknown = AnkiTemplates.unknownMarkers(format, templates ?: AnkiTemplates.defaultTemplates(this), dictionaries.enabledDictionaries())
                 val lines = listOfNotNull(
                     ready,
                     getString(if (templates == null) R.string.cards_templates_default else R.string.cards_templates_custom, AnkiTemplates.version(this)),
@@ -606,8 +606,17 @@ class MainActivity : Activity() {
         showSorting()
         for (info in installed) {
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            // On or off, as Yomitan's switch per dictionary
+            row.addView(CheckBox(this).apply {
+                isChecked = info.enabled
+                contentDescription = getString(R.string.dictionary_enabled, info.title)
+                setOnCheckedChangeListener { _, checked -> setDictionaryEnabled(info, checked) }
+            })
             row.addView(
-                TextView(this).apply { text = describe(info) },
+                TextView(this).apply {
+                    text = describe(info)
+                    alpha = if (info.enabled) 1f else 0.5f
+                },
                 LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
             )
             // The order is the priority, as in Yomitan: results show higher dictionaries first.
@@ -630,6 +639,13 @@ class MainActivity : Activity() {
                 },
             )
             list.addView(row)
+        }
+    }
+
+    private fun setDictionaryEnabled(info: DictionaryInfo, enabled: Boolean) {
+        background.execute {
+            dictionaries.setEnabled(info.id, enabled)
+            runOnUiThread { if (!isDestroyed) showDictionaries() }
         }
     }
 
@@ -680,7 +696,7 @@ class MainActivity : Activity() {
     }
 
     private fun chooseSortDictionary() {
-        val lists = dictionaries.dictionaries().filter { it.frequencies > 0 }.map { it.title }
+        val lists = dictionaries.enabledDictionaries().filter { it.frequencies > 0 }.map { it.title }
         if (lists.isEmpty()) {
             AlertDialog.Builder(this).setMessage(R.string.sort_no_lists).setPositiveButton(android.R.string.ok, null).show()
             return
