@@ -54,6 +54,10 @@ import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.marks.MarksActivity
+import io.github.kvth.hiroi.translation.OnDeviceTranslation
+import io.github.kvth.hiroi.translation.TargetLanguage
+import io.github.kvth.hiroi.translation.TranslationServices
+import io.github.kvth.hiroi.translation.TranslationSettings
 import java.io.File
 import java.io.InputStream
 import java.util.concurrent.Executors
@@ -117,6 +121,7 @@ class MainActivity : Activity() {
             startActivityForResult(pick, REQUEST_IMPORT_COLLECTION)
         }
         setUpAudio()
+        setUpTranslation()
         findViewById<Button>(R.id.import_example).setOnClickListener {
             importDictionary { assets.open(EXAMPLE_ASSET) }
         }
@@ -344,13 +349,14 @@ class MainActivity : Activity() {
     }
 
     /**
-     * The markers a field can use, in the order of Yomitan's field menu: its standard ones, one
-     * per dictionary, then the user's own (inline templates their templates add).
+     * The markers a field can use, in the order of Yomitan's field menu: its standard ones (and
+     * Hiroi's {sentence-translation}), one per dictionary, then the user's own (inline templates
+     * their templates add).
      */
     private fun markerChoices(): List<String> {
         val default = AnkiTemplates.defaultTemplates(this)
         val custom = anki.fieldTemplates?.let { AnkiTemplates.inlineMarkers(it) - AnkiTemplates.inlineMarkers(default).toSet() }.orEmpty()
-        return (AnkiTemplates.standardMarkers(this) + AnkiTemplates.dynamicMarkers(dictionaries.enabledDictionaries()) + custom).distinct()
+        return (AnkiTemplates.standardMarkers(this) + AnkiTemplates.HIROI_MARKERS + AnkiTemplates.dynamicMarkers(dictionaries.enabledDictionaries()) + custom).distinct()
     }
 
     /** A form with a template per field of the note type, like Yomitan's card format editor. */
@@ -800,6 +806,77 @@ class MainActivity : Activity() {
         }
     }
 
+    /** The language to translate into, the services in their order, automatic translation and ML Kit's model. */
+    private fun setUpTranslation() {
+        val settings = TranslationSettings(this)
+        val target = findViewById<Button>(R.id.translation_target)
+        fun showTarget() { target.text = getString(R.string.translation_target, TargetLanguage.of(settings.target).name) }
+        showTarget()
+        target.setOnClickListener {
+            val languages = TargetLanguage.ALL
+            AlertDialog.Builder(this)
+                .setSingleChoiceItems(languages.map { it.name }.toTypedArray(), languages.indexOfFirst { it.code == settings.target }) { dialog, which ->
+                    settings.target = languages[which].code
+                    showTarget()
+                    showModel()
+                    dialog.dismiss()
+                }
+                .show()
+        }
+        val services = findViewById<Button>(R.id.translation_services)
+        fun showServices() {
+            services.text = getString(
+                R.string.translation_services,
+                settings.services.joinToString(", ") { TranslationServices.label(this, it, withDetail = false) }.ifEmpty { getString(R.string.sort_none) },
+            )
+        }
+        showServices()
+        services.setOnClickListener { TranslationServices.edit(this, settings) { showServices() } }
+        findViewById<CheckBox>(R.id.translation_auto).apply {
+            isChecked = settings.auto
+            setOnCheckedChangeListener { _, checked -> settings.auto = checked }
+        }
+        findViewById<Button>(R.id.translation_model_download).setOnClickListener { modelAction(R.string.translation_model_downloading) { OnDeviceTranslation.download(it) } }
+        findViewById<Button>(R.id.translation_model_delete).setOnClickListener { modelAction(R.string.translation_model_deleting) { OnDeviceTranslation.deleteModels() } }
+        showModel()
+    }
+
+    /** Whether ML Kit's model for the target language is on the phone. */
+    private fun showModel(state: String? = null) {
+        val status = findViewById<TextView>(R.id.translation_model_status)
+        val target = TranslationSettings(this).target
+        val language = TargetLanguage.of(target).name
+        if (state != null) {
+            status.text = getString(R.string.translation_model_status, language, state)
+            return
+        }
+        status.text = getString(R.string.translation_model_status, language, getString(R.string.translation_model_checking))
+        translationWorker.execute {
+            val ready = runCatching { OnDeviceTranslation.isReady(target) }.getOrDefault(false)
+            runOnUiThread {
+                if (isDestroyed || TranslationSettings(this).target != target) return@runOnUiThread
+                status.text = getString(R.string.translation_model_status, language, getString(if (ready) R.string.translation_model_ready else R.string.translation_model_missing))
+                findViewById<Button>(R.id.translation_model_download).isEnabled = !ready
+                findViewById<Button>(R.id.translation_model_delete).isEnabled = ready
+            }
+        }
+    }
+
+    /** Downloads or deletes ML Kit's models in the background, then shows how that went. */
+    private fun modelAction(working: Int, action: (target: String) -> Unit) {
+        val target = TranslationSettings(this).target
+        findViewById<Button>(R.id.translation_model_download).isEnabled = false
+        findViewById<Button>(R.id.translation_model_delete).isEnabled = false
+        showModel(getString(working))
+        translationWorker.execute {
+            val result = runCatching { action(target) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                result.exceptionOrNull()?.let { showModel(getString(R.string.translation_model_failed, it.message ?: it.javaClass.simpleName)) } ?: showModel()
+            }
+        }
+    }
+
     /** The frequency list results are sorted by, and its order (picked automatically until chosen). */
     private fun showSorting() {
         val settings = DictionarySettings(this)
@@ -873,6 +950,9 @@ class MainActivity : Activity() {
 
         /** Imports and deletes run one at a time, and outlive the activity if the user leaves. */
         val background = Executors.newSingleThreadExecutor()
+
+        /** For ML Kit's translation models, apart from imports (which can take minutes) */
+        private val translationWorker = Executors.newSingleThreadExecutor()
     }
 
     /** Settings pages differ between vendors, so try each intent until one opens. */

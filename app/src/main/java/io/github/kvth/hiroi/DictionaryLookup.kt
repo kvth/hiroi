@@ -28,6 +28,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Translator
+import io.github.kvth.hiroi.translation.Translations
 import java.util.concurrent.Executors
 
 /**
@@ -295,6 +296,7 @@ class DictionaryLookup(
             },
             selection = selection(),
             audio = found.audio[index],
+            translate = { sentence -> Translations(activity).translate(sentence).text },
         )
     }
 

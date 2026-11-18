@@ -138,4 +138,29 @@ class CardCreatorTest {
             requests.last().getJSONObject("params").getJSONObject("note").getJSONObject("fields").toMap(),
         )
     }
+
+    @Test
+    fun sentenceTranslationOnlyWhenAFieldHasIt() {
+        val asked = mutableListOf<String>()
+        val text = "昨日は晴れ。明日は雨が降る。"
+        val data = CardData(term("雨"), text, 8, 9, translate = { asked += it; "It will <rain> {tomorrow}." })
+        val (fields, error) = hiroiMarkers(mapOf("Word" to "{expression}", "Back" to "{sentence}<br>{sentence-translation}"), data)
+        // The sentence of the word, translated once for both passes, as HTML with no marker left in it
+        assertEquals(listOf("明日は雨が降る。"), asked)
+        assertEquals("{sentence}<br>It will &lt;rain&gt; &#123;tomorrow}.", fields["Back"])
+        assertEquals("{expression}", fields["Word"])
+        assertNull(error)
+        hiroiMarkers(mapOf("Back" to "{sentence-translation}"), data)
+        assertEquals(1, asked.size)
+
+        // Not asked for: no translation
+        val untouched = CardData(term("雨"), text, 8, 9, translate = { error("not asked for") })
+        assertEquals(mapOf("Word" to "{expression}") to null, hiroiMarkers(mapOf("Word" to "{expression}"), untouched))
+
+        // Failed: empty, and why
+        val failing = CardData(term("雨"), text, 8, 9, translate = { throw IllegalStateException("offline") })
+        val (empty, reason) = hiroiMarkers(mapOf("Back" to "[{sentence-translation}]"), failing)
+        assertEquals("[]", empty["Back"])
+        assertEquals("sentence-translation: offline", reason)
+    }
 }

@@ -31,7 +31,15 @@ class CardData(
     val selection: String = "",
     /** The recording picked in the result's audio menu, for {audio}; else the sources' first */
     val audio: AudioInfo? = null,
-)
+    /** Translates a text, for {sentence-translation}; throws with the reason when it can't */
+    val translate: (String) -> String = { throw IllegalStateException("No translation here") },
+) {
+    /** The sentence's translation, made once for the card (both passes need it) */
+    val sentenceTranslation: Result<String> by lazy {
+        val (start, end) = YomitanNoteData.sentence(text, this.start, this.end)
+        runCatching { translate(text.substring(start, end).trim()) }
+    }
+}
 
 /**
  * A card format's fields filled for a card: [errors] are templates that failed (their field
@@ -63,8 +71,9 @@ class YomitanRenderer(
     private val dictionaries by lazy { noteData.dictionariesJson(db.styles()) }
 
     override fun render(data: CardData, requirements: JSONArray?, media: JSONObject?): RenderedNote {
+        val (filled, translationError) = hiroiMarkers(format.fields, data)
         val fields = JSONObject()
-        for ((name, value) in format.fields) fields.put(name, JSONObject().put("value", value).put("overwriteMode", format.overwriteMode(name)))
+        for ((name, value) in filled) fields.put(name, JSONObject().put("value", value).put("overwriteMode", format.overwriteMode(name)))
         val request = JSONObject()
             .put("dictionaryEntry", noteData.dictionaryEntry(data.term))
             .put("cardFormat", JSONObject().put("type", "term").put("name", "Hiroi").put("deck", format.deck).put("model", format.model).put("fields", fields).put("icon", "big-circle"))
@@ -83,10 +92,23 @@ class YomitanRenderer(
         val errors = result.getJSONArray("errors")
         return RenderedNote(
             format.fields.keys.associateWith { out.optString(it) },
-            List(errors.length()) { errors.getString(it) },
+            List(errors.length()) { errors.getString(it) } + listOfNotNull(translationError),
             result.getJSONArray("requirements"),
         )
     }
+}
+
+/**
+ * Fills Hiroi's own markers in [fields] before Yomitan's templates fill theirs: for now
+ * {sentence-translation}, translated only if a field has it. Also says why it's empty, if it is.
+ */
+fun hiroiMarkers(fields: Map<String, String>, data: CardData): Pair<Map<String, String>, String?> {
+    if (fields.values.none { AnkiTemplates.SENTENCE_TRANSLATION in it }) return fields to null
+    val translation = data.sentenceTranslation
+    // As HTML, and with no { left that Yomitan would take for a marker
+    val html = translation.getOrNull()?.let { Html.escape(it).replace("\n", "<br>").replace("{", "&#123;") }.orEmpty()
+    val error = translation.exceptionOrNull()?.let { "sentence-translation: ${it.message ?: it.javaClass.simpleName}" }
+    return fields.mapValues { (_, value) -> value.replace(AnkiTemplates.SENTENCE_TRANSLATION, html) } to error
 }
 
 /**

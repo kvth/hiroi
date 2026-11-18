@@ -107,6 +107,29 @@ The other options are Yomitan's too:
 
 Recordings are downloaded once per lookup and played on the phone; nothing else is sent anywhere. Lingua Libre, Wiktionary and the generic LanguagePod101 sources aren't there: they're for other languages and have little Japanese.
 
+## Translation
+
+Yomitan has no translation; this is Hiroi's own. Under the text in the overlay's panel, and under the search page's text, a **文A Translate** line translates what you're reading:
+- the text you selected in the panel, if you selected some;
+- otherwise the sentence of the word you looked up;
+- otherwise all of the panel's text (*All* puts the whole screen's text there).
+
+Tap it to translate, or turn on *Translate automatically* (*Translation* in the setup screen). The translation language can be picked there, English by default. Long-press the translation to use another service, send the text to a translation app, or copy the translation.
+
+The **services** are tried in their order until one has a translation:
+
+| Service | |
+|---|---|
+| ML Kit (on this phone) | The default. Google's on-device translation: its models (about 30 MB per language) are downloaded once, on first use or with *Download* in the setup screen, and after that translating needs no network. Quality is fair. |
+| DeepL | DeepL's API with your own key (API Free: 500,000 characters a month; keys ending in `:fx` go to the free server). Very good translations. |
+| LibreTranslate | A [LibreTranslate](https://libretranslate.com) server, e.g. your own, with an API key if it wants one. |
+| Custom URL | A URL with `{text}`, `{source}` (`ja`) and `{target}` filled in. Its answer is the translation: plain text, or JSON with it in `translatedText`, `translation`, `text` or `result` (also in a list or one level down). |
+| Send to a translation app | Opens Google Translate, DeepL or any app that takes Android's *translate* or *process text* intent. You pick the app once; long-press to pick another. As the first service, a tap sends the text there instead of translating it in Hiroi. |
+
+Except with ML Kit, the text you translate goes to that service. Translations are cached while Hiroi runs, so tapping the same sentence again sends nothing. API keys stay on the phone: they're left out of Android's backups.
+
+**On cards:** `{sentence-translation}` in a field (it's in the field editor's **{…}** menu) puts the translation of the card's sentence there, with the same services. It's translated only for card formats that use it. If no service has a translation, the field stays empty and Hiroi says why.
+
 ## OCR
 
 Apps don't expose text inside images; at most they describe the picture (Instagram: 写真、…), which doesn't stop Hiroi from reading the text in it. So as soon as the overlay opens, Hiroi reads the screenshot it took on trigger with Google ML Kit's on-device Japanese recognizer, in the background. Japanese lines it finds in images are added as dashed boxes when it's done, usually within a second, with the recognized text drawn over the picture where it was found. The other boxes can be used meanwhile. If you tap an image before then, the word under your tap is looked up once its line arrives. Everything runs on the phone; the model is bundled, so it needs neither a network connection nor Play Services.
@@ -116,7 +139,7 @@ Apps don't expose text inside images; at most they describe the picture (Instagr
 - ML Kit reads horizontal text well; vertical text (manga) is hit and miss.
 - The first scan after starting the app takes a moment while the model loads.
 
-**Licensing:** ML Kit is closed source (Google APIs Terms of Service), while Hiroi is GPL-3.0 and contains Yomitan's GPL code. Publishing this source code is fine, and so is building the app for yourself. Distributing built APKs, which bundle ML Kit, would conflict with the GPL. A distributable build would need an open-source OCR engine (PaddleOCR, Tesseract), or ML Kit in a separate companion app.
+**Licensing:** ML Kit (the OCR here, and the on-device translation) is closed source (Google APIs Terms of Service), while Hiroi is GPL-3.0 and contains Yomitan's GPL code. Publishing this source code is fine, and so is building the app for yourself. Distributing built APKs, which bundle ML Kit, would conflict with the GPL. A distributable build would need an open-source OCR engine (PaddleOCR, Tesseract), or ML Kit in a separate companion app.
 
 ## Anki
 
@@ -128,7 +151,7 @@ Hiroi talks to [AnkiConnect](https://foosoft.net/projects/anki-connect/):
 
 ### Making cards
 
-With a card format set up under *Anki → Cards*, every result in the overlay and on the search page gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a value per field with markers such as `{expression}` or `{glossary}`. *Fields…* edits them, and its **{…}** menu lists the markers: Yomitan's standard ones, one pair per dictionary (`{single-glossary-jitendex}`, `{single-frequency-number-jpdb}`), and those your own templates add. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*), together with that profile's Anki card templates and its compact glossary and tag settings; with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests field values from the field names.
+With a card format set up under *Anki → Cards*, every result in the overlay and on the search page gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a value per field with markers such as `{expression}` or `{glossary}`. *Fields…* edits them, and its **{…}** menu lists the markers: Yomitan's standard ones, Hiroi's `{sentence-translation}` (see [Translation](#translation)), one pair per dictionary (`{single-glossary-jitendex}`, `{single-frequency-number-jpdb}`), and those your own templates add. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*), together with that profile's Anki card templates and its compact glossary and tag settings; with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests field values from the field names.
 
 #### Templates
 

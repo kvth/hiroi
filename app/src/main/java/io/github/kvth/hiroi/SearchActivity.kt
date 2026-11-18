@@ -32,6 +32,7 @@ import io.github.kvth.hiroi.marks.KnownWords
 import io.github.kvth.hiroi.marks.MarkSettings
 import io.github.kvth.hiroi.marks.MarkStyle
 import io.github.kvth.hiroi.marks.MarkedTextView
+import io.github.kvth.hiroi.translation.TranslationStrip
 import java.util.concurrent.Executors
 
 /**
@@ -47,6 +48,7 @@ class SearchActivity : Activity() {
     private lateinit var queryView: MarkedTextView
     private lateinit var queryScroll: ScrollView
     private lateinit var message: TextView
+    private lateinit var translation: TranslationStrip
 
     private val main = Handler(Looper.getMainLooper())
     private val marker = Executors.newSingleThreadExecutor()
@@ -156,6 +158,8 @@ class SearchActivity : Activity() {
             )
         }
         queryScroll.addView(queryView)
+        // Translates what was searched
+        translation = TranslationStrip(this) { queryView.text.toString().trim().takeIf { it.any(Japanese::isJapanese) } }
 
         message = TextView(this).apply {
             textSize = 16f
@@ -167,6 +171,7 @@ class SearchActivity : Activity() {
             setPadding(pad, pad / 2, pad, 0)
             addView(searchRow, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(queryScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(translation.view, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(message, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(lookup.web, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         }
@@ -189,6 +194,7 @@ class SearchActivity : Activity() {
         main.removeCallbacks(searchSoon)
         marker.shutdownNow()
         lookup.close()
+        translation.close()
         super.onDestroy()
     }
 
@@ -227,6 +233,7 @@ class SearchActivity : Activity() {
             }
             else -> lookUpAt(first)
         }
+        translation.refresh()
         markQuery(text)
     }
 

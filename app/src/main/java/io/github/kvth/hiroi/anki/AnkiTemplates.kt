@@ -57,9 +57,15 @@ object AnkiTemplates {
         )
     }
 
+    /** {sentence-translation}: Hiroi's own marker (Yomitan has none for it), the sentence translated. */
+    const val SENTENCE_TRANSLATION = "{sentence-translation}"
+
+    /** Hiroi's own markers, besides Yomitan's */
+    val HIROI_MARKERS = listOf("sentence-translation")
+
     /** Markers [format]'s fields use that neither [templates] nor the dictionaries define: they'd come out as {name-render-error}. */
     fun unknownMarkers(format: CardFormat, templates: String, dictionaries: List<DictionaryInfo>): List<String> {
-        val known = inlineMarkers(templates).toSet() + dynamicMarkers(dictionaries)
+        val known = inlineMarkers(templates).toSet() + dynamicMarkers(dictionaries) + HIROI_MARKERS
         return format.fields.values.flatMap { MARKER.findAll(it).map { m -> m.groupValues[1] } }.filter { it !in known }.distinct()
     }
 

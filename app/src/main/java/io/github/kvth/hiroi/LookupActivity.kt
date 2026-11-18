@@ -36,6 +36,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import io.github.kvth.hiroi.anki.YomitanNoteData
 import io.github.kvth.hiroi.japanese.Japanese
 import io.github.kvth.hiroi.marks.KnownWords
 import io.github.kvth.hiroi.marks.MarkSettings
@@ -43,6 +44,7 @@ import io.github.kvth.hiroi.marks.MarkStyle
 import io.github.kvth.hiroi.marks.MarkedTextView
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.ocr.ScreenOcr
+import io.github.kvth.hiroi.translation.TranslationStrip
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -64,6 +66,8 @@ class LookupActivity : Activity() {
     private lateinit var lookup: DictionaryLookup
     private lateinit var resultsWebFrame: FrameLayout
     private var shownBlock: TextBlock? = null // the box whose text the panel shows, for the on-screen highlight
+    private var lookedUp: Pair<Int, Int>? = null // the looked-up word in the panel's text, whose sentence is translated
+    private lateinit var translation: TranslationStrip
 
     private val dp by lazy { resources.displayMetrics.density }
     private var systemBars = Insets.NONE
@@ -119,6 +123,7 @@ class LookupActivity : Activity() {
 
     override fun onDestroy() {
         lookup.close()
+        translation.close()
         scanner.shutdownNow()
         marker.shutdownNow()
         KnownWords.listeners -= onKnownWordsChanged
@@ -143,6 +148,7 @@ class LookupActivity : Activity() {
         listenForWordTaps()
         scroll = maxHeightScrollView(0.3f)
         scroll.addView(textView)
+        translation = TranslationStrip(this, ::translationSource)
 
         resultsList = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -188,6 +194,7 @@ class LookupActivity : Activity() {
             val pad = (16 * dp).toInt()
             setPadding(pad, (12 * dp).toInt(), pad, (4 * dp).toInt())
             addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(translation.view, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(resultsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(resultsWebFrame, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(buttons, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -250,8 +257,12 @@ class LookupActivity : Activity() {
 
     private fun showLookup(outcome: DictionaryLookup.Lookup) {
         when (outcome) {
-            is DictionaryLookup.Lookup.Message -> showResultsText(outcome.text)
+            is DictionaryLookup.Lookup.Message -> {
+                lookedUp = null
+                showResultsText(outcome.text)
+            }
             is DictionaryLookup.Lookup.Found -> {
+                lookedUp = outcome.result.start to outcome.result.end
                 // Select the matched word so Copy and Look up act on it. The selection only shows
                 // while the text has focus, which it lacks when the tap was on a box.
                 textView.requestFocus()
@@ -262,6 +273,25 @@ class LookupActivity : Activity() {
                 lookup.show(outcome)
             }
         }
+        translation.refresh()
+    }
+
+    /**
+     * What the translation strip translates: the text selected in the panel, else the sentence
+     * of the looked-up word, else all of the panel's text. Nothing while it shows the hint.
+     */
+    private fun translationSource(): String? {
+        if (!hasText) return null
+        val text = textView.text.toString()
+        val start = minOf(textView.selectionStart, textView.selectionEnd)
+        val end = maxOf(textView.selectionStart, textView.selectionEnd)
+        val word = lookedUp
+        val source = when {
+            start >= 0 && start < end && (start to end) != word -> text.substring(start, end)
+            word != null && word.second <= text.length -> YomitanNoteData.sentence(text, word.first, word.second).let { (s, e) -> text.substring(s, e) }
+            else -> text
+        }
+        return source.trim().takeIf { it.isNotEmpty() }
     }
 
     private fun showResultsText(text: CharSequence) {
@@ -476,6 +506,7 @@ class LookupActivity : Activity() {
         hasText = isText
         lookup.cancel()
         shownBlock = null
+        lookedUp = null
         overlay.highlight = emptyList()
         resultsScroll.visibility = View.GONE
         resultsWebFrame.visibility = View.GONE
@@ -487,6 +518,7 @@ class LookupActivity : Activity() {
         textActions.forEach { it.visibility = if (isText) View.VISIBLE else View.GONE }
         marksButton.visibility = if (!isText && marksAvailable) View.VISIBLE else View.GONE
         markPanel()
+        translation.refresh()
         scroll.scrollTo(0, 0)
         if (panelAtTop != atTop) {
             panelAtTop = atTop
