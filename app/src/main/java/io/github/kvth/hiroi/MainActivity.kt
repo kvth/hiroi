@@ -313,6 +313,30 @@ class MainActivity : Activity() {
             }
         }
         showDuplicateOptions()
+        findViewById<CheckBox>(R.id.cards_screenshot_crop).apply {
+            isChecked = anki.screenshotCrop
+            setOnCheckedChangeListener { _, checked -> anki.screenshotCrop = checked }
+        }
+        findViewById<Button>(R.id.cards_screenshot_format).setOnClickListener {
+            val formats = AnkiSettings.SCREENSHOT_FORMATS
+            AlertDialog.Builder(this)
+                .setSingleChoiceItems(formats.map { getString(screenshotFormatLabel(it)) }.toTypedArray(), formats.indexOf(anki.screenshotFormat)) { dialog, which ->
+                    anki.screenshotFormat = formats[which]
+                    showScreenshotOptions()
+                    dialog.dismiss()
+                }
+                .show()
+        }
+        findViewById<SeekBar>(R.id.cards_screenshot_quality).setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                anki.screenshotQuality = value
+                showScreenshotOptions()
+            }
+            override fun onStartTrackingTouch(bar: SeekBar) {}
+            override fun onStopTrackingTouch(bar: SeekBar) {}
+        })
+        showScreenshotOptions()
         findViewById<CheckBox>(R.id.cards_word_audio).apply {
             isChecked = anki.wordAudio
             setOnCheckedChangeListener { _, checked -> anki.wordAudio = checked }
@@ -483,9 +507,26 @@ class MainActivity : Activity() {
         anki.fieldTemplates = imported.templates
         anki.compactGlossaries = imported.compactGlossaries
         anki.compactTags = imported.compactTags
+        anki.screenshotFormat = imported.screenshotFormat
+        anki.screenshotQuality = imported.screenshotQuality
+        showScreenshotOptions()
         findViewById<EditText>(R.id.cards_tags).setText(format.tags.joinToString(" "))
         showDuplicateOptions()
         showAnkiChoices()
+    }
+
+    private fun screenshotFormatLabel(format: String) = if (format == "jpeg") R.string.cards_screenshot_jpeg else R.string.cards_screenshot_png
+
+    /** {screenshot}'s format, and its JPEG quality (only for JPEG). */
+    private fun showScreenshotOptions() {
+        val jpeg = anki.screenshotFormat == "jpeg"
+        findViewById<Button>(R.id.cards_screenshot_format).text = getString(R.string.cards_screenshot_format, getString(screenshotFormatLabel(anki.screenshotFormat)))
+        val label = findViewById<TextView>(R.id.cards_screenshot_quality_label)
+        val quality = findViewById<SeekBar>(R.id.cards_screenshot_quality)
+        label.text = getString(R.string.cards_screenshot_quality, anki.screenshotQuality)
+        quality.progress = anki.screenshotQuality
+        label.visibility = if (jpeg) View.VISIBLE else View.GONE
+        quality.visibility = if (jpeg) View.VISIBLE else View.GONE
     }
 
     private fun showCardStatus(text: String) {

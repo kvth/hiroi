@@ -49,10 +49,27 @@ class AnkiSettings(context: Context) {
         get() = prefs.getBoolean("word_audio", true)
         set(value) = prefs.edit().putBoolean("word_audio", value).apply()
 
+    /** How {screenshot} is stored: "png" or "jpeg", as Yomitan's screenshot format */
+    var screenshotFormat: String
+        get() = prefs.getString("screenshot_format", null)?.takeIf { it in SCREENSHOT_FORMATS } ?: "png"
+        set(value) = prefs.edit().putString("screenshot_format", value).apply()
+
+    /** JPEG quality, 0–100 (Yomitan's default is 92) */
+    var screenshotQuality: Int
+        get() = prefs.getInt("screenshot_quality", 92)
+        set(value) = prefs.edit().putInt("screenshot_quality", value.coerceIn(0, 100)).apply()
+
+    /** {screenshot} shows just the box or region the panel's text is from, not the whole screen */
+    var screenshotCrop: Boolean
+        get() = prefs.getBoolean("screenshot_crop", false)
+        set(value) = prefs.edit().putBoolean("screenshot_crop", value).apply()
+
     fun client(timeoutMs: Int = 3000) = AnkiConnect(url, apiKey.ifEmpty { null }, timeoutMs)
 
     companion object {
         /** AnkiConnect Android on the same phone; desktop Anki's AnkiConnect uses the same port */
         const val DEFAULT_URL = "http://127.0.0.1:8765"
+
+        val SCREENSHOT_FORMATS = listOf("png", "jpeg")
     }
 }

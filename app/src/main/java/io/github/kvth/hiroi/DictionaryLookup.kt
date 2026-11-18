@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
@@ -42,6 +43,8 @@ class DictionaryLookup(
     private val screenshot: () -> Bitmap?,
     /** The text selected where the word was looked up, for {popup-selection-text}. */
     private val selection: () -> String = { "" },
+    /** Where on the screen the text is (its box or region), for a cropped {screenshot}; null for all of it */
+    private val screenshotArea: () -> Rect? = { null },
 ) {
     sealed interface Lookup {
         class Message(val text: String) : Lookup
@@ -356,7 +359,7 @@ class DictionaryLookup(
         val overwrite = found.duplicates[index]?.firstOrNull()?.takeIf { format.checkForDuplicates && format.duplicateBehavior == "overwrite" }
         button(if (overwrite != null) R.string.anki_overwriting else R.string.anki_adding, false)
         val data = cardData(found, index)
-        val screenshot = screenshot()
+        val screenshot = screenshot()?.let { full -> if (settings.screenshotCrop) crop(full, screenshotArea()) else full }
         worker.execute {
             val result = runCatching {
                 val creator = CardCreator(activity, settings, ::clipboardText)
@@ -419,6 +422,15 @@ class DictionaryLookup(
 
     private fun toast(text: String) = Toast.makeText(activity, text, Toast.LENGTH_LONG).show()
 
+    /** [area] of [full] (screen coordinates) with a margin around it, within the picture; all of it without an area. */
+    private fun crop(full: Bitmap, area: Rect?): Bitmap {
+        if (area == null) return full
+        val margin = (CROP_MARGIN_DP * activity.resources.displayMetrics.density).toInt()
+        val inside = Rect(area.left - margin, area.top - margin, area.right + margin, area.bottom + margin)
+        if (!inside.intersect(0, 0, full.width, full.height) || inside.isEmpty) return full
+        return Bitmap.createBitmap(full, inside.left, inside.top, inside.width(), inside.height())
+    }
+
     private fun css(color: Int) = String.format("#%06X", color and 0xFFFFFF)
 
     private fun themeColor(attr: Int): Int {
@@ -433,5 +445,6 @@ class DictionaryLookup(
     private companion object {
         const val TAG = "HiroiLookup"
         const val ANKIDROID = "com.ichi2.anki"
+        const val CROP_MARGIN_DP = 12
     }
 }

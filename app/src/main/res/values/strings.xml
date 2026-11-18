@@ -201,6 +201,11 @@
         <item>Overwrite (even if the new value is empty)</item>
     </string-array>
     <string name="cards_word_audio">Word audio for {audio}, from the audio sources</string>
+    <string name="cards_screenshot_crop">{screenshot}: just the box or region, not the whole screen</string>
+    <string name="cards_screenshot_format">{screenshot} format: %1$s</string>
+    <string name="cards_screenshot_png">PNG (lossless, larger)</string>
+    <string name="cards_screenshot_jpeg">JPEG (smaller)</string>
+    <string name="cards_screenshot_quality">JPEG quality: %1$d</string>
     <string name="cards_ready">\"＋ Anki\" adds %1$s notes to %2$s (%3$d fields filled).</string>
     <string name="cards_incomplete">Choose a deck and note type, or import your card format from Yomitan.</string>
     <string name="cards_unsupported">Not defined in the templates, these come out as {…-render-error}: %s</string>

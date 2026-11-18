@@ -128,11 +128,15 @@ class CardCreator(
     /** Where {audio} comes from: the audio sources, in their order */
     private val audioSources: List<AudioSource> = listOf(AudioSource("jpod101")),
     private val audio: WordAudio = WordAudio(WordAudio::httpFetch),
+    /** How {screenshot} is stored: "png", or "jpeg" with [screenshotQuality] */
+    private val screenshotFormat: String = "png",
+    private val screenshotQuality: Int = 92,
 ) {
     constructor(context: Context, settings: AnkiSettings, clipboard: () -> String? = { null }) :
         this(
             settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard,
             DictionaryDb.get(context)::findMedia, AudioSettings(context).sources,
+            screenshotFormat = settings.screenshotFormat, screenshotQuality = settings.screenshotQuality,
         )
 
     /** An added or overwritten note, and the templates that failed on it. */
@@ -215,8 +219,11 @@ class CardCreator(
                     }
                 }
                 "screenshot" -> if (screenshot != null) {
-                    val png = ByteArrayOutputStream().also { screenshot.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-                    media.put("screenshot", anki.storeMediaFile("hiroi_screenshot_${System.currentTimeMillis()}.png", png.base64()))
+                    val jpeg = screenshotFormat == "jpeg"
+                    val bytes = ByteArrayOutputStream().also {
+                        screenshot.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, if (jpeg) screenshotQuality else 100, it)
+                    }.toByteArray()
+                    media.put("screenshot", anki.storeMediaFile("hiroi_screenshot_${System.currentTimeMillis()}.${if (jpeg) "jpg" else "png"}", bytes.base64()))
                 }
                 "clipboardText" -> clipboard()?.let { media.put("clipboardText", it) }
                 "popupSelectionText" -> media.put("selectionText", data.selection)

@@ -74,6 +74,18 @@ class CardFormatTest {
     }
 
     @Test
+    fun importsTheScreenshotFormat() {
+        val jpeg = YomitanSettings.cardFormats(
+            export.replace("\"tags\": [\"yomitan\"],", "\"tags\": [\"yomitan\"], \"screenshot\": {\"format\": \"jpeg\", \"quality\": 70},"),
+        ).first()
+        assertEquals("jpeg", jpeg.screenshotFormat)
+        assertEquals(70, jpeg.screenshotQuality)
+        val plain = YomitanSettings.cardFormats(export).first()
+        assertEquals("png", plain.screenshotFormat)
+        assertEquals(92, plain.screenshotQuality)
+    }
+
+    @Test
     fun readsFormatsSavedBeforeTheDuplicateOptions() {
         val old = CardFormat.fromJson("""{"deck":"D","model":"M","fields":{"Front":"{expression}"},"tags":[],"preventDuplicates":true,"duplicateScope":"deck"}""")
         assertEquals("prevent", old.duplicateBehavior)

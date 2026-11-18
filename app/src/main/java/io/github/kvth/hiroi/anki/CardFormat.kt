@@ -106,7 +106,8 @@ data class CardFormat(
 
 /**
  * A card format from Yomitan settings with what else shapes its fields there: the profile's
- * Anki card templates (null: Yomitan's default ones) and its glossary and tag layout.
+ * Anki card templates (null: Yomitan's default ones), its glossary and tag layout and its
+ * screenshot format.
  */
 class YomitanCardFormat(
     val name: String,
@@ -114,6 +115,9 @@ class YomitanCardFormat(
     val templates: String?,
     val compactGlossaries: Boolean,
     val compactTags: Boolean,
+    /** Yomitan's screenshot format ("png" or "jpeg") and JPEG quality */
+    val screenshotFormat: String = "png",
+    val screenshotQuality: Int = 92,
 )
 
 /** Reads the Anki card formats out of a Yomitan settings export (Settings > Backup > Export settings). */
@@ -157,6 +161,8 @@ object YomitanSettings {
                     "${profile.optString("name")}: ${format.optString("name", "Expression")}", cardFormat, templates,
                     compactGlossaries = general?.optString("glossaryLayoutMode") == "compact-popup-anki",
                     compactTags = general?.optBoolean("compactTags") == true,
+                    screenshotFormat = anki.optJSONObject("screenshot")?.optString("format")?.takeIf { it in AnkiSettings.SCREENSHOT_FORMATS } ?: "png",
+                    screenshotQuality = anki.optJSONObject("screenshot")?.optInt("quality", 92)?.coerceIn(0, 100) ?: 92,
                 )
             }
         }

@@ -183,7 +183,7 @@ A marker the templates don't define comes out as `{marker-render-error}`, as in 
 
 Hiroi gives the templates what Yomitan's translator would: the dictionary entry with its headword, inflections, definitions (the dictionaries' structured content as is), tags from the dictionaries' tag banks, frequencies and pitch accents, and the note context (sentence, document title: the app the text came from). Dictionaries imported before tag banks were supported need importing again to get their tag categories and notes. Media go through the same two passes as in Yomitan: the first rendering tells which ones the fields need, then Hiroi provides them and the fields are rendered again:
 - `{audio}`: word audio from JapanesePod101, Yomitan's default source;
-- `{screenshot}`: the screen when the overlay opened;
+- `{screenshot}`: the screen when the overlay opened, without the overlay. *Cards* has Yomitan's screenshot options, PNG or JPEG with its quality (imported from Yomitan settings too), and Hiroi's own: just the box or region the panel's text is from, with a small margin, instead of the whole screen (with *All*, it's the whole screen). Cards from the search page have none;
 - `{clipboard-text}`: the clipboard;
 - `{popup-selection-text}`: the panel's selection;
 - `{sentence-furigana}`: the sentence parsed with Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
