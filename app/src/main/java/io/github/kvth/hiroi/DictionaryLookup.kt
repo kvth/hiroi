@@ -117,7 +117,7 @@ class DictionaryLookup(
                                 occurrenceBased = dictionaries.enabledDictionaries().filter { it.frequencyMode == "occurrence-based" }.mapTo(HashSet()) { it.title },
                             )
                             Lookup.Found(
-                                result, text, html.document(result, anki, styles, cards, frequencies),
+                                result, text, html.document(result, anki, styles, cards, frequencies, dictionaries::findMedia),
                                 notes = result.terms.indices.associateWithTo(HashMap()) { i ->
                                     anki?.notes?.get(result.terms[i].expression).orEmpty().toMutableList()
                                 },

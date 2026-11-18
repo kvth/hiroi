@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.BitmapFactory
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -21,11 +22,15 @@ data class DictionaryInfo(
     val frequencies: Int = 0,
     val frequencyMode: String? = null,
     val enabled: Boolean = true,
+    val images: Int = 0,
 )
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 6), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 7), DictionaryStore {
+
+    /** The dictionaries' images, a folder per dictionary; the media table says what they are. */
+    private val mediaDir = File(context.filesDir, "dictionary-media")
 
     init {
         setWriteAheadLoggingEnabled(true) // lookups keep working during an import
@@ -35,7 +40,7 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL(
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
                 "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
-                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1)",
+                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1, images INTEGER DEFAULT 0)",
         )
         db.execSQL(
             "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
@@ -49,6 +54,12 @@ class DictionaryDb private constructor(context: Context) :
         db.execSQL("CREATE INDEX kanji_character ON kanji (character)")
         createKanjiMeta(db)
         createTags(db)
+        createMedia(db)
+    }
+
+    private fun createMedia(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE media (dict INTEGER, path TEXT, media_type TEXT, width INTEGER, height INTEGER, file TEXT)")
+        db.execSQL("CREATE INDEX media_path ON media (dict, path)")
     }
 
     private fun createTags(db: SQLiteDatabase) {
@@ -81,6 +92,11 @@ class DictionaryDb private constructor(context: Context) :
         }
         // 6: dictionaries can be turned off, as in Yomitan
         if (oldVersion < 6) db.execSQL("ALTER TABLE dictionaries ADD COLUMN enabled INTEGER DEFAULT 1")
+        // 7: dictionary images (dictionaries need importing again to get theirs)
+        if (oldVersion < 7) {
+            db.execSQL("ALTER TABLE dictionaries ADD COLUMN images INTEGER DEFAULT 0")
+            createMedia(db)
+        }
     }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
@@ -91,13 +107,13 @@ class DictionaryDb private constructor(context: Context) :
 
     fun dictionaries(): List<DictionaryInfo> =
         readableDatabase.rawQuery(
-            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled FROM dictionaries ORDER BY position, id", null,
+            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled, images FROM dictionaries ORDER BY position, id", null,
         ).use { c ->
             List(c.count) {
                 c.moveToNext()
                 DictionaryInfo(
                     c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
-                    c.getInt(6), c.getString(7), c.getInt(8) != 0,
+                    c.getInt(6), c.getString(7), c.getInt(8) != 0, c.getInt(9),
                 )
             }
         }
@@ -167,6 +183,13 @@ class DictionaryDb private constructor(context: Context) :
                     .mapNotNull { entry -> BANK.matchEntire(entry.name)?.let { entry to it } }
                     .sortedWith(compareBy({ it.second.groupValues[1] }, { it.second.groupValues[2].toInt() }))
                     .toList()
+                // Images first, so the definitions can get their sizes as Yomitan stores them.
+                val sizes = HashMap<String, Pair<Int, Int>>()
+                for (entry in file.entries().asSequence().filter { !it.isDirectory && DictionaryImages.mediaType(it.name) != null }.toList()) {
+                    val bytes = file.getInputStream(entry).use { it.readBytes() }
+                    sizes[entry.name] = addMedia(db, id, entry.name, bytes)
+                }
+                if (sizes.isNotEmpty()) onProgress("${index.title}: ${sizes.size} images")
                 var terms = 0
                 var meta = 0
                 var kanji = 0
@@ -176,7 +199,12 @@ class DictionaryDb private constructor(context: Context) :
                     onProgress("${index.title}: ${n + 1} / ${banks.size}")
                     val json = file.getInputStream(entry).reader().readText()
                     when (match.groupValues[1]) {
-                        "term_bank" -> terms += insertTerms(db, id, Yomitan.parseTermBank(json, index.format))
+                        "term_bank" -> terms += insertTerms(
+                            db, id,
+                            Yomitan.parseTermBank(json, index.format).let { rows ->
+                                if (sizes.isEmpty()) rows else rows.map { it.copy(glossary = DictionaryImages.prepare(it.glossary, sizes::get)) }
+                            },
+                        )
                         "term_meta_bank" -> Yomitan.parseTermMetaBank(json).let { rows ->
                             meta += insertMeta(db, id, rows, "term_meta")
                             frequencies += rows.count { it.mode == "freq" }
@@ -196,6 +224,7 @@ class DictionaryDb private constructor(context: Context) :
                         put("meta", meta)
                         put("kanji", kanji)
                         put("frequencies", frequencies)
+                        put("images", sizes.size)
                     },
                     "id = ?", arrayOf(id.toString()),
                 )
@@ -232,7 +261,7 @@ class DictionaryDb private constructor(context: Context) :
         val stored = db.rawQuery("SELECT id, summary, styles FROM dictionaries", null).use { c ->
             buildMap { while (c.moveToNext()) put(c.getLong(0), c.getString(1) to c.getString(2)) }
         }
-        val total = listOf("terms", "term_meta", "kanji", "kanji_meta", "tags").sumOf(::count)
+        val total = listOf("terms", "term_meta", "kanji", "kanji_meta", "tags", "media").sumOf(::count)
         var written = 0
         fun progress() {
             if (++written % 10_000 == 0) onProgress("$written / $total")
@@ -240,7 +269,7 @@ class DictionaryDb private constructor(context: Context) :
         YomitanCollection.Writer(out.bufferedWriter()).use { writer ->
             writer.begin(
                 mapOf(
-                    "dictionaries" to dictionaries.size, "kanji" to count("kanji"), "kanjiMeta" to count("kanji_meta"),
+                    "dictionaries" to dictionaries.size, "kanji" to count("kanji"), "kanjiMeta" to count("kanji_meta"), "media" to count("media"),
                     "tagMeta" to count("tags"), "termMeta" to count("term_meta"), "terms" to count("terms"),
                 ),
             )
@@ -280,6 +309,11 @@ class DictionaryDb private constructor(context: Context) :
                                 c.getString(4).orEmpty().split('\n').filter { it.isNotEmpty() }, c.getString(5),
                             ),
                         )
+                        progress()
+                    }
+                    "media" -> rows("SELECT m.path, m.media_type, m.width, m.height, m.file, m.dict, d.title FROM media m JOIN dictionaries d ON d.id = m.dict") { c ->
+                        val file = File(File(mediaDir, c.getLong(5).toString()), c.getString(4).orEmpty())
+                        if (file.isFile) writer.media(c.getString(6), DictionaryMedia(c.getString(0), c.getString(1), c.getInt(2), c.getInt(3)) { file.readBytes() }, file.readBytes())
                         progress()
                     }
                     "tagMeta" -> rows("SELECT t.name, t.category, t.ord, t.notes, t.score, d.title FROM tags t JOIN dictionaries d ON d.id = t.dict") { c ->
@@ -338,6 +372,9 @@ class DictionaryDb private constructor(context: Context) :
                 override fun kanji(rows: List<KanjiEntry>) = insert(rows, { it.dictionary }) { id, group -> insertKanji(db, id, group) }
                 override fun kanjiMeta(rows: List<TermMeta>) = insert(rows, { it.dictionary }) { id, group -> insertMeta(db, id, group, "kanji_meta") }
                 override fun tags(rows: List<TagInfo>) = insert(rows, { it.dictionary }) { id, group -> insertTags(db, id, group) }
+                override fun media(rows: List<YomitanCollection.MediaRow>) = insert(rows, { it.dictionary }) { id, group ->
+                    for (m in group) addMedia(db, id, m.path, m.content, m.mediaType.ifEmpty { null }, (m.width to m.height).takeIf { m.width > 0 && m.height > 0 })
+                }
             }) { read -> onProgress("$read") }
             for (id in ids.values) updateCounts(db, id)
         } catch (e: Exception) {
@@ -354,6 +391,7 @@ class DictionaryDb private constructor(context: Context) :
             put("terms", count("SELECT COUNT(*) FROM terms WHERE dict = ?"))
             put("meta", count("SELECT COUNT(*) FROM term_meta WHERE dict = ?") + count("SELECT COUNT(*) FROM kanji_meta WHERE dict = ?"))
             put("kanji", count("SELECT COUNT(*) FROM kanji WHERE dict = ?"))
+            put("images", count("SELECT COUNT(*) FROM media WHERE dict = ?"))
             put("frequencies", count("SELECT COUNT(*) FROM term_meta WHERE dict = ? AND mode = 'freq'") + count("SELECT COUNT(*) FROM kanji_meta WHERE dict = ? AND mode = 'freq'"))
         }, "id = ?", arrayOf(id.toString()))
     }
@@ -382,7 +420,8 @@ class DictionaryDb private constructor(context: Context) :
         val db = writableDatabase
         db.beginTransaction()
         try {
-            for (table in listOf("terms", "term_meta", "kanji", "kanji_meta", "tags")) db.delete(table, "dict = ?", arrayOf(id.toString()))
+            for (table in listOf("terms", "term_meta", "kanji", "kanji_meta", "tags", "media")) db.delete(table, "dict = ?", arrayOf(id.toString()))
+            File(mediaDir, id.toString()).deleteRecursively()
             db.delete("dictionaries", "id = ?", arrayOf(id.toString()))
             db.setTransactionSuccessful()
         } finally {
@@ -516,6 +555,44 @@ class DictionaryDb private constructor(context: Context) :
             }
         }
     }
+
+    /**
+     * Stores image [path] of dictionary [dict] and returns its size: from the image itself, or for
+     * an SVG from its attributes (100 × 100 when it has none, Yomitan's default).
+     */
+    private fun addMedia(db: SQLiteDatabase, dict: Long, path: String, bytes: ByteArray, mediaType: String? = null, knownSize: Pair<Int, Int>? = null): Pair<Int, Int> {
+        val type = mediaType ?: DictionaryImages.mediaType(path) ?: "application/octet-stream"
+        val size = knownSize ?: if (type == "image/svg+xml") {
+            DictionaryImages.svgSize(String(bytes)) ?: (100 to 100)
+        } else {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            if (options.outWidth > 0) options.outWidth to options.outHeight else 100 to 100
+        }
+        val dir = File(mediaDir, dict.toString()).apply { mkdirs() }
+        val row = db.insertOrThrow("media", null, ContentValues().apply {
+            put("dict", dict)
+            put("path", path)
+            put("media_type", type)
+            put("width", size.first)
+            put("height", size.second)
+        })
+        val name = "$row.${path.substringAfterLast('.', "bin").take(5)}"
+        File(dir, name).writeBytes(bytes)
+        db.update("media", ContentValues().apply { put("file", name) }, "rowid = ?", arrayOf(row.toString()))
+        return size
+    }
+
+    override fun findMedia(dictionary: String, path: String): DictionaryMedia? =
+        readableDatabase.rawQuery(
+            "SELECT m.path, m.media_type, m.width, m.height, m.file, m.dict FROM media m JOIN dictionaries d ON d.id = m.dict " +
+                "WHERE d.title = ? AND m.path = ? LIMIT 1",
+            arrayOf(dictionary, path),
+        ).use { c ->
+            if (!c.moveToFirst()) return null
+            val file = File(File(mediaDir, c.getLong(5).toString()), c.getString(4))
+            DictionaryMedia(c.getString(0), c.getString(1), c.getInt(2), c.getInt(3)) { file.readBytes() }
+        }
 
     override fun findKanjiMeta(character: String): List<TermMeta> =
         readableDatabase.rawQuery(

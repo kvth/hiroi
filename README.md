@@ -4,6 +4,15 @@ A small Android app that picks up the text on your screen, even in apps that don
 
 It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. You can also select text to copy it or send it to another dictionary app.
 
+| The overlay | A lookup | Search |
+|---|---|---|
+| ![Boxes over the text on screen, words from Anki marked by rule, a picture read with OCR](docs/screenshots/overlay.png) | ![The panel with the tapped sentence and the results for 教える](docs/screenshots/lookup.png) | ![The search page: tabesaserareta typed in romaji finds 食べる](docs/screenshots/search.png) |
+
+The screenshots are from the emulator (`scripts/emulator.sh`), on Hiroi's example sentences with the example dictionary and a small Anki deck:
+- **The overlay:** every piece of Japanese text gets a box. Words you have in Anki are marked in their rule's colour (mature, learning, new), and the bar shows how much of the screen's text that is. The sentence in the picture at the bottom is read with OCR (the dashed box).
+- **A lookup:** tapping 教えて shows 教える with its inflection, Anki status and the dictionary's definitions.
+- **Search:** typing `tabesaserareta` searches たべさせられた and finds 食べる.
+
 ## Ways to open it
 
 | Trigger | How |
@@ -26,11 +35,11 @@ When the accessibility service is off, the assistant trigger still works. It the
 
 ## Example
 
-The bottom of the app's setup screen has Japanese example sentences to try Hiroi on, and a button that imports a small example dictionary with every word in them (`app/src/main/assets/example-dictionary.zip`). Its definitions are entries from [Jitendex](https://jitendex.org) (CC BY-SA 4.0, by Stephen Kraus, based on JMdict by the Electronic Dictionaries Research Group and Tatoeba example sentences). `scripts/make-example-dictionary.py <jitendex-yomitan.zip>` rebuilds it.
+The bottom of the app's setup screen has Japanese example sentences to try Hiroi on, and a button that imports a small example dictionary with every word in them (`app/src/main/assets/example-dictionary.zip`). Its definitions are entries from [Jitendex](https://jitendex.org) (CC BY-SA 4.0, by Stephen Kraus, based on JMdict by the Electronic Dictionaries Research Group and Tatoeba example sentences). `scripts/make-example-dictionary.py <jitendex-yomitan.zip>` rebuilds it. The last example is a picture: a sentence in front of a photo-like sunset, as people post them, to try OCR on.
 
 ## Dictionaries
 
-Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone.
+Import Yomitan dictionary zips under *Dictionaries* in the app, or open a downloaded zip with Hiroi (*Open with* / *Share*): term dictionaries (Jitendex, JMdict), frequency lists (JPDB), pitch accent (Kanjium) and kanji dictionaries (KANJIDIC). They're stored in SQLite on the phone. So are the images some dictionaries come with: pictures, diagrams or stroke orders that definitions show. Results show them as Yomitan does, at the size the dictionary asks for (in px, or em with `sizeUnits`), keeping their aspect ratio, pixelated where the dictionary says so, collapsed until tapped where it wants that, with their description. Anki cards get them too (see [Templates](#templates)).
 
 The order of the dictionaries is their priority, as in Yomitan: results show the definitions, frequencies and pitch accents of dictionaries higher up first. Anki cards see this order too, and so does the default sort list. New dictionaries go to the end; **▲▼** in the list move them. The checkbox in front of each turns it off or on, as Yomitan's switch per dictionary does: one that's off stays installed but is left out of lookups, frequency sorting, Anki's per-dictionary markers and the dictionary info Anki templates get. Collections export every dictionary, on or off, since Yomitan's format has no such flag.
 
@@ -38,13 +47,13 @@ The order of the dictionaries is their priority, as in Yomitan: results show the
 - **into Hiroi:** a collection exported from Yomitan, instead of every dictionary zip again;
 - **out of Hiroi:** one into Yomitan, or onto another phone.
 
-Unlike Yomitan's import, which replaces everything, Hiroi's adds the dictionaries that aren't there yet, after the others, and leaves those already imported (by title) as they are. Both read and write as a stream, so collections of hundreds of MB are fine. Dictionary images aren't kept by Hiroi, so they're neither imported nor exported. Opening a collection file with Hiroi (*Open with*) imports it too.
+Unlike Yomitan's import, which replaces everything, Hiroi's adds the dictionaries that aren't there yet, after the others, and leaves those already imported (by title) as they are. Both read and write as a stream, so collections of hundreds of MB are fine. Dictionary images go along, in Yomitan's media table. Opening a collection file with Hiroi (*Open with*) imports it too.
 
 Results look like Yomitan's popup:
 - the headword with furigana, then tags for the inflection, Anki status, frequencies and pitch accent,
-- the definitions, numbered and labelled with their dictionary, styled by the dictionary's own `styles.css` as in Yomitan (Jitendex's coloured labels and example-sentence boxes, for instance).
+- the definitions, numbered and labelled with their dictionary, styled by the dictionary's own `styles.css` as in Yomitan (Jitendex's coloured labels and example-sentence boxes, for instance), with the dictionary's images.
 
-The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles were supported need importing again to get theirs.
+The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.
 
 A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `app/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
 
@@ -64,7 +73,7 @@ Frequency lists (JPDB, BCCWJ, Innocent Corpus, …) show as a tag per list, with
 
 Choosing a list picks the way from its `index.json` (`frequencyMode`: `rank-based` or `occurrence-based`). For lists that don't say, Hiroi compares their values for common and rare words, with the same words Yomitan uses. Words without a value in the list come after those with one. Until you choose one, Hiroi sorts by the first frequency list you imported; choose *none* to sort without one.
 
-Not supported yet: images in definitions and reordering dictionaries. Tag banks are only used for Anki cards so far.
+Tag banks are only used for Anki cards so far; the results show tags by their name.
 
 ## Search
 
@@ -113,7 +122,7 @@ Hiroi gives the templates what Yomitan's translator would: the dictionary entry 
 - `{popup-selection-text}`: the panel's selection;
 - `{sentence-furigana}`: the sentence parsed with Hiroi's own lookup, word by word, so it's only as good as your dictionaries.
 
-Images from dictionaries and `{clipboard-image}` stay empty.
+`{clipboard-image}` stays empty. Images in a glossary are stored in Anki, as Yomitan stores them, so `{glossary}` shows them on the card.
 
 The templates run in a WebView of their own, without network or file access. `scripts/update-yomitan-anki.mjs` bundles Yomitan's code for it (`app/src/main/assets/yomitan/`) from a Yomitan release:
 
@@ -156,7 +165,7 @@ Matching works as in AnkiMark: fields are cleaned of HTML, furigana, cloze marke
 
 ## Limitations
 
-- Only text the app exposes to accessibility is visible. Canvas-drawn text (games, images, video subtitles) needs OCR, which is not implemented yet.
+- Text an app doesn't expose to accessibility (pictures, games, video subtitles) is only found by OCR, which reads horizontal text well but vertical text (manga) only sometimes, and nothing in apps that forbid screenshots.
 - As the assistant app, Hiroi replaces Google Assistant / Gemini on the long-press gesture. Its stub speech recogniser always fails, so apps that use the *system default* speech recogniser lose voice input. Keyboards with their own voice input are not affected.
 
 ## Build

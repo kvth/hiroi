@@ -14,6 +14,9 @@ interface DictionaryStore {
     /** Kanji meta bank rows (frequencies) for [character]; [TermMeta.expression] is the character. */
     fun findKanjiMeta(character: String): List<TermMeta> = emptyList()
 
+    /** Image [path] of [dictionary], if the dictionary came with it. */
+    fun findMedia(dictionary: String, path: String): DictionaryMedia? = null
+
     /** What the tags [names] of [dictionary] mean, from its tag bank; unknown tags are left out. */
     fun findTags(dictionary: String, names: Collection<String>): List<TagInfo> = emptyList()
 }

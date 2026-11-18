@@ -9,6 +9,7 @@ import com.google.gson.stream.JsonWriter
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.Reader
+import java.util.Base64
 
 /**
  * Yomitan's dictionary collection file (Settings → Backup → Export / Import dictionary
@@ -173,6 +174,20 @@ object YomitanCollection {
             name("stats").beginObject().endObject()
         }
 
+        /** An image; its content is an ArrayBuffer, which Typeson writes as base64 with its type "arraybuffer". */
+        fun media(dictionary: String, media: DictionaryMedia, content: ByteArray) {
+            json.beginObject()
+            json.name("dictionary").value(dictionary)
+            json.name("path").value(media.path)
+            json.name("mediaType").value(media.mediaType)
+            json.name("width").value(media.width)
+            json.name("height").value(media.height)
+            json.name("content").value(Base64.getEncoder().encodeToString(content))
+            json.name("\$types").beginObject().name("content").value("arraybuffer").endObject()
+            json.name("id").value(++key)
+            json.endObject()
+        }
+
         fun tag(tag: TagInfo) = outbound {
             name("name").value(tag.name)
             name("category").value(tag.category)
@@ -190,8 +205,12 @@ object YomitanCollection {
         override fun close() = json.close()
     }
 
+    /** An image row: the image of [dictionary] at [path], with its bytes. */
+    class MediaRow(val dictionary: String, val path: String, val mediaType: String, val width: Int, val height: Int, val content: ByteArray)
+
     /** Where a collection's rows go; each row names its dictionary by title. */
     interface Sink {
+        fun media(rows: List<MediaRow>) {}
         /** A dictionary's summary (title, revision, styles, counts, what its index.json said). */
         fun dictionary(summary: JSONObject)
         fun terms(rows: List<TermEntry>)
@@ -202,8 +221,8 @@ object YomitanCollection {
     }
 
     /**
-     * Reads a collection into [sink], a few thousand rows at a time; [onRows] gets the number of
-     * rows read so far. Dictionary images (the media table) are left out, as Hiroi doesn't keep them.
+     * Reads a collection into [sink], a few thousand rows at a time (images a few at a time);
+     * [onRows] gets the number of rows read so far.
      */
     fun read(input: Reader, sink: Sink, onRows: (Int) -> Unit = {}) {
         val json = JsonReader(input)
@@ -226,6 +245,7 @@ object YomitanCollection {
 
     private const val NOT_A_COLLECTION = "Not a dictionary collection (Yomitan: Settings → Backup → Export dictionary collection)"
     private const val BATCH = 2000
+    private const val MEDIA_BATCH = 20
 
     private fun readData(json: JsonReader, sink: Sink, onRows: (Int) -> Unit) {
         var read = 0
@@ -262,7 +282,7 @@ object YomitanCollection {
                         val row = unwrap(JsonParser.parseReader(json))
                         val value = if (inbound) row.asJsonObject else row.asJsonArray[1].asJsonObject
                         if (name == "dictionaries") sink.dictionary(JSONObject(value.toString())) else if (name in TABLES) batch += value
-                        if (batch.size >= BATCH) flush(name, batch, sink)
+                        if (batch.size >= (if (name == "media") MEDIA_BATCH else BATCH)) flush(name, batch, sink)
                         if (++read % 10_000 == 0) onRows(read)
                     }
                     json.endArray()
@@ -294,6 +314,7 @@ object YomitanCollection {
             "kanji" -> sink.kanji(rows.map(::kanji))
             "kanjiMeta" -> sink.kanjiMeta(rows.map { meta(it, "character") })
             "tagMeta" -> sink.tags(rows.map(::tag))
+            "media" -> sink.media(rows.mapNotNull(::media))
         }
         rows.clear()
     }
@@ -325,6 +346,13 @@ object YomitanCollection {
     fun kanji(row: JsonObject): KanjiEntry {
         val meanings = row.get("meanings")?.takeIf { it.isJsonArray }?.asJsonArray?.map(JsonElement::getAsString).orEmpty()
         return KanjiEntry(row.str("character").orEmpty(), row.str("onyomi").orEmpty(), row.str("kunyomi").orEmpty(), row.str("tags").orEmpty(), meanings, row.str("dictionary").orEmpty())
+    }
+
+    /** An image row; its content is base64 (Typeson's arraybuffer). Rows without content are left out. */
+    fun media(row: JsonObject): MediaRow? {
+        val content = row.str("content")?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() } ?: return null
+        val path = row.str("path") ?: return null
+        return MediaRow(row.str("dictionary").orEmpty(), path, row.str("mediaType") ?: DictionaryImages.mediaType(path).orEmpty(), row.int("width"), row.int("height"), content)
     }
 
     fun tag(row: JsonObject): TagInfo =

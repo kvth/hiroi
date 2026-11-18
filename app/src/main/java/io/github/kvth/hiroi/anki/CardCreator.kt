@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
 import io.github.kvth.hiroi.dictionary.DictionaryDb
+import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.TermGroup
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
@@ -99,9 +100,11 @@ class CardCreator(
     private val renderer: NoteRenderer,
     private val wordAudio: Boolean = true,
     private val clipboard: () -> String? = { null },
+    /** A dictionary's image by its path, for glossaries that show one */
+    private val dictionaryMedia: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
 ) {
     constructor(context: Context, settings: AnkiSettings, clipboard: () -> String? = { null }) :
-        this(settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard)
+        this(settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard, DictionaryDb.get(context)::findMedia)
 
     /** An added or overwritten note, and the templates that failed on it. */
     class Result(val noteId: Long, val errors: List<String>)
@@ -168,6 +171,7 @@ class CardCreator(
     private fun media(requirements: JSONArray, data: CardData, screenshot: Bitmap?): JSONObject {
         val media = JSONObject()
         val parsed = JSONObject()
+        val images = JSONArray()
         for (i in 0 until requirements.length()) {
             val requirement = requirements.getJSONObject(i)
             when (requirement.optString("type")) {
@@ -183,9 +187,18 @@ class CardCreator(
                 "clipboardText" -> clipboard()?.let { media.put("clipboardText", it) }
                 "popupSelectionText" -> media.put("selectionText", data.selection)
                 "textFurigana" -> requirement.optString("text").let { text -> parsed.put(text, YomitanNoteData.parsedText(data.parse(text))) }
+                // An image in a glossary: stored in Anki under a name of its own, as Yomitan does
+                "dictionaryMedia" -> {
+                    val dictionary = requirement.optString("dictionary")
+                    val path = requirement.optString("path")
+                    val image = dictionaryMedia(dictionary, path) ?: continue
+                    val extension = path.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
+                    val name = anki.storeMediaFile("hiroi_dictionary_media_${images.length() + 1}_${System.currentTimeMillis()}$extension", image.read().base64())
+                    images.put(JSONObject().put("dictionary", dictionary).put("path", path).put("fileName", name))
+                }
             }
         }
-        return media.put("parsedText", parsed)
+        return media.put("parsedText", parsed).put("dictionaryMedia", images)
     }
 
     /** addNote's note; its options give AnkiConnect the duplicate scope as Yomitan does (deck-root: the top deck with its subdecks). */

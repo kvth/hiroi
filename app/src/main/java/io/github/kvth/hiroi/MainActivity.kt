@@ -11,8 +11,13 @@ import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
@@ -120,23 +125,82 @@ class MainActivity : Activity() {
     }
 
     /** A sentence drawn into a bitmap: an image to try OCR on, since apps don't expose that as text. */
+    /**
+     * A sentence on a picture, like a photo someone posted with a caption on it: a sunset over
+     * mountains and a lake, the text in front with an outline and a shadow. Apps don't expose such
+     * text, so it's something to try OCR on.
+     */
     private fun exampleImage(): Bitmap {
         val density = resources.displayMetrics.density
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 22f, resources.displayMetrics)
-            typeface = Typeface.DEFAULT_BOLD
-        }
         val text = getString(R.string.example_image_text)
-        val padding = 16 * density
-        val bounds = Rect().also { paint.getTextBounds(text, 0, text.length, it) }
-        val bitmap = Bitmap.createBitmap(
-            (bounds.width() + 2 * padding).toInt(), (bounds.height() + 2 * padding).toInt(), Bitmap.Config.ARGB_8888,
-        )
-        Canvas(bitmap).apply {
-            drawColor(0xFF2E5A88.toInt())
-            drawText(text, padding - bounds.left, padding - bounds.top, paint)
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 24f, resources.displayMetrics)
+            typeface = Typeface.DEFAULT_BOLD
+            setShadowLayer(4 * density, 0f, 2 * density, 0x99000000.toInt())
         }
+        val outline = Paint(fill).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 3 * density
+            strokeJoin = Paint.Join.ROUND
+            color = 0xCC1B1A33.toInt()
+        }
+        val bounds = Rect().also { fill.getTextBounds(text, 0, text.length, it) }
+        val width = bounds.width() + 48 * density
+        val height = width * 0.62f
+        val bitmap = Bitmap.createBitmap(width.toInt(), height.toInt(), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val frame = RectF(0f, 0f, width, height)
+        canvas.clipPath(Path().apply { addRoundRect(frame, 12 * density, 12 * density, Path.Direction.CW) })
+        // Evening sky, a low sun, two ranges of mountains, a lake reflecting the light
+        paint.shader = LinearGradient(0f, 0f, 0f, height * 0.7f, intArrayOf(0xFF27346B.toInt(), 0xFF8B4F8F.toInt(), 0xFFF29E6D.toInt(), 0xFFFFD49A.toInt()), floatArrayOf(0f, 0.35f, 0.75f, 1f), Shader.TileMode.CLAMP)
+        canvas.drawRect(frame, paint)
+        paint.shader = RadialGradient(width * 0.7f, height * 0.58f, height * 0.35f, intArrayOf(0xFFFFF3C4.toInt(), 0x00FFE29A), null, Shader.TileMode.CLAMP)
+        canvas.drawCircle(width * 0.7f, height * 0.58f, height * 0.35f, paint)
+        paint.shader = null
+        paint.color = 0xFFFFF0B8.toInt()
+        canvas.drawCircle(width * 0.7f, height * 0.58f, height * 0.09f, paint)
+        fun ridge(color: Int, base: Float, peaks: List<Pair<Float, Float>>) {
+            paint.color = color
+            canvas.drawPath(Path().apply {
+                moveTo(0f, height * base)
+                for ((x, y) in peaks) lineTo(width * x, height * y)
+                lineTo(width, height * base)
+                lineTo(width, height)
+                lineTo(0f, height)
+                close()
+            }, paint)
+        }
+        ridge(0xFF6A4C7E.toInt(), 0.62f, listOf(0.1f to 0.5f, 0.22f to 0.42f, 0.38f to 0.55f, 0.55f to 0.44f, 0.72f to 0.56f, 0.86f to 0.47f))
+        ridge(0xFF3B2F5A.toInt(), 0.7f, listOf(0.08f to 0.62f, 0.2f to 0.66f, 0.33f to 0.56f, 0.48f to 0.68f, 0.64f to 0.6f, 0.8f to 0.69f, 0.93f to 0.62f))
+        paint.shader = LinearGradient(0f, height * 0.72f, 0f, height, 0xFF5B5D8F.toInt(), 0xFF2A2B4E.toInt(), Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, height * 0.72f, width, height, paint)
+        paint.shader = null
+        paint.color = 0x66FFE7B0
+        for (i in 0 until 6) {
+            val y = height * (0.75f + i * 0.04f)
+            val half = width * (0.07f - i * 0.008f)
+            canvas.drawRect(width * 0.7f - half, y, width * 0.7f + half, y + 1.5f * density, paint)
+        }
+        // Birds
+        paint.color = 0xCC2A2346.toInt()
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f * density
+        for ((x, y) in listOf(0.2f to 0.2f, 0.26f to 0.16f, 0.31f to 0.23f)) {
+            val bx = width * x
+            val by = height * y
+            canvas.drawPath(Path().apply {
+                moveTo(bx - 6 * density, by)
+                quadTo(bx - 3 * density, by - 4 * density, bx, by)
+                quadTo(bx + 3 * density, by - 4 * density, bx + 6 * density, by)
+            }, paint)
+        }
+        // The caption, in the lower middle as on a posted photo
+        val x = (width - bounds.width()) / 2 - bounds.left
+        val y = height * 0.86f - bounds.bottom
+        canvas.drawText(text, x, y, outline)
+        canvas.drawText(text, x, y, fill)
         return bitmap
     }
 
@@ -663,6 +727,7 @@ class MainActivity : Activity() {
             info.terms.takeIf { it > 0 }?.let { getString(R.string.count_terms, it) },
             info.meta.takeIf { it > 0 }?.let { getString(R.string.count_meta, it) },
             info.kanji.takeIf { it > 0 }?.let { getString(R.string.count_kanji, it) },
+            info.images.takeIf { it > 0 }?.let { getString(R.string.count_images, it) },
             info.takeIf { it.frequencies > 0 }?.let {
                 getString(
                     R.string.count_frequencies,

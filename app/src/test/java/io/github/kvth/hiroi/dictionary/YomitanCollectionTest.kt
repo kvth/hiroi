@@ -40,7 +40,7 @@ class YomitanCollectionTest {
             "counts":{"terms":{"total":2}}}]]},
           {"tableName":"kanji","inbound":false,"rows":[[1,{"character":"食","onyomi":"ショク","kunyomi":"た.べる","tags":"jouyou","meanings":["eat","food"],"stats":{"strokes":"9"},"dictionary":"KANJIDIC"}]]},
           {"tableName":"kanjiMeta","inbound":false,"rows":[[1,{"character":"食","mode":"freq","data":250,"dictionary":"KANJIDIC"}]]},
-          {"tableName":"media","inbound":true,"rows":[{"dictionary":"Jitendex","path":"a.png","mediaType":"image/png","width":1,"height":1,"content":"iVBO","${'$'}types":{"content":"arrayBuffer"},"id":1}]},
+          {"tableName":"media","inbound":true,"rows":[{"dictionary":"Jitendex","path":"a.png","mediaType":"image/png","width":1,"height":1,"content":"iVBO","${'$'}types":{"content":"arraybuffer"},"id":1}]},
           {"tableName":"tagMeta","inbound":false,"rows":[{"${'$'}":[1,{"name":"★","category":"popular","order":-10,"notes":"high priority","score":0,"dictionary":"Jitendex"}],"${'$'}types":{"${'$'}":{"":"arrayNonindexKeys"}}}]},
           {"tableName":"termMeta","inbound":false,"rows":[[1,{"expression":"食べる","mode":"freq","data":{"reading":"たべる","frequency":480},"dictionary":"JPDB"}]]},
           {"tableName":"terms","inbound":true,"rows":[

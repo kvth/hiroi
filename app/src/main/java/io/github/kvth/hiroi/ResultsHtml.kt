@@ -4,6 +4,7 @@ import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.anki.Html
 import io.github.kvth.hiroi.anki.PitchAccent
 import io.github.kvth.hiroi.anki.StructuredHtml
+import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.TermEntry
@@ -35,6 +36,8 @@ class ResultsHtml(private val colors: Colors) {
         styles: Map<String, String>,
         cards: Boolean,
         frequencies: Frequencies = Frequencies(),
+        /** A dictionary's image by its path, for the definitions that show one */
+        media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
     ): String = buildString {
         append("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">")
         append("<style>").append(css())
@@ -53,12 +56,19 @@ class ResultsHtml(private val colors: Colors) {
         append("var o = document.getElementById('open' + i); if (o) { o.style.display = ''; o.textContent = open; } }")
         append("</script></head><body>")
         anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
-        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies)
+        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies, media)
         for (kanji in result.kanji) kanji(kanji, frequencies)
         append("</body></html>")
     }
 
-    private fun StringBuilder.term(index: Int, term: TermGroup, anki: AnkiStatus?, cards: Boolean, frequencies: Frequencies) {
+    private fun StringBuilder.term(
+        index: Int,
+        term: TermGroup,
+        anki: AnkiStatus?,
+        cards: Boolean,
+        frequencies: Frequencies,
+        media: (String, String) -> DictionaryMedia?,
+    ) {
         append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
         append(Furigana.html(Furigana.distribute(term.expression, term.reading)))
         append("</span>")
@@ -86,16 +96,16 @@ class ResultsHtml(private val colors: Colors) {
         if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
 
         append("<ol class=\"definitions\">")
-        for (entry in term.entries) definition(entry)
+        for (entry in term.entries) definition(entry, media)
         append("</ol></div>")
     }
 
-    private fun StringBuilder.definition(entry: TermEntry) {
+    private fun StringBuilder.definition(entry: TermEntry, media: (String, String) -> DictionaryMedia?) {
         append("<li><div class=\"definition-tags\">")
         for (tag in entry.definitionTags.split(' ').filter { it.isNotBlank() }) tag("label", tag)
         tag("dictionary", entry.dictionary)
         append("</div><div class=\"glossary\" lang=\"en\" data-dictionary=\"").append(Html.escape(entry.dictionary)).append("\">")
-        val items = JSONArray(entry.glossary).let { array -> (0 until array.length()).map { StructuredHtml.item(array.get(it)) } }
+        val items = JSONArray(entry.glossary).let { array -> (0 until array.length()).map { StructuredHtml.item(array.get(it)) { path -> media(entry.dictionary, path) } } }
             .filter { it.isNotEmpty() }
         if (items.size == 1) append(items.single()) else items.joinTo(this, "", "<ul>", "</ul>") { "<li>$it</li>" }
         append("</div></li>")
@@ -169,6 +179,8 @@ class ResultsHtml(private val colors: Colors) {
         ol.definitions { margin: 6px 0 0; padding-left: 1.5em; }
         ol.definitions > li + li { margin-top: 8px; }
         .glossary { margin-top: 3px; }
+        .gloss-image-description { color: ${colors.secondary}; font-size: 0.85em; }
+        details.gloss-image > summary { color: ${colors.accent}; }
         .glossary ul, .glossary ol { margin: 2px 0; padding-left: 1.3em; }
         .kanji .character { font-size: 3em; line-height: 1.1; }
         .kanji table { margin-top: 6px; border-collapse: collapse; }

@@ -44,8 +44,13 @@ const api = {
             screenshotFileName: injected?.screenshot ?? null,
             clipboardImageFileName: injected?.clipboardImage ?? null,
             clipboardText: injected?.clipboardText ?? null,
-            // Hiroi doesn't keep dictionary images.
-            dictionaryMedia: dictionaryMedia.map(({dictionary, path}) => ({dictionary, path, mediaType: '', fileName: null})),
+            // Dictionary images Hiroi stored in Anki, by dictionary and path
+            dictionaryMedia: dictionaryMedia.map(({dictionary, path}) => ({
+                dictionary,
+                path,
+                mediaType: '',
+                fileName: injected?.dictionaryMedia?.find((m) => m.dictionary === dictionary && m.path === path)?.fileName ?? null,
+            })),
             errors: [],
         };
     },
