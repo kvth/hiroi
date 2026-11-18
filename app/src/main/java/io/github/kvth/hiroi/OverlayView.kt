@@ -224,8 +224,11 @@ class OverlayView(
         return true
     }
 
-    /** The box at screen point ([x], [y]); containers and their children overlap, so the smallest. */
+    /**
+     * The box at screen point ([x], [y]); containers and their children overlap, so the smallest,
+     * and of boxes as small (a link around its text), one that knows where its characters are.
+     */
     fun blockAt(x: Int, y: Int): TextBlock? = blocks
         .filter { it.bounds.contains(x, y) }
-        .minByOrNull { it.bounds.width().toLong() * it.bounds.height() }
+        .minWithOrNull(compareBy<TextBlock> { it.bounds.width().toLong() * it.bounds.height() }.thenBy { it.characters == null })
 }

@@ -2,7 +2,7 @@
 
 A small Android app that picks up the text on your screen, even in apps that don't let you select it, so you can copy it or send it to a dictionary app such as PopLingo or Takoboto.
 
-It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. Drag over the screen to take just the text in that region. The panel translates the sentence you're reading, and **Share** sends the word, its sentence, the box, the region or your selection to the clipboard, any app, DeepL, ChatGPT and so on.
+It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. This works in web pages too (Chrome, apps' WebViews). If the app doesn't report where its characters are (games, some custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. Drag over the screen to take just the text in that region. The panel translates the sentence you're reading, and **Share** sends the word, its sentence, the box, the region or your selection to the clipboard, any app, DeepL, ChatGPT and so on.
 
 | The overlay | A lookup | A region, shared | Search |
 |---|---|---|---|
@@ -251,6 +251,7 @@ API keys (AnkiConnect's, DeepL's, LibreTranslate's) are only in the file if you 
 
 ## Limitations
 
+- Chrome and WebViews only tell an accessibility service where a page's characters are if the service receives all accessibility event types. So Hiroi's service is registered for all of them; it ignores them all and only reads the screen when you trigger it.
 - Text an app doesn't expose to accessibility (pictures, games, video subtitles) is only found by OCR, which reads horizontal text well but vertical text (manga) only sometimes, and nothing in apps that forbid screenshots.
 - As the assistant app, Hiroi replaces Google Assistant / Gemini on the long-press gesture. Its stub speech recogniser always fails, so apps that use the *system default* speech recogniser lose voice input. Keyboards with their own voice input are not affected.
 

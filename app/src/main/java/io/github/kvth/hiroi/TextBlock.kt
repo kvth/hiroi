@@ -87,14 +87,32 @@ object CaptureStore {
         blocks = raw
             .map { it.copy(text = it.text.trim(), textOffset = it.textOffset + it.text.length - it.text.trimStart().length) }
             .filter { it.hasJapanese() && !it.bounds.isEmpty }
-            .distinctBy { it.text to it.bounds }
+            .let(::withoutDuplicates)
             .let(::withoutRepeats)
     }
 
-    /** Drops containers that only repeat the text of a box inside them (a toolbar around its title). */
+    /**
+     * One box per text and place: the first, or the first that knows where its characters are
+     * (a web page's link has its text as a description, the text node inside it the positions).
+     */
+    private fun withoutDuplicates(blocks: List<TextBlock>): List<TextBlock> {
+        val kept = LinkedHashMap<Pair<String, Rect>, TextBlock>()
+        for (block in blocks) {
+            val key = block.text to block.bounds
+            val other = kept[key]
+            if (other == null || (other.characters == null && block.characters != null)) kept[key] = block
+        }
+        return kept.values.toList()
+    }
+
+    /**
+     * Drops containers that only repeat the text of a box inside them (a toolbar around its
+     * title, a link around its text); of two in the same place, the one without character positions.
+     */
     private fun withoutRepeats(blocks: List<TextBlock>): List<TextBlock> = blocks.filterNot { outer ->
         blocks.any { inner ->
-            inner !== outer && inner.text == outer.text && outer.bounds.contains(inner.bounds) && outer.bounds != inner.bounds
+            inner !== outer && inner.text == outer.text && outer.bounds.contains(inner.bounds) &&
+                (outer.bounds != inner.bounds || (outer.characters == null && inner.characters != null))
         }
     }
 }

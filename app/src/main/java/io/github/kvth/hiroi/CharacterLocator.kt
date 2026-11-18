@@ -5,7 +5,7 @@ import kotlin.math.hypot
 /**
  * Finds which character of a text block was tapped, from the character positions captured with
  * it (see AccessibilityCapture.characterBounds). Standard text views and most Compose text report
- * them; for apps that don't (some WebViews, games, custom views) this gives null, and the user taps
+ * them, and so do Chrome and WebViews; for apps that don't (games, some custom views) this gives null, and the user taps
  * the word in the panel instead.
  */
 object CharacterLocator {
