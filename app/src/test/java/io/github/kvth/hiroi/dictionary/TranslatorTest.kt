@@ -55,7 +55,7 @@ class TranslatorTest {
         override fun findKanjiMeta(character: String) = listOf(TermMeta("日", "freq", "[12]", "Ranks", 2))
     }
 
-    private fun readings(sort: FrequencySort?) = Translator(sortStore) { sort }.lookUp("日", 0)!!.terms.map { it.reading }
+    private fun readings(sort: FrequencySort?) = Translator(sortStore, { sort }).lookUp("日", 0)!!.terms.map { it.reading }
 
     @Test
     fun sortsByTheChosenFrequencyDictionaryLikeYomitan() {
@@ -108,5 +108,60 @@ class TranslatorTest {
         assertNull(translator.lookUp("Hello 猫", 0))
         assertNull(translator.lookUp("「猫」", 0))
         assertEquals("猫", translator.lookUp("「猫」", 1)!!.terms.first().expression)
+    }
+
+    /**
+     * A JMdict-like main dictionary (JM) whose entries share a sequence number per word, and
+     * another one (Other) without sequences.
+     */
+    private val groupingStore = object : DictionaryStore {
+        fun entry(expression: String, reading: String, gloss: String, dictionary: String, priority: Int, sequence: Long) =
+            TermEntry(expression, reading, "", "v1", 0, """["$gloss"]""", sequence, "", dictionary, priority)
+        val terms = listOf(
+            entry("見る", "みる", "to see", "JM", 1, 100),
+            entry("観る", "みる", "to see", "JM", 1, 100),
+            entry("診る", "みる", "to examine", "JM", 1, 101),
+            entry("見る", "みる", "to look", "Other", 2, -1),
+            entry("観る", "みる", "to watch", "Other", 2, -1),
+            entry("日", "ひ", "sun", "JM", 1, 200).copy(rules = ""),
+            entry("日", "にち", "day", "JM", 1, 201).copy(rules = ""),
+        )
+
+        override fun findTerms(forms: Collection<String>) = terms.filter { it.expression in forms || it.reading in forms }
+        override fun findTermMeta(expressions: Collection<String>) = emptyList<TermMeta>()
+        override fun findKanji(character: String) = emptyList<KanjiEntry>()
+        override fun findTermsBySequence(dictionary: String, sequences: Collection<Long>) =
+            terms.filter { it.dictionary == dictionary && it.sequence in sequences }
+    }
+
+    private fun lookUp(text: String, grouping: Grouping) = Translator(groupingStore, { null }) { grouping }.lookUp(text, 0)!!.terms
+
+    private fun TermGroup.glosses() = definitions.map { it.entry.glossary.removeSurrounding("[\"", "\"]") to it.headwordIndices }
+
+    @Test
+    fun groupsAsYomitansResultGroupingModes() {
+        // Term-reading pairs (the default): both dictionaries' 見る together
+        val grouped = lookUp("見る", Grouping("group")).single()
+        assertEquals(listOf("to see" to listOf(0), "to look" to listOf(0)), grouped.glosses())
+        // No grouping: each definition its own entry
+        assertEquals(2, lookUp("見る", Grouping("split")).size)
+        // By term: 日's readings together, as two headwords
+        val day = lookUp("日", Grouping("term")).single()
+        assertEquals(listOf("ひ", "にち"), day.headwords.map { it.reading })
+        assertEquals(listOf("sun" to listOf(0), "day" to listOf(1)), day.glosses())
+        assertEquals(2, lookUp("日", Grouping("group")).size)
+    }
+
+    @Test
+    fun groupsRelatedTermsByTheMainDictionarysSequences() {
+        // 観る shares 見る's sequence: a related headword; its identical definition comes once, for both.
+        // Other's 見る joins by headword; its 観る only comes from a secondary search.
+        val related = lookUp("見る", Grouping("merge", "JM", setOf("Other"))).single()
+        assertEquals(listOf("見る" to true, "観る" to false), related.headwords.map { it.expression to it.primary })
+        assertEquals(listOf("to see" to listOf(0, 1), "to look" to listOf(0), "to watch" to listOf(1)), related.glosses())
+        val noSecondary = lookUp("見る", Grouping("merge", "JM")).single()
+        assertEquals(listOf("to see" to listOf(0, 1), "to look" to listOf(0)), noSecondary.glosses())
+        // Without a main dictionary, it groups term-reading pairs
+        assertEquals(listOf("見る"), lookUp("見る", Grouping("merge")).single().headwords.map { it.expression })
     }
 }

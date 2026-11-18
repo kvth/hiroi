@@ -29,27 +29,40 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
     })
 
     fun dictionaryEntry(term: TermGroup): JSONObject {
-        val headwordTags = term.entries.groupBy { it.dictionary }.flatMap { (dictionary, entries) ->
-            tags(dictionary, entries.flatMap { it.termTags.split(' ') })
-        }
-        val source = JSONObject()
-            .put("originalText", term.source)
-            .put("transformedText", if (term.processed) Japanese.toHiragana(term.source) else term.source)
-            .put("deinflectedText", term.deinflected)
-            .put("matchType", "exact")
-            .put("matchSource", if (term.deinflected == term.expression) "term" else "reading")
-            .put("isPrimary", true)
-        val headword = JSONObject()
-            .put("index", 0)
-            .put("term", term.expression)
-            .put("reading", term.reading)
-            .put("sources", JSONArray().put(source))
-            .put("tags", JSONArray(headwordTags))
-            .put("wordClasses", JSONArray(term.entries.flatMap { it.rules.split(' ') }.filter { it.isNotEmpty() }.distinct()))
-        val definitions = term.entries.mapIndexed { i, entry ->
+        // One per headword, as Yomitan's translator makes them: the text matched the primary ones,
+        // the others are related terms (their source is themselves).
+        val headwords = term.headwords.mapIndexed { i, headword ->
+            val entries = term.entries.filter { term.headwordIndex(it) == i }
+            val headwordTags = entries.groupBy { it.dictionary }.flatMap { (dictionary, list) -> tags(dictionary, list.flatMap { it.termTags.split(' ') }) }
+            val source = if (headword.primary) {
+                JSONObject()
+                    .put("originalText", term.source)
+                    .put("transformedText", if (term.processed) Japanese.toHiragana(term.source) else term.source)
+                    .put("deinflectedText", term.deinflected)
+                    .put("matchType", "exact")
+                    .put("matchSource", if (term.deinflected == headword.expression) "term" else "reading")
+                    .put("isPrimary", true)
+            } else {
+                JSONObject()
+                    .put("originalText", headword.expression)
+                    .put("transformedText", headword.expression)
+                    .put("deinflectedText", headword.expression)
+                    .put("matchType", "exact")
+                    .put("matchSource", "term")
+                    .put("isPrimary", false)
+            }
             JSONObject()
                 .put("index", i)
-                .put("headwordIndices", JSONArray().put(0))
+                .put("term", headword.expression)
+                .put("reading", headword.reading)
+                .put("sources", JSONArray().put(source))
+                .put("tags", JSONArray(headwordTags))
+                .put("wordClasses", JSONArray(entries.flatMap { it.rules.split(' ') }.filter { it.isNotEmpty() }.distinct()))
+        }
+        val definitions = term.definitions.mapIndexed { i, (entry, headwordIndices) ->
+            JSONObject()
+                .put("index", i)
+                .put("headwordIndices", JSONArray(headwordIndices))
                 .put("dictionary", entry.dictionary)
                 .put("dictionaryIndex", index[entry.dictionary] ?: 0)
                 .put("dictionaryAlias", entry.dictionary)
@@ -57,7 +70,7 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
                 .put("score", entry.score)
                 .put("frequencyOrder", 0)
                 .put("sequences", JSONArray().put(entry.sequence))
-                .put("isPrimary", true)
+                .put("isPrimary", headwordIndices.any { term.headwords[it].primary })
                 .put("tags", JSONArray(tags(entry.dictionary, entry.definitionTags.split(' '))))
                 .put("entries", JSONArray(entry.glossary))
         }
@@ -73,10 +86,10 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
             .put("frequencyOrder", 0)
             .put("dictionaryIndex", term.entries.minOfOrNull { index[it.dictionary] ?: 0 } ?: 0)
             .put("dictionaryAlias", term.entries.firstOrNull()?.dictionary.orEmpty())
-            .put("sourceTermExactMatchCount", if (term.deinflected == term.expression) 1 else 0)
+            .put("sourceTermExactMatchCount", term.headwords.count { it.primary && term.deinflected == it.expression })
             .put("matchPrimaryReading", false)
             .put("maxOriginalTextLength", term.source.length)
-            .put("headwords", JSONArray().put(headword))
+            .put("headwords", JSONArray(headwords))
             .put("definitions", JSONArray(definitions))
             .put("pronunciations", JSONArray(pronunciations(term)))
             .put("frequencies", JSONArray(frequencies(term)))
@@ -100,18 +113,23 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
             }
     }
 
-    private fun base(meta: TermMeta, i: Int) = JSONObject()
+    private fun base(meta: TermMeta, i: Int, headwordIndex: Int) = JSONObject()
         .put("index", i)
-        .put("headwordIndex", 0)
+        .put("headwordIndex", headwordIndex)
         .put("dictionary", meta.dictionary)
         .put("dictionaryIndex", index[meta.dictionary] ?: 0)
         .put("dictionaryAlias", meta.dictionary)
 
-    /** Pitch accents and IPA for the headword's reading, one group per meta row. */
-    private fun pronunciations(term: TermGroup): List<JSONObject> = term.meta.filter { it.mode == "pitch" || it.mode == "ipa" }
-        .mapNotNull { meta ->
+    /** The meta rows for each headword (its term), with the headword's index and reading. */
+    private fun perHeadword(term: TermGroup, modes: Set<String>): List<Triple<TermMeta, Int, String>> = term.headwords.withIndex().flatMap { (i, headword) ->
+        term.meta.filter { it.mode in modes && it.expression == headword.expression }.map { Triple(it, i, headword.reading) }
+    }
+
+    /** Pitch accents and IPA for each headword's reading, one group per meta row. */
+    private fun pronunciations(term: TermGroup): List<JSONObject> = perHeadword(term, setOf("pitch", "ipa"))
+        .mapNotNull { (meta, headwordIndex, reading) ->
             val data = JSONArray(meta.data).optJSONObject(0) ?: return@mapNotNull null
-            if (data.optString("reading", term.reading) != term.reading) return@mapNotNull null
+            if (data.optString("reading", reading) != reading) return@mapNotNull null
             val list = if (meta.mode == "pitch") {
                 val pitches = data.optJSONArray("pitches") ?: return@mapNotNull null
                 List(pitches.length()) { i ->
@@ -133,9 +151,9 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
                         .put("tags", JSONArray(tags(meta.dictionary, strings(ipa.opt("tags")))))
                 }
             }
-            meta to list
+            Triple(meta, headwordIndex, list)
         }
-        .mapIndexed { i, (meta, list) -> base(meta, i).put("pronunciations", JSONArray(list)) }
+        .mapIndexed { i, (meta, headwordIndex, list) -> base(meta, i, headwordIndex).put("pronunciations", JSONArray(list)) }
 
     /**
      * Frequencies as Yomitan reads them (translator.js, _getFrequencyInfo): a number as is; a text
@@ -143,24 +161,24 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
      * {reading, frequency}, which only counts for that reading.
      */
     private fun frequencies(term: TermGroup): List<JSONObject> {
-        class Frequency(val meta: TermMeta, val value: Double, val display: String?, val parsed: Boolean, val hasReading: Boolean)
-        val list = term.meta.filter { it.mode == "freq" }.mapNotNull { meta ->
+        class Frequency(val meta: TermMeta, val headwordIndex: Int, val value: Double, val display: String?, val parsed: Boolean, val hasReading: Boolean)
+        val list = perHeadword(term, setOf("freq")).mapNotNull { (meta, headwordIndex, reading) ->
             var data = JSONArray(meta.data).get(0)
             var hasReading = false
             if (data is JSONObject && data.has("frequency")) {
-                if (data.optString("reading", term.reading) != term.reading) return@mapNotNull null
+                if (data.optString("reading", reading) != reading) return@mapNotNull null
                 hasReading = data.has("reading")
                 data = data.get("frequency")
             }
             when (data) {
-                is Number -> Frequency(meta, data.toDouble(), null, false, hasReading)
-                is String -> Frequency(meta, FIRST_NUMBER.find(data)?.value?.toDoubleOrNull() ?: 0.0, data, true, hasReading)
-                is JSONObject -> Frequency(meta, data.optDouble("value", 0.0), data.optString("displayValue").takeIf { data.has("displayValue") }, false, hasReading)
+                is Number -> Frequency(meta, headwordIndex, data.toDouble(), null, false, hasReading)
+                is String -> Frequency(meta, headwordIndex, FIRST_NUMBER.find(data)?.value?.toDoubleOrNull() ?: 0.0, data, true, hasReading)
+                is JSONObject -> Frequency(meta, headwordIndex, data.optDouble("value", 0.0), data.optString("displayValue").takeIf { data.has("displayValue") }, false, hasReading)
                 else -> null
             }
         }
         return list.mapIndexed { i, f ->
-            base(f.meta, i)
+            base(f.meta, i, f.headwordIndex)
                 .put("hasReading", f.hasReading)
                 .put("frequencyMode", modes[f.meta.dictionary] ?: JSONObject.NULL)
                 .put("frequency", if (f.value % 1.0 == 0.0) f.value.toLong() else f.value)

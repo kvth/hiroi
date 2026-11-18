@@ -81,7 +81,8 @@ class ResultsHtml(private val colors: Colors) {
         audio: Boolean,
     ) {
         append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
-        append(Furigana.html(Furigana.distribute(term.expression, term.reading)))
+        // Grouped by term or related terms, a result can have several headwords, as in Yomitan.
+        term.headwords.joinTo(this, "<span class=\"separator\">・</span>") { Furigana.html(Furigana.distribute(it.expression, it.reading)) }
         append("</span>")
         if (audio) {
             append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"Hiroi.playAudio($index)\" ")
@@ -102,7 +103,7 @@ class ResultsHtml(private val colors: Colors) {
         if (anki != null && anki.error == null) {
             if (term.expression in anki.notes) tags.tag("anki", "✓ in Anki", id = "anki$index") else tags.tag("not-anki", "not in Anki", id = "anki$index")
         }
-        tags.frequencyTags(term.meta.mapNotNull { meta -> Yomitan.frequency(meta, term.reading)?.let { meta.dictionary to it } }, frequencies)
+        tags.frequencyTags(termFrequencies(term), frequencies)
         val pitches = PitchAccent.positions(term)
         if (pitches.isNotEmpty()) {
             val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
@@ -111,12 +112,37 @@ class ResultsHtml(private val colors: Colors) {
         if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
 
         append("<ol class=\"definitions\">")
-        for (entry in term.entries) definition(entry, media)
+        for (definition in term.definitions) {
+            // For some of the headwords only, as Yomitan marks it ("見る only")
+            val only = if (term.headwords.size > 1 && definition.headwordIndices.size < term.headwords.size) {
+                definition.headwordIndices.joinToString("、") { headwordLabel(term, it) } + " only"
+            } else {
+                null
+            }
+            definition(definition.entry, media, only)
+        }
         append("</ol></div>")
     }
 
-    private fun StringBuilder.definition(entry: TermEntry, media: (String, String) -> DictionaryMedia?) {
+    /** A headword as it's told apart from the others: its spelling, or its reading where the spellings are the same. */
+    private fun headwordLabel(term: TermGroup, index: Int): String {
+        val headword = term.headwords[index]
+        return if (term.headwords.count { it.expression == headword.expression } > 1) headword.reading else headword.expression
+    }
+
+    /** Each headword's frequencies (for its reading); with several headwords, each says which it's for. */
+    private fun termFrequencies(term: TermGroup): List<Pair<String, Yomitan.Frequency>> = term.headwords.indices.flatMap { i ->
+        val headword = term.headwords[i]
+        term.meta.filter { it.expression == headword.expression }.mapNotNull { meta ->
+            Yomitan.frequency(meta, headword.reading)?.let { frequency ->
+                meta.dictionary to if (term.headwords.size > 1) frequency.copy(display = "${headwordLabel(term, i)} ${frequency.display}") else frequency
+            }
+        }
+    }
+
+    private fun StringBuilder.definition(entry: TermEntry, media: (String, String) -> DictionaryMedia?, only: String? = null) {
         append("<li><div class=\"definition-tags\">")
+        if (only != null) tag("only", only)
         for (tag in entry.definitionTags.split(' ').filter { it.isNotBlank() }) tag("label", tag)
         tag("dictionary", entry.dictionary)
         append("</div><div class=\"glossary\" lang=\"en\" data-dictionary=\"").append(Html.escape(entry.dictionary)).append("\">")
@@ -174,6 +200,8 @@ class ResultsHtml(private val colors: Colors) {
         .entry + .entry { margin-top: 14px; padding-top: 12px; border-top: 1px solid ${colors.secondary}40; }
         .header { display: flex; align-items: flex-end; gap: 8px; }
         .headword { flex: 1; font-size: 2em; line-height: 1.25; }
+        .headword .separator { color: ${colors.secondary}; }
+        .tag.only .label { background: none; color: ${colors.text}; border: 1px solid ${colors.secondary}80; border-radius: 4px; font-weight: normal; }
         .headword rt, .glossary rt { color: ${colors.secondary}; }
         .card { flex: none; margin: 0 1px 4px 0; padding: 4px 10px; border: 1px solid ${colors.accent}; border-radius: 6px;
             background: none; color: ${colors.accent}; font: inherit; font-size: 0.9em; }

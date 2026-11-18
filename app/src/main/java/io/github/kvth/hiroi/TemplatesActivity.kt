@@ -144,7 +144,7 @@ class TemplatesActivity : Activity() {
         background.execute {
             val output = runCatching {
                 val db = DictionaryDb.get(this)
-                val translator = Translator(db) { DictionarySettings(this).frequencySort(db) }
+                val translator = Translator(db, { DictionarySettings(this).frequencySort(db) }) { DictionarySettings(this).grouping() }
                 val start = text.indexOfFirst(Japanese::isJapanese)
                 val term = (if (start < 0) null else translator.lookUp(text, start))?.terms?.firstOrNull()
                     ?: return@runCatching getString(R.string.templates_test_no_word)

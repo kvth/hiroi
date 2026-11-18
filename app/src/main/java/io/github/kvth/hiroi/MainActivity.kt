@@ -54,6 +54,7 @@ import io.github.kvth.hiroi.audio.AudioSources
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
+import io.github.kvth.hiroi.dictionary.Grouping
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.settings.SettingsFile
 import io.github.kvth.hiroi.share.ShareTargets
@@ -814,6 +815,7 @@ class MainActivity : Activity() {
             list.addView(TextView(this).apply { setText(R.string.no_dictionaries_installed) })
         }
         showSorting()
+        showGrouping()
         for (info in installed) {
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
             // On or off, as Yomitan's switch per dictionary
@@ -1003,6 +1005,63 @@ class MainActivity : Activity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 result.exceptionOrNull()?.let { showModel(getString(R.string.translation_model_failed, it.message ?: it.javaClass.simpleName)) } ?: showModel()
+            }
+        }
+    }
+
+    private val groupingLabels = mapOf(
+        "split" to R.string.grouping_split, "group" to R.string.grouping_group,
+        "term" to R.string.grouping_term, "merge" to R.string.grouping_merge,
+    )
+
+    /** Yomitan's result grouping mode; for related terms, the primary and secondary dictionaries. */
+    private fun showGrouping() {
+        val settings = DictionarySettings(this)
+        val mode = settings.resultGrouping
+        val related = mode == "merge"
+        val titles = dictionaries.dictionaries().map { it.title }
+        findViewById<Button>(R.id.result_grouping).apply {
+            text = getString(R.string.grouping_mode, getString(groupingLabels.getValue(mode)))
+            setOnClickListener {
+                val modes = Grouping.MODES
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle(R.string.grouping_title)
+                    .setSingleChoiceItems(modes.map { getString(groupingLabels.getValue(it)) }.toTypedArray(), modes.indexOf(settings.resultGrouping)) { dialog, which ->
+                        settings.resultGrouping = modes[which]
+                        showGrouping()
+                        dialog.dismiss()
+                    }
+                    .show()
+            }
+        }
+        for (id in listOf(R.id.related_hint, R.id.main_dictionary, R.id.secondary_dictionaries)) {
+            findViewById<View>(id).visibility = if (related) View.VISIBLE else View.GONE
+        }
+        findViewById<Button>(R.id.main_dictionary).apply {
+            text = getString(R.string.grouping_main, settings.mainDictionary.ifEmpty { getString(R.string.sort_none) })
+            setOnClickListener {
+                val choices = listOf("") + titles
+                AlertDialog.Builder(this@MainActivity)
+                    .setSingleChoiceItems(choices.map { it.ifEmpty { getString(R.string.sort_none) } }.toTypedArray(), choices.indexOf(settings.mainDictionary)) { dialog, which ->
+                        settings.mainDictionary = choices[which]
+                        showGrouping()
+                        dialog.dismiss()
+                    }
+                    .show()
+            }
+        }
+        findViewById<Button>(R.id.secondary_dictionaries).apply {
+            val secondary = settings.secondaryDictionaries.filter { it in titles }
+            text = getString(R.string.grouping_secondary, secondary.joinToString(", ").ifEmpty { getString(R.string.sort_none) })
+            setOnClickListener {
+                val checked = BooleanArray(titles.size) { titles[it] in settings.secondaryDictionaries }
+                AlertDialog.Builder(this@MainActivity)
+                    .setMultiChoiceItems(titles.toTypedArray(), checked) { _, which, on ->
+                        settings.secondaryDictionaries = if (on) settings.secondaryDictionaries + titles[which] else settings.secondaryDictionaries - titles[which]
+                    }
+                    .setPositiveButton(R.string.done) { _, _ -> showGrouping() }
+                    .setOnDismissListener { showGrouping() }
+                    .show()
             }
         }
     }

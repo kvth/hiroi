@@ -21,6 +21,23 @@ class DictionarySettings(context: Context) {
         get() = prefs.getBoolean("average_frequencies", false)
         set(value) = prefs.edit().putBoolean("average_frequencies", value).apply()
 
+    /** Yomitan's "Result grouping mode" (see [Grouping]); Yomitan's default groups term-reading pairs. */
+    var resultGrouping: String
+        get() = prefs.getString("result_grouping", null)?.takeIf { it in Grouping.MODES } ?: "group"
+        set(value) = prefs.edit().putString("result_grouping", value).apply()
+
+    /** "Group related terms": the dictionary with related term information (sequences), as Yomitan's "Primary dictionary" */
+    var mainDictionary: String
+        get() = prefs.getString("main_dictionary", null).orEmpty()
+        set(value) = prefs.edit().putString("main_dictionary", value).apply()
+
+    /** "Group related terms": the dictionaries searched for the related terms' definitions, as Yomitan's "Secondary dictionaries" */
+    var secondaryDictionaries: Set<String>
+        get() = prefs.getStringSet("secondary_dictionaries", null)?.toSet().orEmpty()
+        set(value) = prefs.edit().putStringSet("secondary_dictionaries", value).apply()
+
+    fun grouping() = Grouping(resultGrouping, mainDictionary, secondaryDictionaries)
+
     /**
      * The sorting to use. Until one is chosen, it's the first imported dictionary with
      * frequencies, in the order it says or Yomitan's check finds; that choice is then kept.

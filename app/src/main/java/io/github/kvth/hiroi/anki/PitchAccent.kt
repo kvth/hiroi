@@ -7,7 +7,7 @@ import io.github.kvth.hiroi.dictionary.Yomitan
 object PitchAccent {
     /** The term's downstep positions for its reading, from all pitch dictionaries. */
     fun positions(term: TermGroup): List<Int> =
-        term.meta.mapNotNull { Yomitan.pitch(it, term.reading) }
+        term.meta.filter { it.expression == term.expression }.mapNotNull { Yomitan.pitch(it, term.reading) }
             .flatMap { Regex("\\[(\\d+)]").findAll(it).map { match -> match.groupValues[1].toInt() } }
             .distinct()
 

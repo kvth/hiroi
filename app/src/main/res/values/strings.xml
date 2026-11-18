@@ -129,6 +129,16 @@
     <string name="translation_model_downloading">downloading…</string>
     <string name="translation_model_deleting">deleting…</string>
     <string name="translation_model_failed">couldn\'t download: %1$s</string>
+    <string name="grouping_title">Result grouping</string>
+    <string name="grouping_hint">As Yomitan\'s result grouping mode. No grouping: every definition is a separate entry. Group term-reading pairs: definitions for the same term with the same reading together. Group by term: definitions for the same term together, whatever the reading. Group related terms: related terms that share the same definitions together (other spellings, kana forms).</string>
+    <string name="grouping_mode">Grouping: %1$s</string>
+    <string name="grouping_split">No grouping</string>
+    <string name="grouping_group">Group term-reading pairs</string>
+    <string name="grouping_term">Group by term</string>
+    <string name="grouping_merge">Group related terms</string>
+    <string name="grouping_related_hint">The primary dictionary should be one with related term information (e.g. JMdict or Jitendex); the secondary dictionaries add their definitions for the related terms.</string>
+    <string name="grouping_main">Primary dictionary: %1$s</string>
+    <string name="grouping_secondary">Secondary dictionaries: %1$s</string>
     <string name="average_frequencies">Average frequencies</string>
     <string name="average_frequencies_hint">Compress the frequency tags into one \"Average\" tag, the harmonic mean of each list\'s value, as Yomitan\'s option does. Lists of occurrence counts are left out of it.</string>
     <string name="count_kanji">%d kanji</string>

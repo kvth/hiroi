@@ -79,6 +79,14 @@ Frequency lists (JPDB, BCCWJ, Innocent Corpus, …) show as a tag per list, with
 
 Choosing a list picks the way from its `index.json` (`frequencyMode`: `rank-based` or `occurrence-based`). For lists that don't say, Hiroi compares their values for common and rare words, with the same words Yomitan uses. Words without a value in the list come after those with one. Until you choose one, Hiroi sorts by the first frequency list you imported; choose *none* to sort without one.
 
+**Result grouping** works like Yomitan's *Result grouping mode*:
+- **No grouping:** every definition is a separate entry.
+- **Group term-reading pairs** (the default): definitions for the same term with the same reading are grouped together.
+- **Group by term:** definitions for the same term are grouped together, whatever the reading (日: ひ・にち).
+- **Group related terms:** related terms that share the same definitions are grouped together, e.g. other spellings and kana forms. Set the **primary dictionary** to one with related term information (JMdict, Jitendex): its entries with the same sequence number are one result. Other dictionaries' definitions for the same headword (term and reading) join it. The **secondary dictionaries** are also searched for the related headwords, so their definitions come along too.
+
+A result can then have several headwords. Definitions for only some of them are marked "… only", and a definition repeated for several headwords is shown once. Anki cards get the result as Yomitan would make it in that mode (`{expression}`, `{reading}`, `{furigana}` and the glossary's "(… only)"). As in Yomitan, the primary dictionary needs to be turned on; Hiroi doesn't use a turned-off dictionary only for grouping.
+
 Tag banks are only used for Anki cards so far; the results show tags by their name.
 
 ## Search

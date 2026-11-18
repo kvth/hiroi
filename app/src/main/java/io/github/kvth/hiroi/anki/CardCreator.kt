@@ -9,6 +9,7 @@ import io.github.kvth.hiroi.audio.AudioSource
 import io.github.kvth.hiroi.audio.WordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
+import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.TermGroup
 import java.io.ByteArrayOutputStream
 import org.json.JSONArray
@@ -84,6 +85,7 @@ class YomitanRenderer(
             .put("checkAllModels", format.checkAllModels)
             .put("glossaryLayoutMode", if (settings.compactGlossaries) "compact-popup-anki" else "default")
             .put("compactTags", settings.compactTags)
+            .put("resultOutputMode", DictionarySettings(context).resultGrouping)
             .put("requirements", requirements ?: JSONArray())
             .put("media", media ?: JSONObject.NULL)
             .put("dictionaries", dictionaries)

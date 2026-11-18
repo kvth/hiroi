@@ -543,6 +543,41 @@ class DictionaryDb private constructor(context: Context) :
         return out
     }
 
+    /** Whether the index on sequence numbers is there (see [findTermsBySequence]) */
+    @Volatile
+    private var sequenceIndex = false
+
+    /**
+     * Its index is made on first use rather than when the database opens: on a big dictionary
+     * that takes a while, and only grouping related terms needs it.
+     */
+    override fun findTermsBySequence(dictionary: String, sequences: Collection<Long>): List<TermEntry> {
+        if (sequences.isEmpty()) return emptyList()
+        if (!sequenceIndex) {
+            writableDatabase.execSQL("CREATE INDEX IF NOT EXISTS terms_sequence ON terms (dict, sequence)")
+            sequenceIndex = true
+        }
+        val out = mutableListOf<TermEntry>()
+        for (chunk in sequences.chunked(MAX_ARGS - 1)) {
+            val placeholders = chunk.joinToString(",") { "?" }
+            readableDatabase.rawQuery(
+                "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
+                    "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict " +
+                    "WHERE d.title = ? AND t.dict = d.id AND t.sequence IN ($placeholders)",
+                (listOf(dictionary) + chunk.map { it.toString() }).toTypedArray(),
+            ).use { c ->
+                while (c.moveToNext()) {
+                    out += TermEntry(
+                        expression = c.getString(0), reading = c.getString(1), definitionTags = c.getString(2),
+                        rules = c.getString(3), score = c.getInt(4), glossary = c.getString(5), sequence = c.getLong(6),
+                        termTags = c.getString(7), dictionary = c.getString(8), priority = c.getInt(9),
+                    )
+                }
+            }
+        }
+        return out
+    }
+
     override fun findTermMeta(expressions: Collection<String>): List<TermMeta> {
         val out = mutableListOf<TermMeta>()
         for (chunk in expressions.chunked(MAX_ARGS)) {

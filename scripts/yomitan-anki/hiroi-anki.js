@@ -109,7 +109,8 @@ const methods = {
                 requirements: request.requirements ?? [],
                 duplicateScope: request.duplicateScope,
                 duplicateScopeCheckAllModels: request.checkAllModels,
-                resultOutputMode: 'group',
+                // Yomitan's result grouping: how the entry's headwords and definitions were grouped
+                resultOutputMode: request.resultOutputMode ?? 'group',
                 glossaryLayoutMode: request.glossaryLayoutMode,
                 compactTags: request.compactTags,
                 mediaOptions: request.media === null ? null : {
