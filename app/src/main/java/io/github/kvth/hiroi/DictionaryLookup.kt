@@ -2,6 +2,7 @@ package io.github.kvth.hiroi
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
@@ -18,6 +19,11 @@ import io.github.kvth.hiroi.anki.CardCreator
 import io.github.kvth.hiroi.anki.CardData
 import io.github.kvth.hiroi.anki.DuplicateNoteException
 import io.github.kvth.hiroi.anki.Furigana
+import io.github.kvth.hiroi.audio.AudioInfo
+import io.github.kvth.hiroi.audio.AudioPlayer
+import io.github.kvth.hiroi.audio.AudioSettings
+import io.github.kvth.hiroi.audio.AudioSources
+import io.github.kvth.hiroi.audio.WordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.LookupResult
@@ -46,6 +52,9 @@ class DictionaryLookup(
         class Found(val result: LookupResult, val text: String, val html: String, val notes: MutableMap<Int, MutableList<Long>>) : Lookup {
             /** Each result's existing notes with the same first field (Yomitan's duplicate check), by index. */
             val duplicates = HashMap<Int, List<Long>>()
+
+            /** The recording chosen in a result's audio menu, by index: what its card's {audio} gets. */
+            val audio = HashMap<Int, AudioInfo>()
         }
     }
 
@@ -117,7 +126,7 @@ class DictionaryLookup(
                                 occurrenceBased = dictionaries.enabledDictionaries().filter { it.frequencyMode == "occurrence-based" }.mapTo(HashSet()) { it.title },
                             )
                             Lookup.Found(
-                                result, text, html.document(result, anki, styles, cards, frequencies, dictionaries::findMedia),
+                                result, text, html.document(result, anki, styles, cards, frequencies, dictionaries::findMedia, AudioSettings(activity).enabled),
                                 notes = result.terms.indices.associateWithTo(HashMap()) { i ->
                                     anki?.notes?.get(result.terms[i].expression).orEmpty().toMutableList()
                                 },
@@ -149,6 +158,93 @@ class DictionaryLookup(
         pending.clear()
         web.loadDataWithBaseURL(null, found.html, "text/html", "utf-8", null)
         checkDuplicates(found)
+        val audio = AudioSettings(activity)
+        if (audio.enabled && audio.autoPlay && found.result.terms.isNotEmpty()) playAudio(0)
+    }
+
+    // ---- Audio ------------------------------------------------------------------------------
+
+    private val player by lazy { AudioPlayer(activity) }
+    private val wordAudio = WordAudio(WordAudio::httpFetch)
+    private val audioWorker = Executors.newSingleThreadExecutor()
+
+    /** Recordings already downloaded, by URL, so playing one again needs no download. */
+    private val downloaded = HashMap<String, ByteArray>()
+
+    private fun download(info: AudioInfo): ByteArray? {
+        val url = info.url ?: return null
+        synchronized(downloaded) { downloaded[url] }?.let { return it }
+        return wordAudio.download(info)?.also { synchronized(downloaded) { downloaded[url] = it } }
+    }
+
+    /**
+     * Plays result [index]'s word: the recording chosen in its menu, else the first one the
+     * sources have, in their order, as Yomitan's 🔊 button does; the fallback sound if none has one.
+     */
+    private fun playAudio(index: Int) {
+        val found = shown ?: return
+        val term = found.result.terms.getOrNull(index) ?: return
+        val settings = AudioSettings(activity)
+        val chosen = found.audio[index]
+        onPage("audioState($index, 'loading')")
+        audioWorker.execute {
+            val audio = if (chosen != null) {
+                if (chosen.speak != null) WordAudio.Found(chosen, null) else download(chosen)?.let { WordAudio.Found(chosen, it) }
+            } else {
+                settings.sources.firstNotNullOfOrNull { source ->
+                    wordAudio.infos(source, term.expression, term.reading).firstNotNullOfOrNull { info ->
+                        if (info.speak != null) WordAudio.Found(info, null) else download(info)?.let { WordAudio.Found(info, it) }
+                    }
+                }
+            }
+            activity.runOnUiThread {
+                if (activity.isDestroyed || shown !== found) return@runOnUiThread
+                onPage("audioState($index, '${if (audio == null) "none" else ""}')")
+                Log.d(TAG, "Audio for ${term.expression}: ${audio?.let { "${it.info.source.type} ${it.info.url ?: "(speech)"} ${it.bytes?.size ?: 0} bytes" } ?: "none"}")
+                when {
+                    audio == null -> player.playFallback(settings.fallbackSound, settings.volume)
+                    audio.bytes != null -> player.play(audio.bytes, settings.volume)
+                    else -> player.speak(audio.info.speak.orEmpty(), settings.volume) {
+                        onPage("audioState($index, 'none')")
+                        toast(activity.getString(R.string.audio_no_tts))
+                        player.playFallback(settings.fallbackSound, settings.volume)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Yomitan's audio menu: every recording each source has for result [index], to play one; the
+     * one picked is also what the result's card gets for {audio}.
+     */
+    private fun audioMenu(index: Int) {
+        val found = shown ?: return
+        val term = found.result.terms.getOrNull(index) ?: return
+        val sources = AudioSettings(activity).sources
+        onPage("audioState($index, 'loading')")
+        audioWorker.execute {
+            val choices = sources.flatMap { source ->
+                val infos = wordAudio.infos(source, term.expression, term.reading)
+                if (infos.isEmpty()) listOf(source to null) else infos.map { info -> source to info.takeIf { it.speak != null || download(it) != null } }
+            }
+            activity.runOnUiThread {
+                if (activity.isDestroyed || shown !== found) return@runOnUiThread
+                onPage("audioState($index, '')")
+                val labels = choices.map { (source, info) ->
+                    val name = AudioSources.label(activity, source) + (info?.name?.let { " · $it" } ?: "")
+                    if (info == null) activity.getString(R.string.audio_menu_none, name) else name
+                }
+                AlertDialog.Builder(activity)
+                    .setTitle(activity.getString(R.string.audio_menu_title, term.expression))
+                    .setItems(labels.toTypedArray()) { _, which ->
+                        val info = choices[which].second ?: return@setItems
+                        found.audio[index] = info
+                        playAudio(index)
+                    }
+                    .show()
+            }
+        }
     }
 
     /**
@@ -198,11 +294,14 @@ class DictionaryLookup(
                 }
             },
             selection = selection(),
+            audio = found.audio[index],
         )
     }
 
     fun close() {
         worker.shutdownNow()
+        audioWorker.shutdownNow()
+        player.release()
         web.destroy()
     }
 
@@ -228,6 +327,16 @@ class DictionaryLookup(
         @JavascriptInterface
         fun openNote(index: Int) {
             activity.runOnUiThread { this@DictionaryLookup.openNote(index) }
+        }
+
+        @JavascriptInterface
+        fun playAudio(index: Int) {
+            activity.runOnUiThread { this@DictionaryLookup.playAudio(index) }
+        }
+
+        @JavascriptInterface
+        fun audioMenu(index: Int) {
+            activity.runOnUiThread { this@DictionaryLookup.audioMenu(index) }
         }
     }
 

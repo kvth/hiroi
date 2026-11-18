@@ -38,6 +38,8 @@ class ResultsHtml(private val colors: Colors) {
         frequencies: Frequencies = Frequencies(),
         /** A dictionary's image by its path, for the definitions that show one */
         media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
+        /** A 🔊 button per result: Hiroi.playAudio(index), long-pressed Hiroi.audioMenu(index) */
+        audio: Boolean = false,
     ): String = buildString {
         append("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">")
         append("<style>").append(css())
@@ -54,9 +56,17 @@ class ResultsHtml(private val colors: Colors) {
         append("function duplicate(i, label, enabled, open) { var b = document.getElementById('card' + i); ")
         append("if (b) { b.textContent = label; b.disabled = !enabled; b.className = 'card duplicate'; } ")
         append("var o = document.getElementById('open' + i); if (o) { o.style.display = ''; o.textContent = open; } }")
+        // The 🔊 button while its audio loads, and when there's none
+        append("function audioState(i, state) { var b = document.getElementById('audio' + i); if (b) b.className = 'audio ' + state; }")
+        // On a touch screen the button takes its touches itself: a tap plays, a long press opens the
+        // audio menu, and the page doesn't start selecting the words next to it.
+        append("document.addEventListener('touchstart', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
+        append("e.preventDefault(); b.timer = setTimeout(function () { b.timer = null; Hiroi.audioMenu(+b.dataset.index); }, 500); }, {passive: false});")
+        append("document.addEventListener('touchend', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
+        append("e.preventDefault(); if (b.timer) { clearTimeout(b.timer); b.timer = null; Hiroi.playAudio(+b.dataset.index); } }, {passive: false});")
         append("</script></head><body>")
         anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
-        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies, media)
+        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies, media, audio)
         for (kanji in result.kanji) kanji(kanji, frequencies)
         append("</body></html>")
     }
@@ -68,10 +78,15 @@ class ResultsHtml(private val colors: Colors) {
         cards: Boolean,
         frequencies: Frequencies,
         media: (String, String) -> DictionaryMedia?,
+        audio: Boolean,
     ) {
         append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
         append(Furigana.html(Furigana.distribute(term.expression, term.reading)))
         append("</span>")
+        if (audio) {
+            append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"Hiroi.playAudio($index)\" ")
+            append("oncontextmenu=\"Hiroi.audioMenu($index); return false;\">🔊</button>")
+        }
         // Shown when the word has a note (or once one was added), like Yomitan's "view note" button.
         val hasNote = anki?.notes?.containsKey(term.expression) == true
         append("<button class=\"card\" id=\"open$index\" onclick=\"Hiroi.openNote($index)\"")
@@ -163,6 +178,10 @@ class ResultsHtml(private val colors: Colors) {
         .card { flex: none; margin: 0 1px 4px 0; padding: 4px 10px; border: 1px solid ${colors.accent}; border-radius: 6px;
             background: none; color: ${colors.accent}; font: inherit; font-size: 0.9em; }
         .card:disabled { opacity: 0.6; }
+        .audio { flex: none; margin-bottom: 4px; padding: 2px 6px; border: none; background: none; font-size: 1.3em; line-height: 1;
+            -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+        .audio.loading { opacity: 0.4; }
+        .audio.none { opacity: 0.4; filter: grayscale(1); }
         .card.duplicate { border-style: dashed; }
         .inflections { color: ${colors.secondary}; font-size: 0.85em; font-style: italic; }
         .tags, .definition-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }

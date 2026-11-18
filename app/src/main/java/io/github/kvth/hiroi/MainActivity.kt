@@ -38,6 +38,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import io.github.kvth.hiroi.anki.AnkiConnect
@@ -46,6 +47,9 @@ import io.github.kvth.hiroi.anki.CardFormat
 import io.github.kvth.hiroi.anki.AnkiTemplates
 import io.github.kvth.hiroi.anki.YomitanCardFormat
 import io.github.kvth.hiroi.anki.YomitanSettings
+import io.github.kvth.hiroi.audio.AudioSettings
+import io.github.kvth.hiroi.audio.AudioSource
+import io.github.kvth.hiroi.audio.AudioSources
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
@@ -107,6 +111,7 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             startActivityForResult(pick, REQUEST_IMPORT_COLLECTION)
         }
+        setUpAudio()
         findViewById<Button>(R.id.import_example).setOnClickListener {
             importDictionary { assets.open(EXAMPLE_ASSET) }
         }
@@ -742,6 +747,52 @@ class MainActivity : Activity() {
             },
         )
         if (counts.isNotEmpty()) append('\n').append(counts.joinToString(" · "))
+    }
+
+    /** Yomitan's audio settings: the 🔊 button, its sources in order, auto-play, volume and fallback sound. */
+    private fun setUpAudio() {
+        val audio = AudioSettings(this)
+        findViewById<CheckBox>(R.id.audio_enabled).apply {
+            isChecked = audio.enabled
+            setOnCheckedChangeListener { _, checked -> audio.enabled = checked }
+        }
+        findViewById<CheckBox>(R.id.audio_auto_play).apply {
+            isChecked = audio.autoPlay
+            setOnCheckedChangeListener { _, checked -> audio.autoPlay = checked }
+        }
+        val sources = findViewById<Button>(R.id.audio_sources)
+        fun showSources() {
+            sources.text = getString(R.string.audio_sources, audio.sources.joinToString(", ") { AudioSources.label(this, AudioSource(it.type)) }.ifEmpty { getString(R.string.sort_none) })
+        }
+        showSources()
+        sources.setOnClickListener { AudioSources.edit(this, audio) { showSources() } }
+        val volumeLabel = findViewById<TextView>(R.id.audio_volume_label)
+        findViewById<SeekBar>(R.id.audio_volume).apply {
+            progress = audio.volume
+            volumeLabel.text = getString(R.string.audio_volume, audio.volume)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar, value: Int, fromUser: Boolean) {
+                    audio.volume = value
+                    volumeLabel.text = getString(R.string.audio_volume, value)
+                }
+                override fun onStartTrackingTouch(bar: SeekBar) {}
+                override fun onStopTrackingTouch(bar: SeekBar) {}
+            })
+        }
+        val fallback = findViewById<Button>(R.id.audio_fallback)
+        val fallbackLabels = mapOf("none" to R.string.audio_fallback_none, "click" to R.string.audio_fallback_click, "bloop" to R.string.audio_fallback_bloop)
+        fun showFallback() { fallback.text = getString(R.string.audio_fallback, getString(fallbackLabels.getValue(audio.fallbackSound))) }
+        showFallback()
+        fallback.setOnClickListener {
+            val sounds = AudioSettings.FALLBACK_SOUNDS
+            AlertDialog.Builder(this)
+                .setSingleChoiceItems(sounds.map { getString(fallbackLabels.getValue(it)) }.toTypedArray(), sounds.indexOf(audio.fallbackSound)) { dialog, which ->
+                    audio.fallbackSound = sounds[which]
+                    showFallback()
+                    dialog.dismiss()
+                }
+                .show()
+        }
     }
 
     /** The frequency list results are sorted by, and its order (picked automatically until chosen). */

@@ -47,6 +47,31 @@
     <string name="sort_no_lists">Import a frequency list (e.g. JPDB, BCCWJ) to sort by it.</string>
     <string name="sort_ascending">Lower first (ranks)</string>
     <string name="sort_descending">Higher first (counts)</string>
+    <string name="audio_title">Audio</string>
+    <string name="audio_hint">As in Yomitan: 🔊 plays the word from the first source that has it, in this order. Long-press 🔊 to see every source and pick a recording; the one picked is also what a card\'s {audio} gets.</string>
+    <string name="audio_enabled">🔊 button with each result</string>
+    <string name="audio_sources">Sources: %s</string>
+    <string name="audio_sources_title">Audio sources</string>
+    <string name="audio_no_sources">No sources: 🔊 finds nothing.</string>
+    <string name="audio_add_source">Add a source…</string>
+    <string name="audio_auto_play">Play the first result\'s audio when results show</string>
+    <string name="audio_volume">Volume: %d%%</string>
+    <string name="audio_fallback">When there\'s no audio: %s</string>
+    <string name="audio_fallback_none">no sound</string>
+    <string name="audio_fallback_click">a click</string>
+    <string name="audio_fallback_bloop">a bloop</string>
+    <string name="audio_jpod101">JapanesePod101</string>
+    <string name="audio_jisho">Jisho</string>
+    <string name="audio_custom">Custom URL</string>
+    <string name="audio_custom_json">Custom URL (JSON)</string>
+    <string name="audio_tts">Text-to-speech</string>
+    <string name="audio_tts_reading">Text-to-speech (reading)</string>
+    <string name="audio_custom_hint">https://example.com/audio?term={term}&amp;reading={reading}</string>
+    <string name="audio_custom_json_hint">https://example.com/audio.json?term={term}&amp;reading={reading}</string>
+    <string name="audio_custom_help">{term}, {reading} and {language} (ja) are filled in. A Custom URL is the audio itself; a JSON one answers with {\"type\": \"audioSourceList\", \"audioSources\": [{\"url\": …, \"name\": …}]}, as for Yomitan (e.g. a local audio server).</string>
+    <string name="audio_no_tts">No Japanese text-to-speech on this phone. Install a voice (e.g. Google\'s speech services) or use another source.</string>
+    <string name="audio_menu_title">Audio for %s</string>
+    <string name="audio_menu_none">%s (none)</string>
     <string name="average_frequencies">Average frequencies</string>
     <string name="average_frequencies_hint">Compress the frequency tags into one \"Average\" tag, the harmonic mean of each list\'s value, as Yomitan\'s option does. Lists of occurrence counts are left out of it.</string>
     <string name="count_kanji">%d kanji</string>
@@ -118,7 +143,7 @@
         <item>Overwrite if available (new value not empty)</item>
         <item>Overwrite (even if the new value is empty)</item>
     </string-array>
-    <string name="cards_word_audio">Word audio for {audio} (JapanesePod101)</string>
+    <string name="cards_word_audio">Word audio for {audio}, from the audio sources</string>
     <string name="cards_ready">\"＋ Anki\" adds %1$s notes to %2$s (%3$d fields filled).</string>
     <string name="cards_incomplete">Choose a deck and note type, or import your card format from Yomitan.</string>
     <string name="cards_unsupported">Not defined in the templates, these come out as {…-render-error}: %s</string>

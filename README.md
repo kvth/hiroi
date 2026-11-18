@@ -83,6 +83,28 @@ Tag banks are only used for Anki cards so far; the results show tags by their na
 
 Other apps can send text there: select it and choose **Hiroi search** in the selection menu (Android's `PROCESS_TEXT`, like the dictionary apps Hiroi's own *Look up* offers).
 
+## Audio
+
+Each result has a 🔊 button that plays the word, as in Yomitan. It tries the **audio sources** in their order and plays the first recording one has (*Dictionaries → Audio → Sources*):
+
+| Source | |
+|---|---|
+| JapanesePod101 | The default, as in Yomitan. Its "no audio for this word" recording is recognised (by its SHA-256, as Yomitan does) and skipped. |
+| Jisho | The recording on jisho.org's page for the word. |
+| Custom URL | A URL with `{term}`, `{reading}` and `{language}` (`ja`) filled in, whose answer is the audio. |
+| Custom URL (JSON) | A URL answering with Yomitan's audio list, `{"type": "audioSourceList", "audioSources": [{"url": …, "name": …}]}`, e.g. a local audio server made for Yomitan. |
+| Text-to-speech | The phone's Japanese voice, for the word or for its reading. |
+
+Long-press 🔊 for Yomitan's audio menu: every source and recording, marked *(none)* where a source has nothing, to play one. The one picked is also what the result's Anki card gets for `{audio}`; without a pick, `{audio}` takes the first recording the sources have. Text-to-speech can't go on a card, so it's skipped there.
+
+The other options are Yomitan's too:
+- auto-play the first result's audio when results show;
+- volume;
+- a fallback sound when no source has audio (none, a click or a bloop, Yomitan's sounds);
+- turning the button off.
+
+Recordings are downloaded once per lookup and played on the phone; nothing else is sent anywhere. Lingua Libre, Wiktionary and the generic LanguagePod101 sources aren't there: they're for other languages and have little Japanese.
+
 ## OCR
 
 Apps don't expose text inside images; at most they describe the picture (Instagram: 写真、…), which doesn't stop Hiroi from reading the text in it. So as soon as the overlay opens, Hiroi reads the screenshot it took on trigger with Google ML Kit's on-device Japanese recognizer, in the background. Japanese lines it finds in images are added as dashed boxes when it's done, usually within a second, with the recognized text drawn over the picture where it was found. The other boxes can be used meanwhile. If you tap an image before then, the word under your tap is looked up once its line arrives. Everything runs on the phone; the model is bundled, so it needs neither a network connection nor Play Services.
@@ -204,4 +226,4 @@ After a code change: `./podman-build-apk.sh && scripts/emulator.sh install`. Run
 
 Copyright (C) 2026 Kevin Thomas
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`.
+GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The fallback sounds in `app/src/main/assets/audio/` come from Yomitan; `fallback-bloop.mp3` is by [UNIVERSFIELD](https://pixabay.com/sound-effects/error-8-206492/) under the [Pixabay Content License](https://pixabay.com/service/license-summary/). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`.

@@ -3,15 +3,14 @@ package io.github.kvth.hiroi.anki
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Base64
-import android.util.Log
+import io.github.kvth.hiroi.audio.AudioInfo
+import io.github.kvth.hiroi.audio.AudioSettings
+import io.github.kvth.hiroi.audio.AudioSource
+import io.github.kvth.hiroi.audio.WordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.TermGroup
 import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
-import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -30,6 +29,8 @@ class CardData(
     val documentTitle: String = "",
     val parse: (String) -> List<List<Furigana.Segment>> = { listOf(listOf(Furigana.Segment(it, null))) },
     val selection: String = "",
+    /** The recording picked in the result's audio menu, for {audio}; else the sources' first */
+    val audio: AudioInfo? = null,
 )
 
 /**
@@ -102,9 +103,15 @@ class CardCreator(
     private val clipboard: () -> String? = { null },
     /** A dictionary's image by its path, for glossaries that show one */
     private val dictionaryMedia: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
+    /** Where {audio} comes from: the audio sources, in their order */
+    private val audioSources: List<AudioSource> = listOf(AudioSource("jpod101")),
+    private val audio: WordAudio = WordAudio(WordAudio::httpFetch),
 ) {
     constructor(context: Context, settings: AnkiSettings, clipboard: () -> String? = { null }) :
-        this(settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard, DictionaryDb.get(context)::findMedia)
+        this(
+            settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard,
+            DictionaryDb.get(context)::findMedia, AudioSettings(context).sources,
+        )
 
     /** An added or overwritten note, and the templates that failed on it. */
     class Result(val noteId: Long, val errors: List<String>)
@@ -175,9 +182,14 @@ class CardCreator(
         for (i in 0 until requirements.length()) {
             val requirement = requirements.getJSONObject(i)
             when (requirement.optString("type")) {
+                // The recording picked in the audio menu, else the first the sources have, as
+                // Yomitan's {audio} does; text-to-speech can't go on a card.
                 "audio" -> if (wordAudio) {
-                    wordAudio(data.term.expression, data.term.reading)?.let { mp3 ->
-                        media.put("audio", anki.storeMediaFile("hiroi_audio_${data.term.expression}_${data.term.reading}.mp3", mp3.base64()))
+                    val picked = data.audio?.takeIf { it.speak == null }?.let { info -> audio.download(info)?.let { WordAudio.Found(info, it) } }
+                    val found = picked ?: audio.first(audioSources, data.term.expression, data.term.reading, speech = false)
+                    found?.bytes?.let { bytes ->
+                        val extension = found.info.url?.substringBefore('?')?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in AUDIO_EXTENSIONS } ?: "mp3"
+                        media.put("audio", anki.storeMediaFile("hiroi_audio_${data.term.expression}_${data.term.reading}.$extension", bytes.base64()))
                     }
                 }
                 "screenshot" -> if (screenshot != null) {
@@ -223,31 +235,9 @@ class CardCreator(
 
     private fun rootDeck(deck: String) = deck.substringBefore("::")
 
-    /**
-     * The word's audio from JapanesePod101, like Yomitan's default audio source. It answers unknown
-     * words with a "no audio" recording, which Yomitan recognises by its hash and so does Hiroi.
-     */
-    private fun wordAudio(expression: String, reading: String): ByteArray? = try {
-        val query = "kanji=${URLEncoder.encode(expression, "UTF-8")}&kana=${URLEncoder.encode(reading, "UTF-8")}"
-        val connection = URL("https://assets.languagepod101.com/dictionary/japanese/audiomp3.php?$query").openConnection() as HttpURLConnection
-        connection.connectTimeout = 5000
-        connection.readTimeout = 10000
-        try {
-            val bytes = connection.inputStream.use { it.readBytes() }
-            val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-            bytes.takeIf { it.isNotEmpty() && hash != NO_AUDIO_SHA256 }
-        } finally {
-            connection.disconnect()
-        }
-    } catch (e: Exception) {
-        Log.w(TAG, "No word audio for $expression", e)
-        null
-    }
-
     private fun ByteArray.base64() = Base64.encodeToString(this, Base64.NO_WRAP)
 
     private companion object {
-        const val TAG = "HiroiAnki"
-        const val NO_AUDIO_SHA256 = "ae6398b5a27bc8c0a771df6c907ade794be15518174773c58c7c7ddd17098906"
+        val AUDIO_EXTENSIONS = setOf("mp3", "ogg", "opus", "m4a", "aac", "wav", "flac", "webm")
     }
 }
