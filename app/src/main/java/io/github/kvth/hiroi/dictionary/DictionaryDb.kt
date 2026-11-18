@@ -6,6 +6,7 @@ import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.graphics.BitmapFactory
+import io.github.kvth.hiroi.settings.SettingsBackup
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -414,6 +415,24 @@ class DictionaryDb private constructor(context: Context) :
                 writableDatabase.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
             }
         }
+    }
+
+    /**
+     * Puts the dictionaries [states] names first, in its order and switched on or off as it
+     * says; the others keep their order after them. Returns the titles that aren't installed.
+     */
+    fun applyOrder(states: List<SettingsBackup.DictionaryState>): List<String> {
+        val installed = dictionaries()
+        val byTitle = installed.associateBy { it.title }
+        val listed = states.mapNotNull { state -> byTitle[state.title]?.let { it to state.enabled } }
+        val order = listed.map { it.first.id }.distinct() + installed.map { it.id }.filter { id -> listed.none { it.first.id == id } }
+        inTransaction(writableDatabase) {
+            for ((i, dict) in order.withIndex()) {
+                writableDatabase.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
+            }
+            for ((info, enabled) in listed) setEnabled(info.id, enabled)
+        }
+        return states.map { it.title }.filter { it !in byTitle }
     }
 
     fun delete(id: Long) {

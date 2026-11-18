@@ -41,6 +41,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
+import android.widget.Toast
 import io.github.kvth.hiroi.anki.AnkiConnect
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardFormat
@@ -54,6 +55,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.marks.MarksActivity
+import io.github.kvth.hiroi.settings.SettingsFile
 import io.github.kvth.hiroi.translation.OnDeviceTranslation
 import io.github.kvth.hiroi.translation.TargetLanguage
 import io.github.kvth.hiroi.translation.TranslationServices
@@ -122,6 +124,12 @@ class MainActivity : Activity() {
         }
         setUpAudio()
         setUpTranslation()
+        findViewById<Button>(R.id.export_settings).setOnClickListener { askExportSettings() }
+        findViewById<Button>(R.id.import_settings).setOnClickListener {
+            val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+            @Suppress("DEPRECATION")
+            startActivityForResult(pick, REQUEST_IMPORT_SETTINGS)
+        }
         findViewById<Button>(R.id.import_example).setOnClickListener {
             importDictionary { assets.open(EXAMPLE_ASSET) }
         }
@@ -588,6 +596,80 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_YOMITAN_SETTINGS && resultCode == RESULT_OK && uri != null) importYomitanSettings(uri)
         if (requestCode == REQUEST_EXPORT_COLLECTION && resultCode == RESULT_OK && uri != null) exportCollection(uri)
         if (requestCode == REQUEST_IMPORT_COLLECTION && resultCode == RESULT_OK && uri != null) importCollection(uri)
+        if (requestCode == REQUEST_EXPORT_SETTINGS && resultCode == RESULT_OK && uri != null) exportSettings(uri)
+        if (requestCode == REQUEST_IMPORT_SETTINGS && resultCode == RESULT_OK && uri != null) importSettings(uri)
+    }
+
+    /** Whether the settings file being exported gets the API keys (asked before picking the file) */
+    private var exportKeys = false
+
+    /** Asks whether the API keys go in the settings file, then where to save it. */
+    private fun askExportSettings() {
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val keys = CheckBox(this).apply { setText(R.string.settings_export_keys) }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(keys)
+            addView(TextView(this@MainActivity).apply { setText(R.string.settings_export_keys_hint) })
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_export)
+            .setView(form)
+            .setPositiveButton(R.string.settings_export) { _, _ ->
+                exportKeys = keys.isChecked
+                val create = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("application/json")
+                    .putExtra(Intent.EXTRA_TITLE, "hiroi-settings-${java.time.LocalDate.now()}.json")
+                @Suppress("DEPRECATION")
+                startActivityForResult(create, REQUEST_EXPORT_SETTINGS)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    private fun exportSettings(uri: Uri) {
+        val message = runCatching {
+            contentResolver.openOutputStream(uri, "wt")!!.use { SettingsFile.export(this, it, exportKeys) }
+            getString(if (exportKeys) R.string.settings_exported_keys else R.string.settings_exported)
+        }.getOrElse {
+            Log.w(TAG, "Settings export failed", it)
+            getString(R.string.settings_failed, it.message ?: it.javaClass.simpleName)
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+
+    /** Reads a settings file, asks before replacing the settings, then shows them. */
+    private fun importSettings(uri: Uri) {
+        val backup = runCatching { contentResolver.openInputStream(uri)!!.use(SettingsFile::read) }.getOrElse {
+            Toast.makeText(this, getString(R.string.settings_failed, it.message ?: it.javaClass.simpleName), Toast.LENGTH_LONG).show()
+            return
+        }
+        val about = listOfNotNull(
+            getString(R.string.settings_import_from, backup.exported.substringBefore('T'), backup.app),
+            getString(R.string.settings_import_no_keys).takeIf { !backup.includesKeys },
+        ).joinToString(" ")
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings_import)
+            .setMessage(getString(R.string.settings_import_confirm, about))
+            .setPositiveButton(R.string.settings_import_button) { _, _ ->
+                val message = runCatching {
+                    val missing = SettingsFile.apply(this, backup)
+                    if (missing.isEmpty()) getString(R.string.settings_imported) else getString(R.string.settings_imported_missing, missing.joinToString(", "))
+                }.getOrElse {
+                    Log.w(TAG, "Settings import failed", it)
+                    getString(R.string.settings_failed, it.message ?: it.javaClass.simpleName)
+                }
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                // Every section shows the new settings. Not recreate(): it restores the old
+                // switches and sliders, whose listeners would save them over the imported ones.
+                finish()
+                startActivity(Intent(this, MainActivity::class.java))
+                @Suppress("DEPRECATION")
+                overridePendingTransition(0, 0)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     /** Runs [work] in the background with its progress in the import status line, keeping the screen on. */
@@ -944,6 +1026,8 @@ class MainActivity : Activity() {
         const val REQUEST_YOMITAN_SETTINGS = 2
         const val REQUEST_EXPORT_COLLECTION = 3
         const val REQUEST_IMPORT_COLLECTION = 4
+        const val REQUEST_EXPORT_SETTINGS = 5
+        const val REQUEST_IMPORT_SETTINGS = 6
 
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py

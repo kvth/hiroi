@@ -212,6 +212,18 @@ Like [AnkiMark](https://github.com/kvth/ankimark) does on web pages, Hiroi can m
 
 Matching works as in AnkiMark: fields are cleaned of HTML, furigana, cloze markers and `(する)`-style parts, lists like `食べる、喰べる` are split, and the longest known word at each position wins. While the hint shows, the panel shows how much of the screen's Japanese text is marked, in characters, and how many different words that is, per rule. Boxes whose app doesn't report character positions are only marked in the panel.
 
+## Settings backup
+
+*Export settings* (end of the setup screen) writes all of Hiroi's settings into one JSON file, and *Import settings* reads one back, e.g. on another phone. It has:
+- Anki: the address, deck and field, card formats with their templates, and the compact glossary, compact tags and word audio options;
+- marks: rules, filters, fields, field script, display and syncing;
+- audio, translation (services, language, automatic), sorting and frequencies, freezing the screen, romaji search;
+- the dictionaries' order and on/off switches, by title.
+
+The dictionaries themselves go in a [collection](#dictionaries). Importing settings sets the order of the dictionaries that are installed and reports the others.
+
+API keys (AnkiConnect's, DeepL's, LibreTranslate's) are only in the file if you tick *Include API keys* when exporting. Without them the file is safe to share, and importing it keeps the keys the phone already has. Importing replaces the settings it has, and asks first.
+
 ## Limitations
 
 - Text an app doesn't expose to accessibility (pictures, games, video subtitles) is only found by OCR, which reads horizontal text well but vertical text (manga) only sometimes, and nothing in apps that forbid screenshots.
