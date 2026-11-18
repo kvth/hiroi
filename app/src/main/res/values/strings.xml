@@ -133,7 +133,7 @@
     <string name="average_frequencies_hint">Compress the frequency tags into one \"Average\" tag, the harmonic mean of each list\'s value, as Yomitan\'s option does. Lists of occurrence counts are left out of it.</string>
     <string name="count_kanji">%d kanji</string>
     <string name="count_images">%d images</string>
-    <string name="usage_hint">Trigger Hiroi with the accessibility button, the accessibility shortcut, or the assistant gesture, then tap a word in one of the boxes to look it up. Text in pictures is read with OCR as soon as Hiroi opens and gets a dashed box. In the panel, long-press to select text yourself; Copy and \"Look up\" (which opens a dictionary app) act on the selection. Long-press \"Look up\" to pick a different app.</string>
+    <string name="usage_hint">Trigger Hiroi with the accessibility button, the accessibility shortcut, or the assistant gesture, then tap a word in one of the boxes to look it up. Text in pictures is read with OCR as soon as Hiroi opens and gets a dashed box. Drag over the screen to take just the text in that region. In the panel, long-press to select text yourself; Share sends the word, sentence, box or selection to the clipboard, an app, DeepL, ChatGPT and so on, and \"Look up\" opens it in a dictionary app. Long-press \"Look up\" to pick a different app.</string>
     <string name="step_anki">4. Optional: Anki</string>
     <string name="step_anki_hint">Shows whether a looked-up word already has a note in one of your Anki decks. Needs AnkiConnect: on the phone AnkiDroid with AnkiConnect Android running, or desktop Anki with the AnkiConnect add-on (enter its address, e.g. http://192.168.0.20:8765). For \"Open in Anki\", switch AnkiDroid\'s card browser to \"All decks\" once: it only searches the deck it last showed.</string>
     <string name="anki_url_hint">AnkiConnect address</string>
@@ -342,8 +342,35 @@
     <string name="status_on">✓ enabled</string>
     <string name="status_off">✗ not enabled</string>
 
-    <string name="hint_tap">Tap a word in a box · %d found. Tap this bar to move it.</string>
-    <string name="hint_tap_scanning">Tap a word in a box · %d found, looking for more in images… Tap this bar to move it.</string>
+    <string name="hint_tap">Tap a word in a box, or drag over a region · %d found. Tap this bar to move it.</string>
+    <string name="hint_tap_scanning">Tap a word in a box, or drag over a region · %d found, looking for more in images… Tap this bar to move it.</string>
+    <string name="region_empty">No Japanese text in that region</string>
+    <string name="region_empty_scanning">No Japanese text in that region yet: images are still being read</string>
+    <string name="share">Share</string>
+    <string name="scope_word">Word</string>
+    <string name="scope_sentence">Sentence</string>
+    <string name="scope_box">Box</string>
+    <string name="scope_region">Region</string>
+    <string name="scope_all">All</string>
+    <string name="scope_selection">Selection</string>
+    <string name="share_sheet">Share…</string>
+    <string name="share_to">Send to %1$s</string>
+    <string name="share_edit_targets">Edit targets</string>
+    <string name="share_targets_title">Share targets</string>
+    <string name="share_targets_help">Where the Share menu sends text, after Copy and Share…. Tap one to change its name, address or what it sends.</string>
+    <string name="share_targets">Share targets: %1$s</string>
+    <string name="share_hint">The panel\'s Share button sends the word, its sentence, the box, a region or your selection: to the clipboard (long-press Share to copy right away), any app, or the targets here, e.g. DeepL or ChatGPT with a prompt around the text.</string>
+    <string name="share_title">Sharing</string>
+    <string name="share_add_target">Add a target</string>
+    <string name="share_add_app">An app…</string>
+    <string name="share_add_url">Custom URL</string>
+    <string name="share_no_targets">No targets: the menu has Copy and Share… only</string>
+    <string name="share_target_missing">Couldn\'t open %1$s</string>
+    <string name="share_name_hint">Name</string>
+    <string name="share_url_hint">https://example.com/?q={text}</string>
+    <string name="share_template_hint">What to send: {text}</string>
+    <string name="share_url_help">The URL opens in the browser, or in the app for those links (DeepL\'s, ChatGPT\'s, …). {text} is what\'s sent and {target} the translation language\'s code. What\'s sent can put words around {text}, e.g. a prompt; {language} is the translation language.</string>
+    <string name="share_app_help">What\'s sent to the app can put words around {text}, e.g. a prompt; {language} is the translation language.</string>
     <string name="hint_none">No Japanese text found.</string>
     <string name="hint_none_scanning">Looking for Japanese text in images…</string>
     <string name="copy">Copy</string>

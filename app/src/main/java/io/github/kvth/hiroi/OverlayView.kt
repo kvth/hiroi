@@ -7,10 +7,15 @@ import android.graphics.Canvas
 import android.graphics.DashPathEffect
 import android.graphics.Insets
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import io.github.kvth.hiroi.marks.MarkStyle
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 /** Dims the screen and outlines every captured text block; reports which block was tapped. */
 @SuppressLint("ViewConstructor")
@@ -21,6 +26,8 @@ class OverlayView(
     private val onBlockTap: (TextBlock, Int, Int) -> Unit,
     /** A tap outside every box, with its screen coordinates */
     private val onEmptyTap: (Int, Int) -> Unit,
+    /** A region dragged out on the screen, in screen coordinates */
+    private val onRegion: (Rect) -> Unit = {},
 ) : View(context) {
 
     var blocks: List<TextBlock> = blocks
@@ -45,6 +52,13 @@ class OverlayView(
         }
 
     var selected: TextBlock? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** The region whose text the panel shows (or the one being dragged out), in screen coordinates */
+    var region: Rect? = null
         set(value) {
             field = value
             invalidate()
@@ -104,6 +118,13 @@ class OverlayView(
     private val markPaint = Paint()
     private val highlightFill = Paint().apply { color = 0x66FFB300 }
     private val highlightLine = Paint().apply { color = 0xFFFF8F00.toInt() }
+    private val regionFill = Paint().apply { color = 0x22FFB300 }
+    private val regionOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2 * dp
+        color = 0xFFFF8F00.toInt()
+        pathEffect = DashPathEffect(floatArrayOf(8 * dp, 5 * dp), 0f)
+    }
 
     override fun onDraw(canvas: Canvas) {
         getLocationOnScreen(screenOffset)
@@ -128,6 +149,12 @@ class OverlayView(
                 rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
                 markStyle.draw(canvas, rect, mark.color, markPaint, dp)
             }
+        }
+        region?.let {
+            rect.set(it)
+            rect.offset(-screenOffset[0].toFloat(), -screenOffset[1].toFloat())
+            canvas.drawRect(rect, regionFill)
+            canvas.drawRect(rect, regionOutline)
         }
         for (line in highlight) {
             rect.set(line)
@@ -161,14 +188,38 @@ class OverlayView(
         }
     }
 
+    private val dragSlop = ViewConfiguration.get(context).scaledTouchSlop * 2
+    private var downX = 0
+    private var downY = 0
+    private var dragging = false
+    private var regionBefore: Rect? = null
+
+    /** A tap picks a box; a drag selects the region between where it started and ended. */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            getLocationOnScreen(screenOffset)
-            val x = event.x.toInt() + screenOffset[0]
-            val y = event.y.toInt() + screenOffset[1]
-            val hit = blockAt(x, y)
-            if (hit != null) onBlockTap(hit, x, y) else onEmptyTap(x, y)
+        getLocationOnScreen(screenOffset)
+        val x = event.x.toInt() + screenOffset[0]
+        val y = event.y.toInt() + screenOffset[1]
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = x
+                downY = y
+                dragging = false
+                regionBefore = region
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging && (abs(x - downX) > dragSlop || abs(y - downY) > dragSlop)) dragging = true
+                if (dragging) region = Rect(min(downX, x), min(downY, y), max(downX, x), max(downY, y))
+            }
+            MotionEvent.ACTION_UP -> {
+                if (dragging) {
+                    region?.let(onRegion)
+                } else {
+                    val hit = blockAt(x, y)
+                    if (hit != null) onBlockTap(hit, x, y) else onEmptyTap(x, y)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> if (dragging) region = regionBefore
         }
         return true
     }

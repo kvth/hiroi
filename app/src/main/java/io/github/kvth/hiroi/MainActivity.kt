@@ -56,6 +56,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.settings.SettingsFile
+import io.github.kvth.hiroi.share.ShareTargets
 import io.github.kvth.hiroi.translation.OnDeviceTranslation
 import io.github.kvth.hiroi.translation.TargetLanguage
 import io.github.kvth.hiroi.translation.TranslationServices
@@ -124,6 +125,12 @@ class MainActivity : Activity() {
         }
         setUpAudio()
         setUpTranslation()
+        val shareTargets = findViewById<Button>(R.id.share_targets)
+        fun showShareTargets() {
+            shareTargets.text = getString(R.string.share_targets, ShareTargets.load(this).joinToString(", ") { it.name }.ifEmpty { getString(R.string.sort_none) })
+        }
+        showShareTargets()
+        shareTargets.setOnClickListener { ShareTargets.edit(this) { showShareTargets() } }
         findViewById<Button>(R.id.export_settings).setOnClickListener { askExportSettings() }
         findViewById<Button>(R.id.import_settings).setOnClickListener {
             val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")

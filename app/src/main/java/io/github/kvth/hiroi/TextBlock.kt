@@ -30,6 +30,38 @@ fun TextBlock.lineRects(start: Int, end: Int): List<RectF> {
     return lines
 }
 
+/**
+ * The text inside [region] (screen coordinates), top to bottom: of boxes with character
+ * positions, from the first character whose centre is inside to the last (so a sentence
+ * wrapped over lines reads on, as a selection would); of
+ * others, the whole text if at least half of the box is inside. A box's text that another
+ * picked box's text already has (a container around its items) comes once.
+ */
+fun regionText(blocks: List<TextBlock>, region: Rect): String {
+    val area = RectF(region)
+    class Piece(val block: TextBlock, val text: String)
+    val pieces = blocks.mapNotNull { block ->
+        val characters = block.characters
+        val text = if (characters != null && block.text.indices.any { characters.getOrNull(block.textOffset + it) != null }) {
+            val inside = block.text.indices.filter { i ->
+                characters.getOrNull(block.textOffset + i)?.let { area.contains(it.centerX(), it.centerY()) } == true
+            }
+            if (inside.isEmpty()) "" else block.text.substring(inside.first(), inside.last() + 1)
+        } else {
+            val inside = Rect(block.bounds)
+            val covered = if (inside.intersect(region)) inside.width().toLong() * inside.height() else 0L
+            block.text.takeIf { covered * 2 >= block.bounds.width().toLong() * block.bounds.height() }.orEmpty()
+        }
+        text.trim().takeIf { it.isNotEmpty() }?.let { Piece(block, it) }
+    }
+    return pieces
+        .filterNot { piece -> pieces.any { other -> other.text.length > piece.text.length && piece.text in other.text } }
+        .sortedWith(compareBy({ it.block.bounds.top }, { it.block.bounds.left }))
+        .map { it.text }
+        .distinct()
+        .joinToString("\n")
+}
+
 /** Only text with Japanese in it gets a box; the rest (English labels, numbers, icons) is noise here. */
 fun TextBlock.hasJapanese() = text.any(Japanese::isJapanese)
 

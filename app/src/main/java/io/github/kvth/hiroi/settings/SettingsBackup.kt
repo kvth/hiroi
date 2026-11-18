@@ -17,7 +17,7 @@ object SettingsBackup {
     const val VERSION = 1
 
     /** The settings files, by their SharedPreferences name */
-    val FILES = listOf("hiroi", "dictionaries", "audio", "translation", "anki", "marks")
+    val FILES = listOf("hiroi", "dictionaries", "audio", "translation", "share", "anki", "marks")
 
     /** A dictionary's place in the order (the list's) and whether it's on */
     data class DictionaryState(val title: String, val enabled: Boolean)

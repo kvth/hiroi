@@ -4,8 +4,6 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -13,6 +11,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Insets
+import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -44,6 +43,7 @@ import io.github.kvth.hiroi.marks.MarkStyle
 import io.github.kvth.hiroi.marks.MarkedTextView
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.ocr.ScreenOcr
+import io.github.kvth.hiroi.share.ShareMenu
 import io.github.kvth.hiroi.translation.TranslationStrip
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -67,6 +67,7 @@ class LookupActivity : Activity() {
     private lateinit var resultsWebFrame: FrameLayout
     private var shownBlock: TextBlock? = null // the box whose text the panel shows, for the on-screen highlight
     private var lookedUp: Pair<Int, Int>? = null // the looked-up word in the panel's text, whose sentence is translated
+    private var panelSource = R.string.scope_box // where the panel's text is from: a box, a region, all boxes
     private lateinit var translation: TranslationStrip
 
     private val dp by lazy { resources.displayMetrics.density }
@@ -137,7 +138,7 @@ class LookupActivity : Activity() {
 
     private fun buildContent(): FrameLayout {
         val root = FrameLayout(this)
-        overlay = OverlayView(this, CaptureStore.blocks, ::showBlock, ::onEmptyTap)
+        overlay = OverlayView(this, CaptureStore.blocks, ::showBlock, ::onEmptyTap, ::showRegion)
         root.addView(overlay, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
 
         textView = MarkedTextView(this).apply {
@@ -175,12 +176,14 @@ class LookupActivity : Activity() {
                 buttons.addView(this)
             }
         marksButton = action(R.string.marks_button) { showMarksMenu() }
-        val copy = action(R.string.copy) { copy(selectedOrAllText()) }
+        // Long-press copies right away what the menu would start with
+        val share = action(R.string.share) { showShareMenu() }
+        share.setOnLongClickListener { shareScopes().let { (scopes, chosen) -> ShareMenu.copy(this, scopes[chosen].text) }; true }
         val lookUp = action(R.string.look_up) { lookUp(selectedOrAllText(), choose = false) }
         lookUp.setOnLongClickListener { lookUp(selectedOrAllText(), choose = true); true }
         action(R.string.all) { showAll() }
         action(R.string.close) { finish() }
-        textActions = listOf(copy, lookUp)
+        textActions = listOf(share, lookUp)
 
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -500,6 +503,51 @@ class LookupActivity : Activity() {
         val lines = mutableListOf<String>()
         for (block in overlay.blocks) if (lines.lastOrNull() != block.text) lines += block.text
         setPanelText(lines.joinToString("\n"), atTop = false, isText = lines.isNotEmpty())
+        panelSource = R.string.scope_all
+    }
+
+    /** The text inside a region dragged out on the screen, which then stays outlined. */
+    private fun showRegion(region: Rect) {
+        val text = regionText(overlay.blocks, region)
+        if (text.isEmpty()) {
+            overlay.region = null
+            Toast.makeText(this, if (scanning) R.string.region_empty_scanning else R.string.region_empty, Toast.LENGTH_SHORT).show()
+            return
+        }
+        overlay.selected = null
+        setPanelText(text, atTop = region.centerY() > resources.displayMetrics.heightPixels / 2, isText = true)
+        panelSource = R.string.scope_region
+        overlay.region = region
+    }
+
+    /**
+     * What the Share menu offers: the looked-up word, its sentence, the panel's text (a box, a
+     * region or all), the selection; and which it starts with (the selection, else the sentence).
+     */
+    private fun shareScopes(): Pair<List<ShareMenu.Scope>, Int> {
+        val text = textView.text.toString()
+        val word = lookedUp?.takeIf { it.second <= text.length }
+        val start = minOf(textView.selectionStart, textView.selectionEnd)
+        val end = maxOf(textView.selectionStart, textView.selectionEnd)
+        val selection = if (start >= 0 && start < end && (start to end) != word) text.substring(start, end) else ""
+        val sentence = word?.let { (s, e) -> YomitanNoteData.sentence(text, s, e).let { (a, b) -> text.substring(a, b).trim() } }.orEmpty()
+        val scopes = listOf(
+            ShareMenu.Scope(getString(R.string.scope_word), word?.let { text.substring(it.first, it.second) }.orEmpty()),
+            ShareMenu.Scope(getString(R.string.scope_sentence), sentence),
+            ShareMenu.Scope(getString(panelSource), text.trim()),
+            ShareMenu.Scope(getString(R.string.scope_selection), selection),
+        )
+        val chosen = when {
+            selection.isNotEmpty() -> 3
+            sentence.isNotEmpty() -> 1
+            else -> 2
+        }
+        return scopes to chosen
+    }
+
+    private fun showShareMenu() {
+        val (scopes, chosen) = shareScopes()
+        ShareMenu.show(this, scopes, chosen)
     }
 
     private fun setPanelText(text: CharSequence, atTop: Boolean, isText: Boolean) {
@@ -507,6 +555,8 @@ class LookupActivity : Activity() {
         lookup.cancel()
         shownBlock = null
         lookedUp = null
+        panelSource = R.string.scope_box
+        overlay.region = null
         overlay.highlight = emptyList()
         resultsScroll.visibility = View.GONE
         resultsWebFrame.visibility = View.GONE
@@ -600,14 +650,6 @@ class LookupActivity : Activity() {
         return if (start >= 0 && start < end) text.subSequence(start, end).toString() else text.toString()
     }
 
-    private fun copy(text: String) {
-        getSystemService(ClipboardManager::class.java)
-            .setPrimaryClip(ClipData.newPlainText(getString(R.string.app_name), text))
-        // Android 13+ shows its own clipboard confirmation.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
-        }
-    }
 
     /** Sends [text] to the remembered dictionary app, or asks which one to use when [choose] is set or none is saved. */
     private fun lookUp(text: String, choose: Boolean) {

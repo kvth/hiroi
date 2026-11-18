@@ -2,16 +2,17 @@
 
 A small Android app that picks up the text on your screen, even in apps that don't let you select it, so you can copy it or send it to a dictionary app such as PopLingo or Takoboto.
 
-It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. You can also select text to copy it or send it to another dictionary app.
+It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. If the app doesn't report where its characters are (some WebViews, games, custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. Drag over the screen to take just the text in that region. The panel translates the sentence you're reading, and **Share** sends the word, its sentence, the box, the region or your selection to the clipboard, any app, DeepL, ChatGPT and so on.
 
-| The overlay | A lookup | Search |
-|---|---|---|
-| ![Boxes over the text on screen, words from Anki marked by rule, a picture read with OCR](docs/screenshots/overlay.png) | ![The panel with the tapped sentence and the results for 教える](docs/screenshots/lookup.png) | ![The search page: tabesaserareta typed in romaji finds 食べる](docs/screenshots/search.png) |
+| The overlay | A lookup | A region, shared | Search |
+|---|---|---|---|
+| ![Boxes over the text on screen, words from Anki marked by rule, a picture read with OCR](docs/screenshots/overlay.png) | ![The panel with the tapped sentence, its translation and the results for 勉強](docs/screenshots/lookup.png) | ![Two sentences taken with a dragged region; the Share menu with Word, Sentence and Region, Copy, Share…, DeepL and ChatGPT](docs/screenshots/share.png) | ![The search page: tabesaserareta typed in romaji finds 食べる](docs/screenshots/search.png) |
 
 The screenshots are from the emulator (`scripts/emulator.sh`), on Hiroi's example sentences with the example dictionary and a small Anki deck:
 - **The overlay:** every piece of Japanese text gets a box. Words you have in Anki are marked in their rule's colour (mature, learning, new), and the bar shows how much of the screen's text that is. The sentence in the picture at the bottom is read with OCR (the dashed box).
-- **A lookup:** tapping 教えて shows 教える with its inflection, Anki status and the dictionary's definitions.
-- **Search:** typing `tabesaserareta` searches たべさせられた and finds 食べる.
+- **A lookup:** tapping 勉強 shows its reading, Anki status and the dictionary's definitions; under the sentence, its translation (by ML Kit, on the phone).
+- **A region, shared:** dragging over two sentences puts just their text in the panel. After tapping 届かなかった, **Share** offers the word, its sentence or the whole region, for the clipboard, any app, DeepL or ChatGPT.
+- **Search:** typing `tabesaserareta` searches たべさせられた and finds 食べる; **文A Translate** translates the searched text.
 
 ## Ways to open it
 
@@ -34,8 +35,9 @@ When the accessibility service is off, the assistant trigger still works. It the
 3. Optional: *Digital assistant settings* → choose Hiroi, and enable *Use text from screen*.
 4. Optional: import a Yomitan dictionary zip under *Dictionaries*.
 5. Trigger it on any screen and tap a box. Then:
-   - tap a word to look it up in your dictionaries. The matched word gets selected, so **Copy** copies it;
+   - tap a word to look it up in your dictionaries. The matched word gets selected, and **Share** offers it, its sentence or the box ([Sharing](#sharing));
    - or long-press to select text yourself, then pick a dictionary app in the selection menu, or tap **Look up**. The first time, you pick the app and Hiroi remembers it. Long-press **Look up** to change it.
+   - or drag over the screen instead of tapping: the panel gets just the text inside that region, from one box or several.
 
 ## Example
 
@@ -106,6 +108,21 @@ The other options are Yomitan's too:
 - turning the button off.
 
 Recordings are downloaded once per lookup and played on the phone; nothing else is sent anywhere. Lingua Libre, Wiktionary and the generic LanguagePod101 sources aren't there: they're for other languages and have little Japanese.
+
+## Sharing
+
+**Share** in the panel opens a menu. At the top you pick which text it's for:
+- the **word** you looked up;
+- its **sentence**;
+- the **box**: all of the panel's text, or the **region** you dragged out, or **all** boxes;
+- your **selection**, if you selected text in the panel.
+
+It starts with your selection, otherwise the sentence. Below are the places to send it:
+- **Copy**. Long-press **Share** to copy right away.
+- **Share…**: Android's share sheet, for any app.
+- **Your targets**, in their order (*Sharing → Share targets* in the setup screen, or *Edit targets* in the menu). Add one from the presets: DeepL, Google Translate, ChatGPT, Claude, Jisho, Google. Or add an app, sent the text directly (anything that takes shared or selected text), or a custom URL with `{text}` and `{target}` (the translation language's code). Each target also has what it sends: `{text}` as it is, or words around it, e.g. ChatGPT's and Claude's preset prompt *"Explain this Japanese text in {language}: its meaning, vocabulary and grammar."* A link opens in the app that handles it (DeepL's, ChatGPT's), or in the browser.
+
+**Regions:** drag over the overlay instead of tapping, and the panel shows just the text inside the rectangle, top to bottom. In boxes with character positions that's from the first character inside to the last, so a sentence wrapped over lines reads on. Boxes without them count if at least half of the box is inside. The region stays outlined, and Translate and Share then act on it.
 
 ## Translation
 
@@ -217,7 +234,7 @@ Matching works as in AnkiMark: fields are cleaned of HTML, furigana, cloze marke
 *Export settings* (end of the setup screen) writes all of Hiroi's settings into one JSON file, and *Import settings* reads one back, e.g. on another phone. It has:
 - Anki: the address, deck and field, card formats with their templates, and the compact glossary, compact tags and word audio options;
 - marks: rules, filters, fields, field script, display and syncing;
-- audio, translation (services, language, automatic), sorting and frequencies, freezing the screen, romaji search;
+- audio, translation (services, language, automatic), share targets, sorting and frequencies, freezing the screen, romaji search;
 - the dictionaries' order and on/off switches, by title.
 
 The dictionaries themselves go in a [collection](#dictionaries). Importing settings sets the order of the dictionaries that are installed and reports the others.

@@ -25,6 +25,14 @@
         </intent>
     </queries>
 
+    <!-- Apps to share text with, for the Share menu's targets -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
+
     <!-- Translation apps (Google Translate, DeepL, ...) -->
     <queries>
         <intent>
