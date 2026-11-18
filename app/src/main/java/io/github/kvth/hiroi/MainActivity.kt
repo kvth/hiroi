@@ -95,6 +95,11 @@ class MainActivity : Activity() {
             settings.sortAscending = !settings.sortAscending
             showSorting()
         }
+        findViewById<CheckBox>(R.id.freeze_screen).apply {
+            val prefs = getSharedPreferences(LookupActivity.PREFS, MODE_PRIVATE)
+            isChecked = prefs.getBoolean(LookupActivity.KEY_FREEZE, true)
+            setOnCheckedChangeListener { _, checked -> prefs.edit().putBoolean(LookupActivity.KEY_FREEZE, checked).apply() }
+        }
         findViewById<CheckBox>(R.id.average_frequencies).apply {
             isChecked = DictionarySettings(this@MainActivity).averageFrequencies
             setOnCheckedChangeListener { _, checked -> DictionarySettings(this@MainActivity).averageFrequencies = checked }

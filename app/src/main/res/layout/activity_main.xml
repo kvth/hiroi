@@ -89,6 +89,18 @@
             android:layout_height="wrap_content"
             android:text="@string/open_assistant" />
 
+        <CheckBox
+            android:id="@+id/freeze_screen"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/freeze_screen" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/freeze_screen_hint" />
+
         <TextView
             style="@android:style/TextAppearance.DeviceDefault.Medium"
             android:layout_width="match_parent"

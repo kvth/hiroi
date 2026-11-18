@@ -40,6 +40,12 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
         launched = false
         val accessibility = HiroiAccessibilityService.instance
         Log.d(TAG, "onShow flags=$showFlags accessibility=${accessibility != null}")
+        // The overlay is open on a frozen screen: it keeps the moment it shows.
+        if (LookupActivity.keepsFrozen(context)) {
+            launched = true
+            launch()
+            return
+        }
         CaptureStore.screenshot = null
         // The accessibility service sees every window (status bar, notifications, dialogs),
         // so prefer it over the assist structure, which only covers the foreground app.

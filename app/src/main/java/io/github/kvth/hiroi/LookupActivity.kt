@@ -10,6 +10,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Insets
 import android.graphics.drawable.GradientDrawable
@@ -85,6 +86,7 @@ class LookupActivity : Activity() {
         window.setDecorFitsSystemWindows(false)
         lookup = DictionaryLookup(this, { appLabel(CaptureStore.sourcePackage) }, { CaptureStore.screenshot }, ::selectedText)
         setContentView(buildContent())
+        overlay.frozen = frozenScreen()
         startScan()
         showHint()
         KnownWords.listeners += onKnownWordsChanged
@@ -96,6 +98,7 @@ class LookupActivity : Activity() {
         super.onNewIntent(intent)
         setIntent(intent)
         overlay.blocks = CaptureStore.blocks
+        overlay.frozen = frozenScreen()
         startScan()
         showHint()
         refreshMarks()
@@ -194,6 +197,7 @@ class LookupActivity : Activity() {
 
         root.setOnApplyWindowInsetsListener { _, insets ->
             systemBars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            overlay.liveBars = insets.getInsets(WindowInsets.Type.systemBars())
             placePanel()
             insets
         }
@@ -500,6 +504,23 @@ class LookupActivity : Activity() {
     }
 
     /**
+     * The screenshot taken when Hiroi was triggered, to show while the overlay is open (unless
+     * that's turned off). Not one of a different screen size (the phone turned since), nor a black
+     * one: apps that forbid screenshots give that, and there the live screen is better.
+     */
+    private fun frozenScreen(): Bitmap? {
+        if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_FREEZE, true)) return null
+        val picture = CaptureStore.screenshot ?: return null
+        val screen = windowManager.currentWindowMetrics.bounds
+        if (picture.width != screen.width() || picture.height != screen.height()) return null
+        val black = (1..9).all { i -> (1..9).all { j ->
+            val pixel = picture.getPixel(picture.width * i / 10, picture.height * j / 10)
+            Color.red(pixel) < 16 && Color.green(pixel) < 16 && Color.blue(pixel) < 16
+        } }
+        return picture.takeUnless { black }
+    }
+
+    /**
      * Reads the screenshot in the background as soon as the overlay opens, on its own thread so
      * lookups don't wait. Japanese lines from images are added as dashed boxes when it's done.
      */
@@ -611,8 +632,15 @@ class LookupActivity : Activity() {
 
     companion object {
         private const val TAG = "HiroiLookup"
-        private const val PREFS = "hiroi"
+        const val PREFS = "hiroi"
+
+        /** Show the screen as it was when Hiroi was triggered, not the live one */
+        const val KEY_FREEZE = "freeze_screen"
         private const val KEY_DICTIONARY = "dictionary_component"
+
+        /** Whether the overlay is open showing the screen frozen as it was, which a new trigger keeps. */
+        fun keepsFrozen(context: Context) = showing && CaptureStore.screenshot != null &&
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_FREEZE, true)
 
         /** True while the overlay is on screen; captures then skip Hiroi's own windows. */
         @Volatile

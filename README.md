@@ -22,6 +22,8 @@ The screenshots are from the emulator (`scripts/emulator.sh`), on Hiroi's exampl
 
 With the keyboard open, Hiroi hides it before it reads the screen. Opening the overlay would close the keyboard anyway, and the app below would then move its text to where the keyboard was, away from the boxes. So Hiroi reads the screen once the app has moved its text, and opens the keyboard again on the same field when the overlay closes.
 
+The screen stays as it was at that moment while the overlay is open: Hiroi shows the screenshot it took then behind the boxes, so a notification or toast that closes itself, a video or an animation doesn't take its text away (only the status and navigation bars stay live). Triggering Hiroi again with the overlay open keeps that moment. It can be turned off in the setup screen; apps that forbid screenshots stay live either way.
+
 When the accessibility service is off, the assistant trigger still works. It then uses the view tree the system gives assistant apps, which covers only the foreground app and has less accurate positions.
 
 ## Setup on the phone

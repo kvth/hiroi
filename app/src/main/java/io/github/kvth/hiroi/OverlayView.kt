@@ -2,8 +2,10 @@ package io.github.kvth.hiroi
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.DashPathEffect
+import android.graphics.Insets
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
@@ -57,6 +59,24 @@ class OverlayView(
             invalidate()
         }
 
+    /**
+     * The screen as it was when Hiroi was triggered, shown instead of the live one so that what
+     * the boxes are about stays (a toast or notification that times out, a video, an animation).
+     * Null shows the live screen.
+     */
+    var frozen: Bitmap? = null
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    /** The system bars, which stay live: the system draws them over the overlay anyway. */
+    var liveBars: Insets = Insets.NONE
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     /** How marks look: a background of [opacity] percent, or an underline. */
     var markStyle = MarkStyle()
         set(value) {
@@ -86,8 +106,14 @@ class OverlayView(
     private val highlightLine = Paint().apply { color = 0xFFFF8F00.toInt() }
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(0x33000000)
         getLocationOnScreen(screenOffset)
+        frozen?.let { picture ->
+            canvas.save()
+            canvas.clipRect(liveBars.left, liveBars.top, width - liveBars.right, height - liveBars.bottom)
+            canvas.drawBitmap(picture, -screenOffset[0].toFloat(), -screenOffset[1].toFloat(), null)
+            canvas.restore()
+        }
+        canvas.drawColor(0x33000000)
         val radius = 4 * dp
         for (block in blocks) {
             rect.set(block.bounds)

@@ -72,6 +72,8 @@
     <string name="audio_no_tts">No Japanese text-to-speech on this phone. Install a voice (e.g. Google\'s speech services) or use another source.</string>
     <string name="audio_menu_title">Audio for %s</string>
     <string name="audio_menu_none">%s (none)</string>
+    <string name="freeze_screen">Freeze the screen while Hiroi is open</string>
+    <string name="freeze_screen_hint">Hiroi shows the screen as it was when you triggered it, so a notification or toast that closes itself, a video or an animation stays where its text was. Apps that forbid screenshots stay live.</string>
     <string name="average_frequencies">Average frequencies</string>
     <string name="average_frequencies_hint">Compress the frequency tags into one \"Average\" tag, the harmonic mean of each list\'s value, as Yomitan\'s option does. Lists of occurrence counts are left out of it.</string>
     <string name="count_kanji">%d kanji</string>

@@ -64,6 +64,11 @@ class HiroiAccessibilityService : AccessibilityService() {
      * keyboard may come back when the overlay closes ([restoreKeyboard]).
      */
     fun capture(then: () -> Unit) {
+        // Triggered again with the overlay open on a frozen screen: it keeps the moment it shows.
+        if (LookupActivity.keepsFrozen(this)) {
+            then()
+            return
+        }
         if (keyboardShowing() && softKeyboardController.setShowMode(SHOW_MODE_HIDDEN)) {
             keyboardHidden = true
             afterKeyboardGone(SystemClock.uptimeMillis()) { captureNow(then) }
