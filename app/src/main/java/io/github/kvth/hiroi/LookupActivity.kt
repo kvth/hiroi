@@ -109,6 +109,8 @@ class LookupActivity : Activity() {
 
     override fun onStop() {
         showing = false
+        // The keyboard Hiroi hid for the capture may show again, for the app it belongs to.
+        HiroiAccessibilityService.instance?.restoreKeyboard()
         super.onStop()
     }
 

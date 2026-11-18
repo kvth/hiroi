@@ -20,6 +20,8 @@ The screenshots are from the emulator (`scripts/emulator.sh`), on Hiroi's exampl
 | **Long-press the power button** | Make Hiroi the *digital assistant app*, then set the power button to open the voice assistant. On many phones this is under Settings → Additional settings → Power button. Gesture navigation can also open the assistant by swiping up from a bottom corner. |
 | **Accessibility button / shortcut** | Once the service is on, Android shows the accessibility button: a floating button with gesture navigation, a nav-bar icon with buttons. You can also set the shortcut to *hold both volume keys*. |
 
+With the keyboard open, Hiroi hides it before it reads the screen. Opening the overlay would close the keyboard anyway, and the app below would then move its text to where the keyboard was, away from the boxes. So Hiroi reads the screen once the app has moved its text, and opens the keyboard again on the same field when the overlay closes.
+
 When the accessibility service is off, the assistant trigger still works. It then uses the view tree the system gives assistant apps, which covers only the foreground app and has less accurate positions.
 
 ## Setup on the phone
