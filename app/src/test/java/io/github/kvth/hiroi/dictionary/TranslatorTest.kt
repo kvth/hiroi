@@ -209,4 +209,32 @@ class TranslatorTest {
         assertEquals("食べる", unfiltered.terms.first().expression)
         assertEquals("食べた", unfiltered.terms.first().source)
     }
+
+    @Test
+    fun readsTheGlossariesOfTheShownResultsOnly() {
+        // Two entries alike but for their glossaries (and rows): both stay, each with its own glossary.
+        val store = object : DictionaryStore {
+            val glossaries = mapOf(1L to """["cat"]""", 2L to """["kitty"]""", 3L to """["to write"]""")
+            val terms = listOf(
+                TermEntry("猫", "ねこ", "", "", 0, "", 0, "", "Lazy", 1, id = 1),
+                TermEntry("猫", "ねこ", "", "", 0, "", 0, "", "Lazy", 1, id = 2),
+                TermEntry("書く", "かく", "", "v5", 0, "", 0, "", "Lazy", 1, id = 3),
+            )
+            val asked = mutableListOf<Long>()
+            override fun findTerms(forms: Collection<String>) = terms.filter { it.expression in forms || it.reading in forms }
+            override fun findTermMeta(expressions: Collection<String>) = emptyList<TermMeta>()
+            override fun findKanji(character: String) = emptyList<KanjiEntry>()
+            override fun withGlossaries(entries: List<TermEntry>) = entries.map { e ->
+                asked += e.id
+                e.copy(glossary = glossaries.getValue(e.id))
+            }
+        }
+        val cat = Translator(store).lookUp("猫", 0)!!.terms.single()
+        assertEquals(listOf("cat", "kitty"), cat.definitions.flatMap { Yomitan.glossaryItems(it.entry.glossary) })
+        // 書く wasn't matched, so its glossary wasn't read
+        assertEquals(listOf(1L, 2L), store.asked)
+        store.asked.clear()
+        assertEquals("猫", Translator(store).lookUp("猫", 0, definitions = false)!!.terms.single().expression)
+        assertTrue(store.asked.isEmpty())
+    }
 }

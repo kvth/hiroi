@@ -1,9 +1,17 @@
 package io.github.kvth.hiroi.dictionary
 
+import io.github.kvth.hiroi.dictionary.BankReader.Companion.int
+import io.github.kvth.hiroi.dictionary.BankReader.Companion.long
+import io.github.kvth.hiroi.dictionary.BankReader.Companion.str
+import io.github.kvth.hiroi.dictionary.BankReader.Companion.text
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** One term bank row. [glossary] is the raw JSON array; [dictionary]/[priority] are filled in by the store. */
+/**
+ * One term bank row. [glossary] is the raw JSON array; [dictionary]/[priority] are filled in by
+ * the store, and [id], the row in its dictionary, which reads the glossary when the store left
+ * it out ("": see [DictionaryStore.withGlossaries]).
+ */
 data class TermEntry(
     val expression: String,
     val reading: String,
@@ -15,6 +23,7 @@ data class TermEntry(
     val termTags: String,
     val dictionary: String = "",
     val priority: Int = 0,
+    val id: Long = 0,
 )
 
 /** One term meta bank row: [mode] is freq, pitch or ipa; [data] is the value wrapped in a JSON array. */
@@ -26,10 +35,14 @@ data class TermMeta(
     val priority: Int = 0,
 )
 
-/** [frequencies]: the kanji's frequencies by dictionary (kanji meta banks), filled in by the translator. */
 /** A tag bank row: what a tag such as "v1" or "★" means, as Yomitan shows and sorts it. */
 data class TagInfo(val name: String, val category: String, val order: Int, val notes: String, val score: Int, val dictionary: String = "")
 
+/**
+ * A kanji bank row. [frequencies]: the kanji's frequencies by dictionary (kanji meta banks),
+ * filled in by the translator. [stats]: its stats as the bank gives them, a JSON object of tag
+ * names (strokes, grade, jlpt…) to values; "{}" if it has none.
+ */
 data class KanjiEntry(
     val character: String,
     val onyomi: String,
@@ -38,6 +51,7 @@ data class KanjiEntry(
     val meanings: List<String>,
     val dictionary: String = "",
     val frequencies: List<Pair<String, Yomitan.Frequency>> = emptyList(),
+    val stats: String = "{}",
 )
 
 /**
@@ -58,59 +72,60 @@ object Yomitan {
 
     val FREQUENCY_MODES = listOf("rank-based", "occurrence-based")
 
+    // Banks are read with BankReader rather than org.json: a term bank's glossaries go straight
+    // into the database as the JSON text they are.
+
     fun parseTermBank(json: String, format: Int): List<TermEntry> {
-        val bank = JSONArray(json)
-        return List(bank.length()) { i ->
-            val row = bank.getJSONArray(i)
-            val expression = row.getString(0)
+        val out = ArrayList<TermEntry>()
+        BankReader(json).forEachRow { row ->
+            val expression = row.text(0)
             val glossary = if (format == 1) {
                 // Version 1 lists the definitions as the remaining array items.
-                JSONArray().also { for (j in 5 until row.length()) it.put(row.get(j)) }
+                (5 until row.size).joinToString(",", "[", "]") { BankReader.json(row[it]) }
             } else {
-                row.getJSONArray(5)
+                (row.getOrNull(5) as? BankReader.Raw)?.json ?: throw IllegalArgumentException("No glossary array: $row")
             }
-            TermEntry(
+            out += TermEntry(
                 expression = expression,
                 reading = row.str(1).ifEmpty { expression },
                 definitionTags = row.str(2),
                 rules = row.str(3),
-                score = row.optInt(4),
-                glossary = glossary.toString(),
-                sequence = if (format == 1) 0 else row.optLong(6),
+                score = row.int(4),
+                glossary = glossary,
+                sequence = if (format == 1) 0 else row.long(6),
                 termTags = if (format == 1) "" else row.str(7),
             )
         }
+        return out
     }
 
     /** tag_bank rows: [name, category, order, notes, score]. */
     fun parseTagBank(json: String): List<TagInfo> {
-        val bank = JSONArray(json)
-        return List(bank.length()) { i ->
-            val row = bank.getJSONArray(i)
-            TagInfo(row.getString(0), row.str(1), row.optInt(2), row.str(3), row.optInt(4))
-        }
+        val out = ArrayList<TagInfo>()
+        BankReader(json).forEachRow { row -> out += TagInfo(row.text(0), row.str(1), row.int(2), row.str(3), row.int(4)) }
+        return out
     }
 
     /** Term and kanji meta banks share a layout: [term or kanji, mode, data]. */
     fun parseTermMetaBank(json: String): List<TermMeta> {
-        val bank = JSONArray(json)
-        return List(bank.length()) { i ->
-            val row = bank.getJSONArray(i)
-            TermMeta(row.getString(0), row.getString(1), JSONArray().put(row.get(2)).toString())
-        }
+        val out = ArrayList<TermMeta>()
+        BankReader(json).forEachRow { row -> out += TermMeta(row.text(0), row.text(1), "[" + BankReader.json(row.getOrNull(2)) + "]") }
+        return out
     }
 
     fun parseKanjiBank(json: String, format: Int): List<KanjiEntry> {
-        val bank = JSONArray(json)
-        return List(bank.length()) { i ->
-            val row = bank.getJSONArray(i)
+        val out = ArrayList<KanjiEntry>()
+        BankReader(json).forEachRow { row ->
             val meanings = if (format == 1) {
-                (4 until row.length()).map { row.getString(it) }
+                (4 until row.size).map { row.str(it) }
             } else {
-                row.optJSONArray(4)?.let { m -> List(m.length()) { m.getString(it) } }.orEmpty()
+                (row.getOrNull(4) as? BankReader.Raw)?.let { JSONArray(it.json) }?.let { m -> List(m.length()) { m.getString(it) } }.orEmpty()
             }
-            KanjiEntry(row.getString(0), row.str(1), row.str(2), row.str(3), meanings)
+            // Version 3 has the stats after the meanings; version 1 none.
+            val stats = if (format == 1) "{}" else (row.getOrNull(5) as? BankReader.Raw)?.json?.takeIf { it.trimStart().startsWith("{") } ?: "{}"
+            out += KanjiEntry(row.text(0), row.str(1), row.str(2), row.str(3), meanings, stats = stats)
         }
+        return out
     }
 
     // ---- Display ------------------------------------------------------------
@@ -241,7 +256,4 @@ object Yomitan {
         val positions = (0 until pitches.length()).mapNotNull { pitches.optJSONObject(it)?.opt("position")?.toString() }
         return positions.takeIf { it.isNotEmpty() }?.joinToString(" ") { "[$it]" }
     }
-
-    // org.json's optString turns JSON null into "null".
-    private fun JSONArray.str(i: Int): String = if (isNull(i)) "" else optString(i)
 }

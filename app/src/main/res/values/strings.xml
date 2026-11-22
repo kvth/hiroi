@@ -15,12 +15,12 @@
     <string name="import_dictionary">Import dictionary (.zip)</string>
     <string name="export_collection">Export collection</string>
     <string name="import_collection">Import collection</string>
-    <string name="collection_hint">A collection is all dictionaries in one file, in the format of Yomitan\'s \"Export dictionary collection\": import Yomitan\'s instead of each dictionary on its own, or Hiroi\'s into Yomitan or onto another phone. Importing adds the dictionaries that aren\'t here yet, after these. ▲▼ set the order: dictionaries higher up come first in the results, as in Yomitan.</string>
+    <string name="collection_hint">A collection is all dictionaries in one file, ready to use: importing one onto another phone (or this one again) takes no parsing, so it\'s much faster than importing each dictionary. It adds the dictionaries that aren\'t here yet, after these, on or off as they were. ▲▼ set the order: dictionaries higher up come first in the results, as in Yomitan.</string>
     <string name="collection_exporting">Exporting…</string>
-    <string name="collection_export_progress">Exporting: %s rows</string>
+    <string name="collection_export_progress">Exporting: %1$d / %2$d MB</string>
     <string name="collection_exported">Exported %d dictionaries.</string>
     <string name="collection_importing">Reading the collection…</string>
-    <string name="collection_import_progress">Importing: %s rows</string>
+    <string name="collection_import_progress">Importing: %d MB</string>
     <string name="collection_imported">Imported %1$d dictionaries: %2$s</string>
     <string name="collection_skipped">Already here, left as they are: %s</string>
     <string name="collection_failed">Failed: %s</string>

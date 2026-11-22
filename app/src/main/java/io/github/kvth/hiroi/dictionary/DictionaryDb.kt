@@ -5,12 +5,22 @@ import android.content.Context
 import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import android.graphics.BitmapFactory
 import io.github.kvth.hiroi.settings.SettingsBackup
 import java.io.File
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.UUID
+import java.util.concurrent.Callable
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 /** [frequencies]: how many frequency values it has (terms and kanji); [frequencyMode] as its index.json says, if it does. */
 data class DictionaryInfo(
@@ -26,84 +36,94 @@ data class DictionaryInfo(
     val images: Int = 0,
 )
 
-/** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
+/**
+ * The imported Yomitan dictionaries: each in a file of its own ([DictionaryFile]), and their list
+ * here, in SQLite too, with their order (their priority: the first comes first) and switches.
+ * The list is kept in memory, so a lookup only opens the files of the dictionaries it needs.
+ */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 8), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 9), DictionaryStore {
 
-    /** The dictionaries' images, a folder per dictionary; the media table says what they are. */
-    private val mediaDir = File(context.filesDir, "dictionary-media")
+    /** The dictionaries' files */
+    private val folder = File(context.filesDir, "dictionaries")
+
+    /** Where images were before dictionaries had files of their own */
+    private val legacyMediaDir = File(context.filesDir, "dictionary-media")
 
     init {
-        setWriteAheadLoggingEnabled(true) // lookups keep working during an import
+        setWriteAheadLoggingEnabled(true)
     }
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
                 "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
-                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1, images INTEGER DEFAULT 0)",
+                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1, images INTEGER DEFAULT 0, " +
+                "file TEXT NOT NULL)",
         )
-        db.execSQL(
-            "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
-                "score INTEGER, glossary TEXT, sequence INTEGER, term_tags TEXT, expression_reverse TEXT, reading_reverse TEXT)",
-        )
-        db.execSQL("CREATE INDEX terms_expression ON terms (expression)")
-        db.execSQL("CREATE INDEX terms_reading ON terms (reading)")
-        db.execSQL("CREATE TABLE term_meta (dict INTEGER, expression TEXT, mode TEXT, data TEXT)")
-        db.execSQL("CREATE INDEX term_meta_expression ON term_meta (expression)")
-        db.execSQL("CREATE TABLE kanji (dict INTEGER, character TEXT, onyomi TEXT, kunyomi TEXT, tags TEXT, meanings TEXT)")
-        db.execSQL("CREATE INDEX kanji_character ON kanji (character)")
-        createKanjiMeta(db)
-        createTags(db)
-        createMedia(db)
     }
 
-    private fun createMedia(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE media (dict INTEGER, path TEXT, media_type TEXT, width INTEGER, height INTEGER, file TEXT)")
-        db.execSQL("CREATE INDEX media_path ON media (dict, path)")
-    }
-
-    private fun createTags(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE tags (dict INTEGER, name TEXT, category TEXT, ord INTEGER, notes TEXT, score INTEGER)")
-        db.execSQL("CREATE INDEX tags_name ON tags (name)")
-    }
-
-    private fun createKanjiMeta(db: SQLiteDatabase) {
-        db.execSQL("CREATE TABLE kanji_meta (dict INTEGER, character TEXT, mode TEXT, data TEXT)")
-        db.execSQL("CREATE INDEX kanji_meta_character ON kanji_meta (character)")
-    }
-
+    /**
+     * Up to 8, the dictionaries' rows were in tables here that they shared; they aren't carried
+     * over to files of their own: the dictionaries need importing again.
+     */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // 2: the dictionary's styles.css, which Yomitan applies to its definitions
-        if (oldVersion < 2) db.execSQL("ALTER TABLE dictionaries ADD COLUMN styles TEXT")
-        // 3: frequency lists: their mode (rank or occurrence) and size, and kanji frequencies
-        if (oldVersion < 3) {
-            db.execSQL("ALTER TABLE dictionaries ADD COLUMN frequency_mode TEXT")
-            db.execSQL("ALTER TABLE dictionaries ADD COLUMN frequencies INTEGER DEFAULT 0")
-            db.execSQL("UPDATE dictionaries SET frequencies = (SELECT COUNT(*) FROM term_meta m WHERE m.dict = dictionaries.id AND m.mode = 'freq')")
-            createKanjiMeta(db)
-        }
-        // 4: tag banks, for Anki cards rendered with Yomitan's templates (dictionaries need importing again to get theirs)
-        if (oldVersion < 4) createTags(db)
-        // 5: the order of the dictionaries (their priority), and what their index.json says, for exporting them
-        if (oldVersion < 5) {
-            db.execSQL("ALTER TABLE dictionaries ADD COLUMN position INTEGER DEFAULT 0")
-            db.execSQL("ALTER TABLE dictionaries ADD COLUMN summary TEXT")
-            db.execSQL("UPDATE dictionaries SET position = id")
-        }
-        // 6: dictionaries can be turned off, as in Yomitan
-        if (oldVersion < 6) db.execSQL("ALTER TABLE dictionaries ADD COLUMN enabled INTEGER DEFAULT 1")
-        // 7: dictionary images (dictionaries need importing again to get theirs)
-        if (oldVersion < 7) {
-            db.execSQL("ALTER TABLE dictionaries ADD COLUMN images INTEGER DEFAULT 0")
-            createMedia(db)
-        }
-        // 8: expression and reading reversed, for suffix search (filled on its first use: see ensureReverseIndex)
-        if (oldVersion < 8) {
-            db.execSQL("ALTER TABLE terms ADD COLUMN expression_reverse TEXT")
-            db.execSQL("ALTER TABLE terms ADD COLUMN reading_reverse TEXT")
+        if (oldVersion < 9) {
+            for (table in listOf("dictionaries", "terms", "term_meta", "kanji", "kanji_meta", "tags", "media")) db.execSQL("DROP TABLE IF EXISTS $table")
+            onCreate(db)
+            legacyMediaDir.deleteRecursively()
         }
     }
+
+    // ---- The list ------------------------------------------------------------------------------
+
+    /** A dictionary in the list; [file] is its file's name in [folder]. */
+    private class Entry(val info: DictionaryInfo, val position: Int, val file: String)
+
+    @Volatile
+    private var cached: List<Entry>? = null
+
+    /** The dictionaries in their order */
+    private fun entries(): List<Entry> = cached ?: synchronized(this) {
+        cached ?: load().also { cached = it }
+    }
+
+    /** Whether files no dictionary has (left by an import that didn't finish) were deleted, as they are on first use */
+    private var tidied = false
+
+    private fun load(): List<Entry> {
+        val entries = readableDatabase.rawQuery(
+            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled, images, position, file FROM dictionaries ORDER BY position, id", null,
+        ).use { c ->
+            List(c.count) {
+                c.moveToNext()
+                val info = DictionaryInfo(
+                    c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
+                    c.getInt(6), c.getString(7), c.getInt(8) != 0, c.getInt(9),
+                )
+                Entry(info, c.getInt(10), c.getString(11))
+            }
+        }
+        if (!tidied) {
+            tidied = true
+            val known = entries.mapTo(HashSet()) { it.file }
+            // With their journals: "x.db-journal", "x.db.importing"
+            folder.listFiles()?.filter { it.name.substringBefore(".db") + ".db" !in known }?.forEach { it.delete() }
+        }
+        return entries
+    }
+
+    /** After the list changed */
+    private fun changed() {
+        cached = null
+    }
+
+    fun dictionaries(): List<DictionaryInfo> = entries().map { it.info }
+
+    fun hasDictionaries(): Boolean = entries().isNotEmpty()
+
+    /** The dictionaries lookups use, in their order: those turned on. */
+    fun enabledDictionaries(): List<DictionaryInfo> = dictionaries().filter { it.enabled }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
     fun styles(): Map<String, String> =
@@ -111,48 +131,11 @@ class DictionaryDb private constructor(context: Context) :
             buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) }
         }
 
-    fun dictionaries(): List<DictionaryInfo> =
-        readableDatabase.rawQuery(
-            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled, images FROM dictionaries ORDER BY position, id", null,
-        ).use { c ->
-            List(c.count) {
-                c.moveToNext()
-                DictionaryInfo(
-                    c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
-                    c.getInt(6), c.getString(7), c.getInt(8) != 0, c.getInt(9),
-                )
-            }
+    /** Dictionary [id]'s index.json as stored (with its update links), if it was stored. */
+    fun summary(id: Long): String? =
+        readableDatabase.rawQuery("SELECT summary FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
         }
-
-    /**
-     * Whether lower values mean more common words in frequency dictionary [title] (ranks), as
-     * Yomitan decides it: from the dictionary's frequencyMode, else by comparing its values for
-     * common and rare words. Null if it can't tell.
-     */
-    fun frequencyAscending(title: String): Boolean? {
-        val info = dictionaries().firstOrNull { it.title == title } ?: return null
-        when (info.frequencyMode) {
-            "rank-based" -> return true
-            "occurrence-based" -> return false
-        }
-        val values = findTermMeta(MORE_COMMON + LESS_COMMON)
-            .filter { it.dictionary == title }
-            .mapNotNull { meta -> Yomitan.frequency(meta, null)?.value?.let { meta.expression to it } }
-            .groupBy({ it.first }, { it.second })
-        var result = 0
-        for (common in MORE_COMMON.mapNotNull { values[it] }) {
-            for (rare in LESS_COMMON.mapNotNull { values[it] }) {
-                result += Integer.signum(common.max() - rare.min()) + Integer.signum(common.min() - rare.max())
-            }
-        }
-        return if (result > 0) false else if (result < 0) true else null
-    }
-
-    fun hasDictionaries(): Boolean =
-        readableDatabase.rawQuery("SELECT 1 FROM dictionaries LIMIT 1", null).use { it.moveToFirst() }
-
-    /** The dictionaries lookups use, in their order: those turned on. */
-    fun enabledDictionaries(): List<DictionaryInfo> = dictionaries().filter { it.enabled }
 
     /**
      * Turns dictionary [id] on or off, as Yomitan's switch per dictionary: one that's off stays
@@ -160,250 +143,8 @@ class DictionaryDb private constructor(context: Context) :
      */
     fun setEnabled(id: Long, enabled: Boolean) {
         writableDatabase.update("dictionaries", ContentValues().apply { put("enabled", if (enabled) 1 else 0) }, "id = ?", arrayOf(id.toString()))
+        changed()
     }
-
-    /** Imports a Yomitan dictionary zip; [onProgress] gets short status lines. A failed import leaves nothing behind. */
-    fun import(zip: File, onProgress: (String) -> Unit): DictionaryInfo {
-        ZipFile(zip).use { file ->
-            val indexEntry = file.getEntry("index.json")
-                ?: throw IllegalArgumentException("Not a Yomitan dictionary (no index.json)")
-            val indexJson = file.getInputStream(indexEntry).reader().readText()
-            val index = Yomitan.parseIndex(indexJson)
-            val db = writableDatabase
-            require(DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM dictionaries WHERE title = ?", arrayOf(index.title)) == 0L) {
-                "\"${index.title}\" is already imported"
-            }
-            val id = db.insertOrThrow(
-                "dictionaries", null,
-                ContentValues().apply {
-                    put("title", index.title)
-                    put("revision", index.revision)
-                    put("frequency_mode", index.frequencyMode)
-                    put("position", nextPosition(db))
-                    put("summary", YomitanCollection.summaryFromIndex(indexJson))
-                    file.getEntry("styles.css")?.let { put("styles", file.getInputStream(it).reader().readText()) }
-                },
-            )
-            try {
-                val banks = file.entries().asSequence()
-                    .mapNotNull { entry -> BANK.matchEntire(entry.name)?.let { entry to it } }
-                    .sortedWith(compareBy({ it.second.groupValues[1] }, { it.second.groupValues[2].toInt() }))
-                    .toList()
-                // Images first, so the definitions can get their sizes as Yomitan stores them.
-                val sizes = HashMap<String, Pair<Int, Int>>()
-                for (entry in file.entries().asSequence().filter { !it.isDirectory && DictionaryImages.mediaType(it.name) != null }.toList()) {
-                    val bytes = file.getInputStream(entry).use { it.readBytes() }
-                    sizes[entry.name] = addMedia(db, id, entry.name, bytes)
-                }
-                if (sizes.isNotEmpty()) onProgress("${index.title}: ${sizes.size} images")
-                var terms = 0
-                var meta = 0
-                var kanji = 0
-                var frequencies = 0
-                for ((n, bank) in banks.withIndex()) {
-                    val (entry, match) = bank
-                    onProgress("${index.title}: ${n + 1} / ${banks.size}")
-                    val json = file.getInputStream(entry).reader().readText()
-                    when (match.groupValues[1]) {
-                        "term_bank" -> terms += insertTerms(
-                            db, id,
-                            Yomitan.parseTermBank(json, index.format).let { rows ->
-                                if (sizes.isEmpty()) rows else rows.map { it.copy(glossary = DictionaryImages.prepare(it.glossary, sizes::get)) }
-                            },
-                        )
-                        "term_meta_bank" -> Yomitan.parseTermMetaBank(json).let { rows ->
-                            meta += insertMeta(db, id, rows, "term_meta")
-                            frequencies += rows.count { it.mode == "freq" }
-                        }
-                        "tag_bank" -> insertTags(db, id, Yomitan.parseTagBank(json))
-                        "kanji_meta_bank" -> Yomitan.parseTermMetaBank(json).let { rows ->
-                            meta += insertMeta(db, id, rows, "kanji_meta")
-                            frequencies += rows.count { it.mode == "freq" }
-                        }
-                        "kanji_bank" -> kanji += insertKanji(db, id, Yomitan.parseKanjiBank(json, index.format))
-                    }
-                }
-                db.update(
-                    "dictionaries",
-                    ContentValues().apply {
-                        put("terms", terms)
-                        put("meta", meta)
-                        put("kanji", kanji)
-                        put("frequencies", frequencies)
-                        put("images", sizes.size)
-                    },
-                    "id = ?", arrayOf(id.toString()),
-                )
-                return DictionaryInfo(id, index.title, index.revision, terms, meta, kanji, frequencies, index.frequencyMode)
-            } catch (e: Exception) {
-                delete(id)
-                throw e
-            }
-        }
-    }
-
-    /** What importing a collection did: the dictionaries it added, and those it left out because they were already there. */
-    class CollectionImport(val added: List<String>, val skipped: List<String>)
-
-    /**
-     * Writes every dictionary, in their order, as a Yomitan dictionary collection
-     * ([YomitanCollection]), which Yomitan can import too.
-     */
-    fun exportCollection(out: OutputStream, onProgress: (String) -> Unit) {
-        val db = readableDatabase
-        val dictionaries = dictionaries()
-        fun count(table: String) = DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM $table", null).toInt()
-        fun byDict(sql: String): Map<Long, Int> = db.rawQuery(sql, null).use { c -> buildMap { while (c.moveToNext()) put(c.getLong(0), c.getInt(1)) } }
-        fun byDictMode(table: String): Map<Long, Map<String, Int>> = db.rawQuery("SELECT dict, mode, COUNT(*) FROM $table GROUP BY dict, mode", null).use { c ->
-            val out = HashMap<Long, HashMap<String, Int>>()
-            while (c.moveToNext()) out.getOrPut(c.getLong(0)) { HashMap() }[c.getString(1)] = c.getInt(2)
-            out
-        }
-        val terms = byDict("SELECT dict, COUNT(*) FROM terms GROUP BY dict")
-        val kanji = byDict("SELECT dict, COUNT(*) FROM kanji GROUP BY dict")
-        val tags = byDict("SELECT dict, COUNT(*) FROM tags GROUP BY dict")
-        val termMeta = byDictMode("term_meta")
-        val kanjiMeta = byDictMode("kanji_meta")
-        val stored = db.rawQuery("SELECT id, summary, styles FROM dictionaries", null).use { c ->
-            buildMap { while (c.moveToNext()) put(c.getLong(0), c.getString(1) to c.getString(2)) }
-        }
-        val total = listOf("terms", "term_meta", "kanji", "kanji_meta", "tags", "media").sumOf(::count)
-        var written = 0
-        fun progress() {
-            if (++written % 10_000 == 0) onProgress("$written / $total")
-        }
-        YomitanCollection.Writer(out.bufferedWriter()).use { writer ->
-            writer.begin(
-                mapOf(
-                    "dictionaries" to dictionaries.size, "kanji" to count("kanji"), "kanjiMeta" to count("kanji_meta"), "media" to count("media"),
-                    "tagMeta" to count("tags"), "termMeta" to count("term_meta"), "terms" to count("terms"),
-                ),
-            )
-            for (table in YomitanCollection.TABLES.keys) writer.table(table) {
-                when (table) {
-                    "dictionaries" -> for (info in dictionaries) {
-                        val counts = YomitanCollection.Counts(
-                            terms[info.id] ?: 0, termMeta[info.id].orEmpty(), kanji[info.id] ?: 0, kanjiMeta[info.id].orEmpty(), tags[info.id] ?: 0,
-                        )
-                        val (summary, styles) = stored[info.id] ?: (null to null)
-                        writer.dictionary(YomitanCollection.summary(summary, info, styles, counts, System.currentTimeMillis()))
-                    }
-                    "terms" -> rows(
-                        "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, d.title " +
-                            "FROM terms t JOIN dictionaries d ON d.id = t.dict",
-                    ) { c ->
-                        writer.term(
-                            TermEntry(
-                                c.getString(0), c.getString(1), c.getString(2).orEmpty(), c.getString(3).orEmpty(), c.getInt(4),
-                                c.getString(5), c.getLong(6), c.getString(7).orEmpty(), c.getString(8),
-                            ),
-                        )
-                        progress()
-                    }
-                    "termMeta" -> rows("SELECT m.expression, m.mode, m.data, d.title FROM term_meta m JOIN dictionaries d ON d.id = m.dict") { c ->
-                        writer.meta(TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3)), "expression")
-                        progress()
-                    }
-                    "kanjiMeta" -> rows("SELECT m.character, m.mode, m.data, d.title FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict") { c ->
-                        writer.meta(TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3)), "character")
-                        progress()
-                    }
-                    "kanji" -> rows("SELECT k.character, k.onyomi, k.kunyomi, k.tags, k.meanings, d.title FROM kanji k JOIN dictionaries d ON d.id = k.dict") { c ->
-                        writer.kanji(
-                            KanjiEntry(
-                                c.getString(0), c.getString(1).orEmpty(), c.getString(2).orEmpty(), c.getString(3).orEmpty(),
-                                c.getString(4).orEmpty().split('\n').filter { it.isNotEmpty() }, c.getString(5),
-                            ),
-                        )
-                        progress()
-                    }
-                    "media" -> rows("SELECT m.path, m.media_type, m.width, m.height, m.file, m.dict, d.title FROM media m JOIN dictionaries d ON d.id = m.dict") { c ->
-                        val file = File(File(mediaDir, c.getLong(5).toString()), c.getString(4).orEmpty())
-                        if (file.isFile) writer.media(c.getString(6), DictionaryMedia(c.getString(0), c.getString(1), c.getInt(2), c.getInt(3)) { file.readBytes() }, file.readBytes())
-                        progress()
-                    }
-                    "tagMeta" -> rows("SELECT t.name, t.category, t.ord, t.notes, t.score, d.title FROM tags t JOIN dictionaries d ON d.id = t.dict") { c ->
-                        writer.tag(TagInfo(c.getString(0), c.getString(1).orEmpty(), c.getInt(2), c.getString(3).orEmpty(), c.getInt(4), c.getString(5)))
-                        progress()
-                    }
-                }
-            }
-            writer.end()
-        }
-    }
-
-    private inline fun rows(sql: String, each: (android.database.Cursor) -> Unit) {
-        readableDatabase.rawQuery(sql, null).use { c -> while (c.moveToNext()) each(c) }
-    }
-
-    /**
-     * Adds the dictionaries of a Yomitan dictionary collection (Yomitan's export, or Hiroi's),
-     * after the ones already here; those already imported (by title) are left as they are. A
-     * failed import leaves nothing behind.
-     */
-    fun importCollection(input: InputStream, onProgress: (String) -> Unit): CollectionImport {
-        val db = writableDatabase
-        val existing = dictionaries().mapTo(HashSet()) { it.title }
-        val ids = LinkedHashMap<String, Long>()
-        val skipped = LinkedHashSet<String>()
-        /** The dictionary [title] is imported into; null if it was already there. */
-        fun dict(title: String): Long? {
-            if (title in existing) {
-                skipped += title
-                return null
-            }
-            return ids.getOrPut(title) {
-                db.insertOrThrow("dictionaries", null, ContentValues().apply {
-                    put("title", title)
-                    put("position", nextPosition(db))
-                })
-            }
-        }
-        fun <T> insert(rows: List<T>, title: (T) -> String, add: (Long, List<T>) -> Unit) {
-            for ((name, group) in rows.groupBy(title)) dict(name)?.let { add(it, group) }
-        }
-        try {
-            YomitanCollection.read(input.bufferedReader(), object : YomitanCollection.Sink {
-                override fun dictionary(summary: org.json.JSONObject) {
-                    val id = dict(summary.optString("title")) ?: return
-                    db.update("dictionaries", ContentValues().apply {
-                        put("revision", summary.optString("revision"))
-                        put("frequency_mode", summary.optString("frequencyMode").takeIf { it in Yomitan.FREQUENCY_MODES })
-                        put("styles", summary.optString("styles").takeIf { it.isNotEmpty() })
-                        put("summary", summary.toString())
-                    }, "id = ?", arrayOf(id.toString()))
-                }
-                override fun terms(rows: List<TermEntry>) = insert(rows, { it.dictionary }) { id, group -> insertTerms(db, id, group) }
-                override fun termMeta(rows: List<TermMeta>) = insert(rows, { it.dictionary }) { id, group -> insertMeta(db, id, group, "term_meta") }
-                override fun kanji(rows: List<KanjiEntry>) = insert(rows, { it.dictionary }) { id, group -> insertKanji(db, id, group) }
-                override fun kanjiMeta(rows: List<TermMeta>) = insert(rows, { it.dictionary }) { id, group -> insertMeta(db, id, group, "kanji_meta") }
-                override fun tags(rows: List<TagInfo>) = insert(rows, { it.dictionary }) { id, group -> insertTags(db, id, group) }
-                override fun media(rows: List<YomitanCollection.MediaRow>) = insert(rows, { it.dictionary }) { id, group ->
-                    for (m in group) addMedia(db, id, m.path, m.content, m.mediaType.ifEmpty { null }, (m.width to m.height).takeIf { m.width > 0 && m.height > 0 })
-                }
-            }) { read -> onProgress("$read") }
-            for (id in ids.values) updateCounts(db, id)
-        } catch (e: Exception) {
-            ids.values.forEach(::delete)
-            throw e
-        }
-        return CollectionImport(ids.keys.toList(), skipped.toList())
-    }
-
-    /** The counts shown in the dictionary list, from the rows themselves. */
-    private fun updateCounts(db: SQLiteDatabase, id: Long) {
-        fun count(sql: String) = DatabaseUtils.longForQuery(db, sql, arrayOf(id.toString()))
-        db.update("dictionaries", ContentValues().apply {
-            put("terms", count("SELECT COUNT(*) FROM terms WHERE dict = ?"))
-            put("meta", count("SELECT COUNT(*) FROM term_meta WHERE dict = ?") + count("SELECT COUNT(*) FROM kanji_meta WHERE dict = ?"))
-            put("kanji", count("SELECT COUNT(*) FROM kanji WHERE dict = ?"))
-            put("images", count("SELECT COUNT(*) FROM media WHERE dict = ?"))
-            put("frequencies", count("SELECT COUNT(*) FROM term_meta WHERE dict = ? AND mode = 'freq'") + count("SELECT COUNT(*) FROM kanji_meta WHERE dict = ? AND mode = 'freq'"))
-        }, "id = ?", arrayOf(id.toString()))
-    }
-
-    private fun nextPosition(db: SQLiteDatabase): Long =
-        DatabaseUtils.longForQuery(db, "SELECT COALESCE(MAX(position), 0) + 1 FROM dictionaries", null)
 
     /**
      * Moves dictionary [id] up ([by] < 0) or down in the order, which is their priority as in
@@ -415,11 +156,17 @@ class DictionaryDb private constructor(context: Context) :
         val to = from + by
         if (from < 0 || to !in order.indices) return
         order.add(to, order.removeAt(from))
-        inTransaction(writableDatabase) {
+        setOrder(order)
+    }
+
+    private fun setOrder(order: List<Long>) {
+        val db = writableDatabase
+        DictionaryFile.inTransaction(db) {
             for ((i, dict) in order.withIndex()) {
-                writableDatabase.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
+                db.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
             }
         }
+        changed()
     }
 
     /**
@@ -431,20 +178,272 @@ class DictionaryDb private constructor(context: Context) :
         val byTitle = installed.associateBy { it.title }
         val listed = states.mapNotNull { state -> byTitle[state.title]?.let { it to state.enabled } }
         val order = listed.map { it.first.id }.distinct() + installed.map { it.id }.filter { id -> listed.none { it.first.id == id } }
-        inTransaction(writableDatabase) {
-            for ((i, dict) in order.withIndex()) {
-                writableDatabase.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
-            }
-            for ((info, enabled) in listed) setEnabled(info.id, enabled)
-        }
+        setOrder(order)
+        for ((info, enabled) in listed) setEnabled(info.id, enabled)
         return states.map { it.title }.filter { it !in byTitle }
     }
 
-    /** Dictionary [id]'s index.json as stored (with its update links), if it was stored. */
-    fun summary(id: Long): String? =
-        readableDatabase.rawQuery("SELECT summary FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
+    /** Adds the dictionary in file [name] (in [folder]) to the end of the list, with what the file says about it. */
+    private fun register(facts: DictionaryFacts, name: String, enabled: Boolean = true): DictionaryInfo {
+        val db = writableDatabase
+        val id = db.insertOrThrow("dictionaries", null, ContentValues().apply {
+            put("title", facts.title)
+            put("revision", facts.revision)
+            put("frequency_mode", facts.frequencyMode)
+            put("position", DatabaseUtils.longForQuery(db, "SELECT COALESCE(MAX(position), 0) + 1 FROM dictionaries", null))
+            put("summary", facts.index)
+            put("styles", facts.styles)
+            put("enabled", if (enabled) 1 else 0)
+            put("file", name)
+            putCounts(facts)
+        })
+        changed()
+        return DictionaryInfo(id, facts.title, facts.revision, facts.terms, facts.meta, facts.kanji, facts.frequencies, facts.frequencyMode, enabled, facts.images)
+    }
+
+    private fun ContentValues.putCounts(facts: DictionaryFacts) {
+        put("terms", facts.terms)
+        put("meta", facts.meta)
+        put("kanji", facts.kanji)
+        put("frequencies", facts.frequencies)
+        put("images", facts.images)
+    }
+
+    /** A name for a new dictionary file; while it's written, it has ".importing" after it. */
+    private fun newFile(): String {
+        folder.mkdirs()
+        return UUID.randomUUID().toString() + ".db"
+    }
+
+    private fun writing(name: String) = File(folder, "$name.importing")
+
+    private fun finishWriting(name: String) {
+        if (!writing(name).renameTo(File(folder, name))) throw IOException("Couldn't move $name into place")
+    }
+
+    // ---- Lookups -----------------------------------------------------------------------------
+
+    /** The dictionary files opened so far, by name; they stay open. */
+    private val files = ConcurrentHashMap<String, DictionaryFile>()
+
+    private fun file(entry: Entry): DictionaryFile = files.computeIfAbsent(entry.file) { DictionaryFile.open(File(folder, it)) }
+
+    /** The dictionaries lookups search: those turned on */
+    private fun searchable(): List<Entry> = entries().filter { it.info.enabled }
+
+    private fun byTitle(title: String): Entry? = entries().firstOrNull { it.info.title == title }
+
+    /**
+     * Runs [query] on each of [entries] and gives their rows in the dictionaries' order. A
+     * dictionary removed meanwhile (its file closed) gives none. One after the other: each takes
+     * well under a millisecond, less than handing it to another thread.
+     */
+    private fun <T> each(entries: List<Entry>, query: (Entry, DictionaryFile) -> List<T>): List<T> =
+        entries.flatMap { entry ->
+            try {
+                query(entry, file(entry))
+            } catch (e: IllegalStateException) {
+                emptyList()
+            }
         }
+
+    private fun <T> Future<T>.result(): T = try {
+        get()
+    } catch (e: ExecutionException) {
+        throw e.cause ?: e
+    }
+
+    override fun findTerms(forms: Collection<String>): List<TermEntry> {
+        if (forms.isEmpty()) return emptyList()
+        return each(searchable().filter { it.info.terms > 0 }) { e, f -> f.findTerms(forms, e.info.title, e.position) }
+    }
+
+    override fun withGlossaries(entries: List<TermEntry>): List<TermEntry> {
+        val missing = entries.filter { it.glossary.isEmpty() }
+        if (missing.isEmpty()) return entries
+        val loaded = HashMap<Pair<String, Long>, String>()
+        for ((title, rows) in missing.groupBy { it.dictionary }) {
+            val entry = byTitle(title) ?: continue
+            val glossaries = try {
+                file(entry).glossaries(rows.map { it.id })
+            } catch (e: IllegalStateException) {
+                continue
+            }
+            for ((id, glossary) in glossaries) loaded[title to id] = glossary
+        }
+        // One whose dictionary was removed meanwhile shows no definitions.
+        return entries.map { e -> if (e.glossary.isNotEmpty()) e else e.copy(glossary = loaded[e.dictionary to e.id] ?: "[]") }
+    }
+
+    override fun findTermsBySequence(dictionary: String, sequences: Collection<Long>): List<TermEntry> {
+        if (sequences.isEmpty()) return emptyList()
+        val entry = byTitle(dictionary) ?: return emptyList()
+        return each(listOf(entry)) { e, f -> f.findTermsBySequence(sequences, e.info.title, e.position) }
+    }
+
+    /** Suffix search's keys are made on its first use, in each dictionary ([DictionaryFile.buildReverseKeys]). */
+    override fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int): List<TermEntry> {
+        if (affix.isEmpty()) return emptyList()
+        val entries = searchable().filter { it.info.terms > 0 }
+        if (suffix) synchronized(writing) { for (entry in entries) file(entry).buildReverseKeys() }
+        return each(entries) { e, f -> f.findTermsByAffix(affix, suffix, limit, e.info.title, e.position) }
+            .sortedBy { it.second }.take(limit).map { it.first }
+            .sortedBy { it.expression.length }
+    }
+
+    /** Whether suffix search is ready; if not, the first one takes a while on big dictionaries. */
+    fun suffixSearchReady(): Boolean = searchable().filter { it.info.terms > 0 }.all { file(it).hasReverseKeys() }
+
+    override fun findTermMeta(expressions: Collection<String>): List<TermMeta> {
+        if (expressions.isEmpty()) return emptyList()
+        return each(searchable().filter { it.info.meta > 0 }) { e, f -> f.findTermMeta(expressions, e.info.title, e.position) }
+    }
+
+    override fun findKanji(character: String): List<KanjiEntry> =
+        each(searchable().filter { it.info.kanji > 0 }) { e, f -> f.findKanji(character, e.info.title) }
+
+    override fun findKanjiMeta(character: String): List<TermMeta> =
+        each(searchable().filter { it.info.meta > 0 }) { e, f -> f.findKanjiMeta(character, e.info.title, e.position) }
+
+    override fun findTags(dictionary: String, names: Collection<String>): List<TagInfo> {
+        val entry = byTitle(dictionary) ?: return emptyList()
+        return each(listOf(entry)) { e, f -> f.findTags(names, e.info.title) }
+    }
+
+    override fun findMedia(dictionary: String, path: String): DictionaryMedia? {
+        val entry = byTitle(dictionary) ?: return null
+        return try {
+            file(entry).findMedia(path)
+        } catch (e: IllegalStateException) {
+            null
+        }
+    }
+
+    /**
+     * Whether lower values mean more common words in frequency dictionary [title] (ranks), as
+     * Yomitan decides it: from the dictionary's frequencyMode, else by comparing its values for
+     * common and rare words. Null if it can't tell.
+     */
+    fun frequencyAscending(title: String): Boolean? {
+        val entry = entries().firstOrNull { it.info.title == title } ?: return null
+        when (entry.info.frequencyMode) {
+            "rank-based" -> return true
+            "occurrence-based" -> return false
+        }
+        val values = file(entry).findTermMeta(MORE_COMMON + LESS_COMMON, title, 0)
+            .mapNotNull { meta -> Yomitan.frequency(meta, null)?.value?.let { meta.expression to it } }
+            .groupBy({ it.first }, { it.second })
+        var result = 0
+        for (common in MORE_COMMON.mapNotNull { values[it] }) {
+            for (rare in LESS_COMMON.mapNotNull { values[it] }) {
+                result += Integer.signum(common.max() - rare.min()) + Integer.signum(common.min() - rare.max())
+            }
+        }
+        return if (result > 0) false else if (result < 0) true else null
+    }
+
+    // ---- Importing -----------------------------------------------------------------------------
+
+    /** Held while a dictionary file changes after its import (suffix search's keys), so it isn't exported meanwhile */
+    private val writing = Any()
+
+    /**
+     * Imports a Yomitan dictionary zip into a file of its own; [onProgress] gets short status
+     * lines. A failed import leaves nothing behind. The banks are parsed on several threads while
+     * this one writes them, in their order.
+     */
+    fun import(zip: File, onProgress: (String) -> Unit): DictionaryInfo {
+        ZipFile(zip).use { file ->
+            val indexEntry = file.getEntry("index.json")
+                ?: throw IllegalArgumentException("Not a Yomitan dictionary (no index.json)")
+            val indexJson = file.getInputStream(indexEntry).use { String(it.readBytes(), Charsets.UTF_8) }
+            val index = Yomitan.parseIndex(indexJson)
+            require(entries().none { it.info.title == index.title }) { "\"${index.title}\" is already imported" }
+            val styles = file.getEntry("styles.css")?.let { entry -> file.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) } }
+            val banks = file.entries().asSequence()
+                .mapNotNull { entry -> BANK.matchEntire(entry.name)?.let { entry to it } }
+                .sortedWith(compareBy({ it.second.groupValues[1] }, { it.second.groupValues[2].toInt() }))
+                .map { (entry, match) -> entry to match.groupValues[1] }
+                .toList()
+            // Once suffix search was used, imports make its keys too.
+            val reverseKeys = searchable().any { runCatching { file(it).hasReverseKeys() }.getOrDefault(false) }
+            val name = newFile()
+            val facts = DictionaryFile.Writer(writing(name)).use { writer ->
+                // Images first, so the definitions can get their sizes as Yomitan stores them.
+                val sizes = HashMap<String, Pair<Int, Int>>()
+                for (entry in file.entries().asSequence().filter { !it.isDirectory && DictionaryImages.mediaType(it.name) != null }.toList()) {
+                    val bytes = file.getInputStream(entry).use { it.readBytes() }
+                    sizes[entry.name] = writer.media(entry.name, bytes)
+                }
+                if (sizes.isNotEmpty()) onProgress("${index.title}: ${sizes.size} images")
+                val parsers = Executors.newFixedThreadPool(PARSE_THREADS)
+                try {
+                    // A few banks ahead of the writer, as many as the memory allows: a bank's text
+                    // and rows take a few times its size, and some are tens of MB.
+                    val budget = Runtime.getRuntime().maxMemory() / 3
+                    val pending = ArrayDeque<Pair<Long, Future<(DictionaryFile.Writer) -> Unit>>>()
+                    var next = 0
+                    var parsing = 0L
+                    fun parseMore() {
+                        while (next < banks.size && pending.size < PARSE_THREADS * 2) {
+                            val (entry, kind) = banks[next]
+                            val cost = 4 * (entry.size.takeIf { it > 0 } ?: (entry.compressedSize * 10))
+                            if (pending.isNotEmpty() && parsing + cost > budget) return
+                            parsing += cost
+                            next++
+                            pending += cost to parsers.submit(Callable { parseBank(file, entry, kind, index.format, sizes) })
+                        }
+                    }
+                    parseMore()
+                    var written = 0
+                    while (pending.isNotEmpty()) {
+                        val (cost, parsed) = pending.removeFirst()
+                        parsed.result()(writer)
+                        parsing -= cost
+                        parseMore()
+                        onProgress("${index.title}: ${++written} / ${banks.size}")
+                    }
+                } finally {
+                    parsers.shutdownNow()
+                }
+                writer.finish(DictionaryFacts(index.title, index.revision, index.frequencyMode, indexJson, styles), reverseKeys)
+            }
+            try {
+                finishWriting(name)
+                return register(facts, name)
+            } catch (e: Exception) {
+                SQLiteDatabase.deleteDatabase(writing(name))
+                SQLiteDatabase.deleteDatabase(File(folder, name))
+                throw e
+            }
+        }
+    }
+
+    /** Reads bank [entry], of [kind]; what it returns writes the rows. */
+    private fun parseBank(zip: ZipFile, entry: ZipEntry, kind: String, format: Int, sizes: Map<String, Pair<Int, Int>>): (DictionaryFile.Writer) -> Unit {
+        val json = zip.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) }
+        when (kind) {
+            "term_bank" -> {
+                val rows = Yomitan.parseTermBank(json, format).let { rows ->
+                    if (sizes.isEmpty()) rows else rows.map { it.copy(glossary = DictionaryImages.prepare(it.glossary, sizes::get)) }
+                }
+                return { it.terms(rows) }
+            }
+            "term_meta_bank", "kanji_meta_bank" -> {
+                val rows = Yomitan.parseTermMetaBank(json)
+                return { it.meta(rows, ofKanji = kind == "kanji_meta_bank") }
+            }
+            "kanji_bank" -> {
+                val rows = Yomitan.parseKanjiBank(json, format)
+                return { it.kanji(rows) }
+            }
+            "tag_bank" -> {
+                val rows = Yomitan.parseTagBank(json)
+                return { it.tags(rows) }
+            }
+        }
+        return {}
+    }
 
     /**
      * Replaces dictionary [oldId] with the one in [zip] (its update): the new one takes the old
@@ -458,11 +457,15 @@ class DictionaryDb private constructor(context: Context) :
             require(c.moveToFirst()) { "The dictionary to update is gone" }
             Triple(c.getString(0), c.getLong(1), c.getInt(2))
         }
-        db.update("dictionaries", ContentValues().apply { put("title", "$title (updating)") }, "id = ?", arrayOf(oldId.toString()))
+        fun rename(to: String) {
+            db.update("dictionaries", ContentValues().apply { put("title", to) }, "id = ?", arrayOf(oldId.toString()))
+            changed()
+        }
+        rename("$title (updating)")
         val info = try {
             import(zip, onProgress)
         } catch (e: Exception) {
-            db.update("dictionaries", ContentValues().apply { put("title", title) }, "id = ?", arrayOf(oldId.toString()))
+            rename(title)
             throw e
         }
         db.update(
@@ -473,323 +476,119 @@ class DictionaryDb private constructor(context: Context) :
             },
             "id = ?", arrayOf(info.id.toString()),
         )
+        changed()
         delete(oldId)
         return dictionaries().first { it.id == info.id }
     }
 
     fun delete(id: Long) {
         val db = writableDatabase
-        db.beginTransaction()
+        val name = db.rawQuery("SELECT file FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        db.delete("dictionaries", "id = ?", arrayOf(id.toString()))
+        changed()
+        if (name != null) {
+            files.remove(name)?.close()
+            SQLiteDatabase.deleteDatabase(File(folder, name))
+        }
+    }
+
+    // ---- Collections ---------------------------------------------------------------------------
+
+    /** What importing a collection did: the dictionaries it added, and those it left out because they were already there. */
+    class CollectionImport(val added: List<String>, val skipped: List<String>)
+
+    /**
+     * Writes every dictionary, in their order and with their switches, as a [HiroiCollection]:
+     * their files, zipped. [onProgress] gets the MB written and the total. Returns how many
+     * dictionaries it wrote.
+     */
+    fun exportCollection(out: OutputStream, onProgress: (Long, Long) -> Unit): Int = synchronized(writing) {
+        val list = entries()
+        val items = list.mapIndexed { i, entry -> HiroiCollection.Item(entry.info.title, HiroiCollection.path(i + 1), entry.info.enabled) }
+        val total = list.sumOf { File(folder, it.file).length() }
+        var written = 0L
+        ZipOutputStream(out.buffered(BUFFER)).use { zip ->
+            // Dictionary files pack to about half; the fastest level does nearly as well as the best.
+            zip.setLevel(Deflater.BEST_SPEED)
+            zip.putNextEntry(ZipEntry(HiroiCollection.MANIFEST))
+            zip.write(HiroiCollection.manifest(items).toByteArray())
+            zip.closeEntry()
+            for ((entry, item) in list.zip(items)) {
+                zip.putNextEntry(ZipEntry(item.path))
+                File(folder, entry.file).inputStream().use { input ->
+                    copy(input, zip) { n ->
+                        written += n
+                        onProgress(written shr 20, total shr 20)
+                    }
+                }
+                zip.closeEntry()
+            }
+        }
+        list.size
+    }
+
+    /**
+     * Adds the dictionaries of a [HiroiCollection] after the ones here, with their switches;
+     * those already here (by title) are left as they are. [onProgress] gets the MB read. A failed
+     * import leaves nothing behind.
+     */
+    fun importCollection(input: InputStream, onProgress: (Long) -> Unit): CollectionImport {
+        val titles = entries().mapTo(HashSet()) { it.info.title }
+        var items: Map<String, HiroiCollection.Item>? = null
+        val added = mutableListOf<DictionaryInfo>()
+        val skipped = mutableListOf<String>()
+        var read = 0L
         try {
-            for (table in listOf("terms", "term_meta", "kanji", "kanji_meta", "tags", "media")) db.delete(table, "dict = ?", arrayOf(id.toString()))
-            File(mediaDir, id.toString()).deleteRecursively()
-            db.delete("dictionaries", "id = ?", arrayOf(id.toString()))
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
-    }
-
-    private fun insertTerms(db: SQLiteDatabase, dict: Long, rows: List<TermEntry>): Int = inTransaction(db) {
-        val insert = db.compileStatement(
-            "INSERT INTO terms (dict, expression, reading, definition_tags, rules, score, glossary, sequence, term_tags, expression_reverse, reading_reverse) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        val reverse = hasReverseIndex(db)
-        for (row in rows) {
-            insert.bindLong(1, dict)
-            insert.bindString(2, row.expression)
-            insert.bindString(3, row.reading)
-            insert.bindString(4, row.definitionTags)
-            insert.bindString(5, row.rules)
-            insert.bindLong(6, row.score.toLong())
-            insert.bindString(7, row.glossary)
-            insert.bindLong(8, row.sequence)
-            insert.bindString(9, row.termTags)
-            if (reverse) {
-                insert.bindString(10, reversed(row.expression))
-                insert.bindString(11, reversed(row.reading))
-            } else {
-                insert.bindNull(10)
-                insert.bindNull(11)
-            }
-            insert.executeInsert()
-        }
-        rows.size
-    }
-
-    /** Into [table]: term_meta, or kanji_meta (whose column is "character"). */
-    private fun insertMeta(db: SQLiteDatabase, dict: Long, rows: List<TermMeta>, table: String): Int = inTransaction(db) {
-        val key = if (table == "kanji_meta") "character" else "expression"
-        val insert = db.compileStatement("INSERT INTO $table (dict, $key, mode, data) VALUES (?, ?, ?, ?)")
-        for (row in rows) {
-            insert.bindLong(1, dict)
-            insert.bindString(2, row.expression)
-            insert.bindString(3, row.mode)
-            insert.bindString(4, row.data)
-            insert.executeInsert()
-        }
-        rows.size
-    }
-
-    private fun insertTags(db: SQLiteDatabase, dict: Long, rows: List<TagInfo>): Int = inTransaction(db) {
-        val insert = db.compileStatement("INSERT INTO tags (dict, name, category, ord, notes, score) VALUES (?, ?, ?, ?, ?, ?)")
-        for (row in rows) {
-            insert.bindLong(1, dict)
-            insert.bindString(2, row.name)
-            insert.bindString(3, row.category)
-            insert.bindLong(4, row.order.toLong())
-            insert.bindString(5, row.notes)
-            insert.bindLong(6, row.score.toLong())
-            insert.executeInsert()
-        }
-        rows.size
-    }
-
-    private fun insertKanji(db: SQLiteDatabase, dict: Long, rows: List<KanjiEntry>): Int = inTransaction(db) {
-        val insert = db.compileStatement(
-            "INSERT INTO kanji (dict, character, onyomi, kunyomi, tags, meanings) VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        for (row in rows) {
-            insert.bindLong(1, dict)
-            insert.bindString(2, row.character)
-            insert.bindString(3, row.onyomi)
-            insert.bindString(4, row.kunyomi)
-            insert.bindString(5, row.tags)
-            insert.bindString(6, row.meanings.joinToString("\n"))
-            insert.executeInsert()
-        }
-        rows.size
-    }
-
-    private inline fun <T> inTransaction(db: SQLiteDatabase, block: () -> T): T {
-        db.beginTransaction()
-        try {
-            return block().also { db.setTransactionSuccessful() }
-        } finally {
-            db.endTransaction()
-        }
-    }
-
-    override fun findTerms(forms: Collection<String>): List<TermEntry> {
-        val out = mutableListOf<TermEntry>()
-        for (chunk in forms.chunked(MAX_ARGS / 2)) {
-            val placeholders = chunk.joinToString(",") { "?" }
-            out += termRows(
-                "WHERE (t.expression IN ($placeholders) OR t.reading IN ($placeholders)) AND d.enabled = 1",
-                (chunk + chunk).toTypedArray(),
-            )
-        }
-        return out
-    }
-
-    /** Terms (with their dictionary's title and position) of the terms and dictionaries rows [where] picks. */
-    private fun termRows(where: String, args: Array<String>): List<TermEntry> =
-        readableDatabase.rawQuery(
-            "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
-                "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict $where",
-            args,
-        ).use { c ->
-            List(c.count) {
-                c.moveToNext()
-                TermEntry(
-                    expression = c.getString(0), reading = c.getString(1), definitionTags = c.getString(2),
-                    rules = c.getString(3), score = c.getInt(4), glossary = c.getString(5), sequence = c.getLong(6),
-                    termTags = c.getString(7), dictionary = c.getString(8), priority = c.getInt(9),
-                )
-            }
-        }
-
-    /**
-     * Prefix search uses the indexes on expression and reading; suffix search the same on them
-     * reversed, which are made on its first use ([ensureReverseIndex]).
-     */
-    override fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int): List<TermEntry> {
-        if (affix.isEmpty()) return emptyList()
-        if (suffix) ensureReverseIndex()
-        val (expression, reading) = if (suffix) "expression_reverse" to "reading_reverse" else "expression" to "reading"
-        val from = if (suffix) reversed(affix) else affix
-        // Everything starting with [from] sorts from it to before it followed by the last code point.
-        val until = from + "\uDBFF\uDFFF"
-        fun matching(column: String) =
-            "SELECT t.rowid AS id, length(t.$column) AS n FROM terms t JOIN dictionaries d ON d.id = t.dict " +
-                "WHERE t.$column >= ? AND t.$column < ? AND d.enabled = 1"
-        return termRows(
-            "WHERE t.rowid IN (SELECT id FROM (${matching(expression)} UNION ALL ${matching(reading)}) GROUP BY id ORDER BY min(n) LIMIT $limit) " +
-                "ORDER BY length(t.expression)",
-            arrayOf(from, until, from, until),
-        )
-    }
-
-    /** Whether the reversed expressions and readings are filled and indexed (see [ensureReverseIndex]) */
-    @Volatile
-    private var reverseIndex = false
-
-    private fun hasReverseIndex(db: SQLiteDatabase): Boolean {
-        if (!reverseIndex) {
-            reverseIndex = DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'terms_expression_reverse'", null) > 0
-        }
-        return reverseIndex
-    }
-
-    /** Whether suffix search is ready; if not, the first one takes a while on big dictionaries ([ensureReverseIndex]). */
-    fun suffixSearchReady(): Boolean = hasReverseIndex(readableDatabase)
-
-    /**
-     * Fills the reversed expressions and readings of the terms that don't have them yet, and
-     * indexes them, for suffix search. Done on its first use rather than on every import, so
-     * that the extra columns and indexes only take space for those who search by suffix; from
-     * then on imports fill them. The index on expression_reverse, made last, says it's done.
-     * Batches in their own transactions, so lookups and imports aren't held up for long; the
-     * last one (which finds nothing left) makes the indexes, so no import slips in between.
-     */
-    private fun ensureReverseIndex() {
-        val db = writableDatabase
-        if (hasReverseIndex(db)) return
-        val update = db.compileStatement("UPDATE terms SET expression_reverse = ?, reading_reverse = ? WHERE rowid = ?")
-        var last = 0L
-        while (!reverseIndex) {
-            reverseIndex = inTransaction(db) {
-                val rows = db.rawQuery(
-                    "SELECT rowid, expression, reading FROM terms WHERE rowid > $last AND expression_reverse IS NULL ORDER BY rowid LIMIT $REVERSE_BATCH", null,
-                ).use { c -> List(c.count) { c.moveToNext(); Triple(c.getLong(0), c.getString(1).orEmpty(), c.getString(2).orEmpty()) } }
-                for ((rowid, expression, reading) in rows) {
-                    update.bindString(1, reversed(expression))
-                    update.bindString(2, reversed(reading))
-                    update.bindLong(3, rowid)
-                    update.executeUpdateDelete()
-                }
-                last = rows.lastOrNull()?.first ?: last
-                if (rows.isEmpty()) {
-                    db.execSQL("CREATE INDEX IF NOT EXISTS terms_reading_reverse ON terms (reading_reverse)")
-                    db.execSQL("CREATE INDEX IF NOT EXISTS terms_expression_reverse ON terms (expression_reverse)")
-                }
-                rows.isEmpty()
-            }
-        }
-    }
-
-    /** Whether the index on sequence numbers is there (see [findTermsBySequence]) */
-    @Volatile
-    private var sequenceIndex = false
-
-    /**
-     * Its index is made on first use rather than when the database opens: on a big dictionary
-     * that takes a while, and only grouping related terms needs it.
-     */
-    override fun findTermsBySequence(dictionary: String, sequences: Collection<Long>): List<TermEntry> {
-        if (sequences.isEmpty()) return emptyList()
-        if (!sequenceIndex) {
-            writableDatabase.execSQL("CREATE INDEX IF NOT EXISTS terms_sequence ON terms (dict, sequence)")
-            sequenceIndex = true
-        }
-        val out = mutableListOf<TermEntry>()
-        for (chunk in sequences.chunked(MAX_ARGS - 1)) {
-            val placeholders = chunk.joinToString(",") { "?" }
-            out += termRows(
-                "WHERE d.title = ? AND t.dict = d.id AND t.sequence IN ($placeholders)",
-                (listOf(dictionary) + chunk.map { it.toString() }).toTypedArray(),
-            )
-        }
-        return out
-    }
-
-    override fun findTermMeta(expressions: Collection<String>): List<TermMeta> {
-        val out = mutableListOf<TermMeta>()
-        for (chunk in expressions.chunked(MAX_ARGS)) {
-            val placeholders = chunk.joinToString(",") { "?" }
-            readableDatabase.rawQuery(
-                "SELECT m.expression, m.mode, m.data, d.title, d.position FROM term_meta m JOIN dictionaries d ON d.id = m.dict " +
-                    "WHERE m.expression IN ($placeholders) AND d.enabled = 1",
-                chunk.toTypedArray(),
-            ).use { c ->
-                while (c.moveToNext()) {
-                    out += TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getInt(4))
+            ZipInputStream(input.buffered(BUFFER)).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (entry.name == HiroiCollection.MANIFEST) {
+                        items = HiroiCollection.items(String(zip.readBytes(), Charsets.UTF_8)).associateBy { it.path }
+                        continue
+                    }
+                    if (entry.isDirectory || !entry.name.endsWith(".db")) continue
+                    val listed = items ?: throw IllegalArgumentException("Not a Hiroi dictionary collection")
+                    val name = newFile()
+                    try {
+                        writing(name).outputStream().use { out ->
+                            copy(zip, out) { n ->
+                                read += n
+                                onProgress(read shr 20)
+                            }
+                        }
+                        val facts = DictionaryFile.open(writing(name)).use { it.facts() }
+                        if (facts.title in titles) {
+                            skipped += facts.title
+                            SQLiteDatabase.deleteDatabase(writing(name))
+                        } else {
+                            finishWriting(name)
+                            added += register(facts, name, listed[entry.name]?.enabled ?: true)
+                            titles += facts.title
+                        }
+                    } catch (e: Exception) {
+                        SQLiteDatabase.deleteDatabase(writing(name))
+                        throw e
+                    }
                 }
             }
+            if (items == null) throw IllegalArgumentException("Not a Hiroi dictionary collection")
+        } catch (e: Exception) {
+            added.forEach { delete(it.id) }
+            throw e
         }
-        return out
+        return CollectionImport(added.map { it.title }, skipped)
     }
 
-    override fun findTags(dictionary: String, names: Collection<String>): List<TagInfo> {
-        if (names.isEmpty()) return emptyList()
-        val placeholders = names.joinToString(",") { "?" }
-        return readableDatabase.rawQuery(
-            "SELECT t.name, t.category, t.ord, t.notes, t.score FROM tags t JOIN dictionaries d ON d.id = t.dict " +
-                "WHERE d.title = ? AND t.name IN ($placeholders)",
-            (listOf(dictionary) + names).toTypedArray(),
-        ).use { c ->
-            List(c.count) {
-                c.moveToNext()
-                TagInfo(c.getString(0), c.getString(1).orEmpty(), c.getInt(2), c.getString(3).orEmpty(), c.getInt(4), dictionary)
-            }
+    /** Copies [input] to [out], telling [onCopied] the bytes of each piece. */
+    private inline fun copy(input: InputStream, out: OutputStream, onCopied: (Int) -> Unit) {
+        val buffer = ByteArray(BUFFER)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            out.write(buffer, 0, n)
+            onCopied(n)
         }
     }
-
-    /**
-     * Stores image [path] of dictionary [dict] and returns its size: from the image itself, or for
-     * an SVG from its attributes (100 × 100 when it has none, Yomitan's default).
-     */
-    private fun addMedia(db: SQLiteDatabase, dict: Long, path: String, bytes: ByteArray, mediaType: String? = null, knownSize: Pair<Int, Int>? = null): Pair<Int, Int> {
-        val type = mediaType ?: DictionaryImages.mediaType(path) ?: "application/octet-stream"
-        val size = knownSize ?: if (type == "image/svg+xml") {
-            DictionaryImages.svgSize(String(bytes)) ?: (100 to 100)
-        } else {
-            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-            if (options.outWidth > 0) options.outWidth to options.outHeight else 100 to 100
-        }
-        val dir = File(mediaDir, dict.toString()).apply { mkdirs() }
-        val row = db.insertOrThrow("media", null, ContentValues().apply {
-            put("dict", dict)
-            put("path", path)
-            put("media_type", type)
-            put("width", size.first)
-            put("height", size.second)
-        })
-        val name = "$row.${path.substringAfterLast('.', "bin").take(5)}"
-        File(dir, name).writeBytes(bytes)
-        db.update("media", ContentValues().apply { put("file", name) }, "rowid = ?", arrayOf(row.toString()))
-        return size
-    }
-
-    override fun findMedia(dictionary: String, path: String): DictionaryMedia? =
-        readableDatabase.rawQuery(
-            "SELECT m.path, m.media_type, m.width, m.height, m.file, m.dict FROM media m JOIN dictionaries d ON d.id = m.dict " +
-                "WHERE d.title = ? AND m.path = ? LIMIT 1",
-            arrayOf(dictionary, path),
-        ).use { c ->
-            if (!c.moveToFirst()) return null
-            val file = File(File(mediaDir, c.getLong(5).toString()), c.getString(4))
-            DictionaryMedia(c.getString(0), c.getString(1), c.getInt(2), c.getInt(3)) { file.readBytes() }
-        }
-
-    override fun findKanjiMeta(character: String): List<TermMeta> =
-        readableDatabase.rawQuery(
-            "SELECT m.character, m.mode, m.data, d.title, d.position FROM kanji_meta m JOIN dictionaries d ON d.id = m.dict " +
-                "WHERE m.character = ? AND d.enabled = 1 ORDER BY d.position",
-            arrayOf(character),
-        ).use { c ->
-            List(c.count) {
-                c.moveToNext()
-                TermMeta(c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getInt(4))
-            }
-        }
-
-    override fun findKanji(character: String): List<KanjiEntry> =
-        readableDatabase.rawQuery(
-            "SELECT k.character, k.onyomi, k.kunyomi, k.tags, k.meanings, d.title FROM kanji k " +
-                "JOIN dictionaries d ON d.id = k.dict WHERE k.character = ? AND d.enabled = 1 ORDER BY d.position",
-            arrayOf(character),
-        ).use { c ->
-            List(c.count) {
-                c.moveToNext()
-                KanjiEntry(
-                    c.getString(0), c.getString(1), c.getString(2), c.getString(3),
-                    c.getString(4).split('\n').filter { it.isNotEmpty() }, c.getString(5),
-                )
-            }
-        }
 
     companion object {
         private val BANK = Regex("(term_bank|term_meta_bank|kanji_bank|kanji_meta_bank|tag_bank)_(\\d+)\\.json")
@@ -797,13 +596,13 @@ class DictionaryDb private constructor(context: Context) :
         // Yomitan's words for telling ranks from occurrence counts (sort-frequency-dictionary-controller.js)
         private val MORE_COMMON = listOf("来る", "言う", "出る", "入る", "方", "男", "女", "今", "何", "時")
         private val LESS_COMMON = listOf("行なう", "論じる", "過す", "行方", "人口", "猫", "犬", "滝", "理", "暁")
-        private const val MAX_ARGS = 900
 
-        /** Terms filled per transaction when making the index for suffix search */
-        private const val REVERSE_BATCH = 5000
+        private val CORES = Runtime.getRuntime().availableProcessors()
 
-        /** [text] backwards, by code point (StringBuilder keeps surrogate pairs together). */
-        fun reversed(text: String): String = StringBuilder(text).reverse().toString()
+        /** Threads parsing banks while another writes them */
+        private val PARSE_THREADS = (CORES - 1).coerceIn(1, 4)
+
+        private const val BUFFER = 1 shl 16
 
         @Volatile
         private var instance: DictionaryDb? = null

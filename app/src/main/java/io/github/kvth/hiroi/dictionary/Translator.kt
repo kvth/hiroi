@@ -4,8 +4,15 @@ import io.github.kvth.hiroi.japanese.Deinflector
 import io.github.kvth.hiroi.japanese.Japanese
 
 interface DictionaryStore {
-    /** Entries whose expression or reading is one of [forms]. */
+    /** Entries whose expression or reading is one of [forms]; their glossaries may be left out ([withGlossaries]). */
     fun findTerms(forms: Collection<String>): List<TermEntry>
+
+    /**
+     * [entries], in the same order, with their glossaries. The searches can leave those out
+     * (empty), so that only the results that are shown read theirs: they're the big part of a
+     * dictionary, and most entries a lookup finds don't make it into the results.
+     */
+    fun withGlossaries(entries: List<TermEntry>): List<TermEntry> = entries
 
     fun findTermMeta(expressions: Collection<String>): List<TermMeta>
 
@@ -123,7 +130,8 @@ class Translator(
     /** [processed]: read as hiragana rather than as written (Yomitan's text processing). */
     private class Candidate(val form: String, val source: String, val conditions: Int, val inflections: List<String>, val processed: Boolean)
 
-    fun lookUp(text: String, start: Int): LookupResult? {
+    /** [definitions]: read the results' glossaries (not needed for furigana, say). */
+    fun lookUp(text: String, start: Int, definitions: Boolean = true): LookupResult? {
         if (start !in text.indices || !Japanese.isJapanese(text[start])) return null
         var end = start
         while (end < text.length && end - start < MAX_LENGTH && Japanese.isJapanese(text[end])) end++
@@ -152,7 +160,7 @@ class Translator(
                 if (entry.dictionary in anyPartOfSpeech || Deinflector.accepts(candidate.conditions, entry.rules)) matched.putIfAbsent(entry, candidate)
             }
         }
-        val terms = results(matched, candidates.withIndex().associate { (i, c) -> c to i })
+        val terms = results(matched, candidates.withIndex().associate { (i, c) -> c to i }, definitions)
 
         val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
             val character = text[start].toString()
@@ -179,8 +187,11 @@ class Translator(
         return LookupResult(0, affix.length, terms, emptyList())
     }
 
-    /** The results for the [matched] entries, each with the candidate that found it; [rank]: the candidates' order, best first. */
-    private fun results(matched: Map<TermEntry, Candidate>, rank: Map<Candidate, Int>): List<TermGroup> {
+    /**
+     * The results for the [matched] entries, each with the candidate that found it; [rank]: the
+     * candidates' order, best first. [definitions]: with their glossaries.
+     */
+    private fun results(matched: Map<TermEntry, Candidate>, rank: Map<Candidate, Int>, definitions: Boolean = true): List<TermGroup> {
         val groups = group(matched.keys, grouping())
         val expressions = groups.flatMapTo(HashSet()) { entries -> entries.map { it.expression } }
         val meta = if (expressions.isEmpty()) emptyList() else store.findTermMeta(expressions)
@@ -207,7 +218,11 @@ class Translator(
             )
             Sortable(term, candidate.processed, candidate.form == first.expression, frequencyOrder(term, sort))
         }.sortedWith(ORDER)
-        return sorted.map { it.term }.take(MAX_RESULTS)
+        val shown = sorted.map { it.term }.take(MAX_RESULTS)
+        if (!definitions) return shown
+        val entries = shown.flatMapTo(LinkedHashSet()) { it.entries }.toList()
+        val full = entries.zip(store.withGlossaries(entries)).toMap()
+        return shown.map { term -> term.copy(entries = term.entries.map(full::getValue)) }
     }
 
     /** The matched [entries] in groups, one per result, as Yomitan's result grouping mode groups them. */

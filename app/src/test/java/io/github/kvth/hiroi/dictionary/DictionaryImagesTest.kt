@@ -8,8 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.StringReader
-import java.io.StringWriter
 
 class DictionaryImagesTest {
     private val sizes = mapOf("img/cat.png" to (320 to 240), "stroke.svg" to (109 to 109))
@@ -62,36 +60,5 @@ class DictionaryImagesTest {
         assertTrue(em, em.startsWith("<details class=\"gloss-image\"><summary>Image</summary>"))
         val missing = StructuredHtml.item(JSONObject("""{"type":"image","path":"gone.png","alt":"猫"}"""), media)
         assertTrue(missing, "[猫]" in missing)
-    }
-
-    @Test
-    fun carriesImagesInCollections() {
-        val out = StringWriter()
-        YomitanCollection.Writer(out).use { w ->
-            w.begin(mapOf("media" to 1))
-            for (table in YomitanCollection.TABLES.keys) w.table(table) {
-                if (table == "media") w.media("Pictures", DictionaryMedia("img/cat.png", "image/png", 320, 240) { byteArrayOf() }, byteArrayOf(1, 2, 3))
-            }
-            w.end()
-        }
-        val row = JSONObject(out.toString()).getJSONObject("data").getJSONArray("data").getJSONObject(3).getJSONArray("rows").getJSONObject(0)
-        // As Dexie writes an ArrayBuffer: base64 with Typeson's type
-        assertEquals("AQID", row.getString("content"))
-        assertEquals("arraybuffer", row.getJSONObject("\$types").getString("content"))
-        assertEquals(1, row.getInt("id"))
-
-        val read = mutableListOf<YomitanCollection.MediaRow>()
-        YomitanCollection.read(StringReader(out.toString()), object : YomitanCollection.Sink {
-            override fun dictionary(summary: JSONObject) {}
-            override fun terms(rows: List<TermEntry>) {}
-            override fun termMeta(rows: List<TermMeta>) {}
-            override fun kanji(rows: List<KanjiEntry>) {}
-            override fun kanjiMeta(rows: List<TermMeta>) {}
-            override fun tags(rows: List<TagInfo>) {}
-            override fun media(rows: List<YomitanCollection.MediaRow>) { read += rows }
-        })
-        val image = read.single()
-        assertEquals(listOf("Pictures", "img/cat.png", "image/png", 320, 240), listOf(image.dictionary, image.path, image.mediaType, image.width, image.height))
-        assertEquals(listOf<Byte>(1, 2, 3), image.content.toList())
     }
 }

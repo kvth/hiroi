@@ -23,6 +23,22 @@ class YomitanTest {
 
         val v1 = Yomitan.parseTermBank("""[["犬","いぬ","n","",0,"dog","hound"]]""", 1)
         assertEquals(listOf("dog", "hound"), Yomitan.glossaryItems(v1[0].glossary))
+        // Glossaries are kept as written
+        assertEquals("""[ {"type":"text","text":"a\/b"} ]""", Yomitan.parseTermBank("""[["猫","ねこ","","",0,[ {"type":"text","text":"a\/b"} ],1,""]]""", 3)[0].glossary)
+    }
+
+    @Test
+    fun parsesMetaKanjiAndTagBanks() {
+        val meta = Yomitan.parseTermMetaBank("""[["食べる","freq",300],["食べる","freq",{"reading":"たべる","frequency":{"value":5,"displayValue":"5㋕"}}],["猫","pitch","x"]]""")
+        assertEquals(listOf("[300]", """[{"reading":"たべる","frequency":{"value":5,"displayValue":"5㋕"}}]""", "[\"x\"]"), meta.map { it.data })
+        assertEquals(300, Yomitan.frequency(meta[0], null)?.value)
+        val kanji = Yomitan.parseKanjiBank("""[["日","ニチ ジツ","ひ か","jouyou",["day","sun"],{"strokes":"4"}]]""", 3).single()
+        assertEquals(listOf("日", "ニチ ジツ", "ひ か", "jouyou"), listOf(kanji.character, kanji.onyomi, kanji.kunyomi, kanji.tags))
+        assertEquals(listOf("day", "sun"), kanji.meanings)
+        assertEquals("""{"strokes":"4"}""", kanji.stats)
+        assertEquals("{}", Yomitan.parseKanjiBank("""[["日","ニチ","ひ","",["day"]]]""", 3).single().stats)
+        assertEquals("{}", Yomitan.parseKanjiBank("""[["日","ニチ","ひ","","day","sun"]]""", 1).single().stats)
+        assertEquals(TagInfo("v1", "partOfSpeech", -3, "Ichidan verb", 0), Yomitan.parseTagBank("""[["v1","partOfSpeech",-3,"Ichidan verb",0]]""").single())
     }
 
     @Test

@@ -46,8 +46,6 @@ dependencies {
     // On-device translation; its models (about 30 MB per language) are downloaded from Google on
     // first use. Closed source too, like the OCR above.
     implementation("com.google.mlkit:translate:17.0.3")
-    // Streaming JSON for dictionary collections, which can be hundreds of MB (Yomitan's Dexie export format)
-    implementation("com.google.code.gson:gson:2.11.0")
     testImplementation("junit:junit:4.13.2")
     // android.jar only has stubs of org.json; unit tests need the real thing.
     testImplementation("org.json:json:20240303")

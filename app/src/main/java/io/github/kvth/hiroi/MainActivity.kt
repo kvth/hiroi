@@ -22,6 +22,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
@@ -57,6 +58,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.DictionaryUpdates
 import io.github.kvth.hiroi.dictionary.Grouping
+import io.github.kvth.hiroi.dictionary.HiroiCollection
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.settings.SettingsFile
 import io.github.kvth.hiroi.share.ShareTargets
@@ -117,8 +119,8 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.check_updates).setOnClickListener { checkForUpdates() }
         findViewById<Button>(R.id.export_collection).setOnClickListener {
             val create = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("application/json")
-                .putExtra(Intent.EXTRA_TITLE, "hiroi-dictionaries-${java.time.LocalDate.now()}.json")
+                .setType("application/zip")
+                .putExtra(Intent.EXTRA_TITLE, "hiroi-dictionaries-${java.time.LocalDate.now()}.zip")
             @Suppress("DEPRECATION")
             startActivityForResult(create, REQUEST_EXPORT_COLLECTION)
         }
@@ -486,13 +488,6 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** A dictionary collection (Dexie export) starts with {"formatName":"dexie"; Yomitan's settings don't. */
-    private fun isCollection(uri: Uri): Boolean = runCatching {
-        val start = ByteArray(200)
-        val read = contentResolver.openInputStream(uri)!!.use { it.read(start) }
-        String(start, 0, maxOf(read, 0)).replace(Regex("\\s"), "").contains("\"formatName\":\"dexie\"")
-    }.getOrDefault(false)
-
     /** Takes a card format from a Yomitan settings export; with several profiles, the user picks one. */
     private fun importYomitanSettings(uri: Uri) {
         val formats = try {
@@ -690,12 +685,12 @@ class MainActivity : Activity() {
         // file:// URIs only in debug builds, where scripts/emulator.sh imports through the app's own cache.
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (uri.scheme == ContentResolver.SCHEME_CONTENT || (uri.scheme == ContentResolver.SCHEME_FILE && debuggable)) {
-            // A JSON file is a dictionary collection or a Yomitan settings export (scripts/emulator.sh yomitan);
-            // anything else a dictionary.
-            when {
-                intent.type != "application/json" && !uri.path.orEmpty().endsWith(".json") -> importDictionary { contentResolver.openInputStream(uri)!! }
-                isCollection(uri) -> importCollection(uri)
-                else -> importYomitanSettings(uri)
+            // A JSON file is a Yomitan settings export (scripts/emulator.sh yomitan); anything else a
+            // dictionary, or a collection of them.
+            if (intent.type != "application/json" && !uri.path.orEmpty().endsWith(".json")) {
+                importDictionary { contentResolver.openInputStream(uri)!! }
+            } else {
+                importYomitanSettings(uri)
             }
         }
     }
@@ -799,7 +794,7 @@ class MainActivity : Activity() {
             val message = try {
                 work { progress -> runOnUiThread { status.text = progress } }
             } catch (e: Exception) {
-                Log.w(TAG, "Dictionary collection failed: ${e.message}", e)
+                Log.w(TAG, "Dictionary work failed: ${e.message}", e)
                 getString(R.string.collection_failed, e.message ?: e.javaClass.simpleName)
             }
             runOnUiThread {
@@ -812,20 +807,25 @@ class MainActivity : Activity() {
         }
     }
 
-    /** All dictionaries as one file, in Yomitan's format, so Yomitan (or Hiroi on another phone) can import them. */
+    /** All dictionaries as one file (their own files, zipped), for Hiroi on another phone or a copy to keep. */
     private fun exportCollection(uri: Uri) = dictionaryWork(R.string.collection_exporting) { progress ->
-        contentResolver.openOutputStream(uri, "wt")!!.use { out ->
-            dictionaries.exportCollection(out) { progress(getString(R.string.collection_export_progress, it)) }
+        val count = contentResolver.openOutputStream(uri, "wt")!!.use { out ->
+            dictionaries.exportCollection(out) { done, total -> progress(getString(R.string.collection_export_progress, done, total)) }
         }
-        getString(R.string.collection_exported, dictionaries.dictionaries().size)
+        getString(R.string.collection_exported, count)
     }
 
-    /** Dictionaries from a collection file (Yomitan's export or Hiroi's), added after the ones here. */
+    /** Dictionaries from a collection Hiroi exported, added after the ones here. */
     private fun importCollection(uri: Uri) = dictionaryWork(R.string.collection_importing) { progress ->
-        val result = contentResolver.openInputStream(uri)!!.use { input ->
-            dictionaries.importCollection(input) { progress(getString(R.string.collection_import_progress, it)) }
-        }
-        listOfNotNull(
+        contentResolver.openInputStream(uri)!!.use { input -> importCollection(input, progress) }
+    }
+
+    /** Imports the collection in [input]; returns what to show. */
+    private fun importCollection(input: InputStream, progress: (String) -> Unit): String {
+        val started = SystemClock.elapsedRealtime()
+        val result = dictionaries.importCollection(input) { progress(getString(R.string.collection_import_progress, it)) }
+        Log.i(TAG, "Imported a collection of ${result.added.size} dictionaries in ${SystemClock.elapsedRealtime() - started} ms")
+        return listOfNotNull(
             getString(R.string.collection_imported, result.added.size, result.added.joinToString(", ")),
             result.skipped.takeIf { it.isNotEmpty() }?.let { getString(R.string.collection_skipped, it.joinToString(", ")) },
         ).joinToString("\n")
@@ -852,9 +852,14 @@ class MainActivity : Activity() {
                 val zip = File(cacheDir, "import.zip")
                 try {
                     open().use { input -> zip.outputStream().use { input.copyTo(it) } }
-                    val info = dictionaries.import(zip) { progress -> runOnUiThread { status.text = progress } }
-                    Log.i(TAG, "Imported ${info.title}: ${info.terms} terms, ${info.meta} meta, ${info.kanji} kanji")
-                    getString(R.string.import_done, info.title)
+                    if (HiroiCollection.isCollection(zip)) {
+                        zip.inputStream().use { input -> importCollection(input) { progress -> runOnUiThread { status.text = progress } } }
+                    } else {
+                        val started = SystemClock.elapsedRealtime()
+                        val info = dictionaries.import(zip) { progress -> runOnUiThread { status.text = progress } }
+                        Log.i(TAG, "Imported ${info.title} in ${SystemClock.elapsedRealtime() - started} ms: ${info.terms} terms, ${info.meta} meta, ${info.kanji} kanji")
+                        getString(R.string.import_done, info.title)
+                    }
                 } finally {
                     zip.delete()
                 }

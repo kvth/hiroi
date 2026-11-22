@@ -138,12 +138,13 @@ class DictionaryLookup(
         }
         worker.execute {
             val started = SystemClock.elapsedRealtime()
+            var searched = started
             // Formatting big structured-content glossaries takes a while too, so it happens here as well.
             val outcome = runCatching {
                 when {
                     !dictionaries.hasDictionaries() -> Lookup.Message(activity.getString(R.string.no_dictionaries))
                     dictionaries.enabledDictionaries().isEmpty() -> Lookup.Message(activity.getString(R.string.no_enabled_dictionaries))
-                    else -> when (val result = search(::post)) {
+                    else -> when (val result = search(::post).also { searched = SystemClock.elapsedRealtime() }) {
                         null -> Lookup.Message(activity.getString(R.string.not_japanese))
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
                             Lookup.Message(activity.getString(R.string.no_match))
@@ -167,7 +168,7 @@ class DictionaryLookup(
                 Log.e(TAG, "Lookup failed", it)
                 Lookup.Message(activity.getString(R.string.lookup_failed, it.message ?: it.javaClass.simpleName))
             }
-            Log.d(TAG, "Lookup $what took ${SystemClock.elapsedRealtime() - started} ms")
+            Log.d(TAG, "Lookup $what took ${SystemClock.elapsedRealtime() - started} ms (search ${searched - started} ms)")
             post(outcome)
         }
     }
@@ -317,7 +318,7 @@ class DictionaryLookup(
             documentTitle = documentTitle(),
             parse = { sentence ->
                 Furigana.forText(sentence) { text, i ->
-                    translator.lookUp(text, i)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
+                    translator.lookUp(text, i, definitions = false)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
                 }
             },
             selection = selection(),

@@ -152,7 +152,7 @@ class TemplatesActivity : Activity() {
                 val data = CardData(
                     term, text, start, start + term.source.length, documentTitle = getString(R.string.app_name),
                     parse = { sentence ->
-                        Furigana.forText(sentence) { t, i -> translator.lookUp(t, i)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) } }
+                        Furigana.forText(sentence) { t, i -> translator.lookUp(t, i, definitions = false)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) } }
                     },
                 )
                 val format = CardFormat(deck = "Test", model = "Test", fields = mapOf("Test" to fieldValue))
