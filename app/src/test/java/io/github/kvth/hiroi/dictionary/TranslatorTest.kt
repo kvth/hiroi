@@ -25,8 +25,38 @@ class TranslatorTest {
         override fun findTerms(forms: Collection<String>) = terms.filter { it.expression in forms || it.reading in forms }
         override fun findTermMeta(expressions: Collection<String>) = meta.filter { it.expression in expressions }
         override fun findKanji(character: String) = kanji.filter { it.character == character }
+        override fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int) =
+            terms.filter { t -> listOf(t.expression, t.reading).any { if (suffix) it.endsWith(affix) else it.startsWith(affix) } }
+                .sortedBy { it.expression.length }.take(limit)
     }
     private val translator = Translator(store)
+
+    @Test
+    fun wildcardSearchFindsWordsStartingWithTheText() {
+        val result = translator.lookUpWildcard("食べ", suffix = false)
+        assertEquals(setOf("食べる", "食べ物"), result.terms.mapTo(HashSet()) { it.expression })
+        assertTrue(result.terms.all { it.source == "食べ" && it.inflections.isEmpty() })
+        assertEquals(0 to 2, result.start to result.end)
+        // By reading too
+        assertEquals(setOf("猫", "ネコ"), translator.lookUpWildcard("ね", suffix = false).terms.mapTo(HashSet()) { it.expression })
+    }
+
+    @Test
+    fun wildcardSearchFindsWordsEndingWithTheTextAsWritten() {
+        assertEquals(listOf("書く"), translator.lookUpWildcard("く", suffix = true).terms.map { it.expression })
+        // Not deinflected: 食べた doesn't end in る
+        assertTrue(translator.lookUpWildcard("べた", suffix = true).terms.isEmpty())
+    }
+
+    @Test
+    fun wildcardIsAnAsteriskAtEitherEnd() {
+        assertEquals(Wildcard("食べ", suffix = false, start = 0), Wildcard.parse("食べ*"))
+        assertEquals(Wildcard("べる", suffix = true, start = 1), Wildcard.parse("＊べる"))
+        assertEquals(Wildcard("べ", suffix = true, start = 2), Wildcard.parse("**べ*"))
+        assertEquals(Wildcard("", suffix = true, start = 1), Wildcard.parse("*"))
+        assertNull(Wildcard.parse("食べる"))
+        assertNull(Wildcard.parse("食*べる"))
+    }
 
     @Test
     fun findsTheDictionaryFormOfAConjugatedVerb() {

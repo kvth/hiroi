@@ -26,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import io.github.kvth.hiroi.dictionary.Wildcard
 import io.github.kvth.hiroi.japanese.Japanese
 import io.github.kvth.hiroi.japanese.Romaji
 import io.github.kvth.hiroi.marks.KnownWords
@@ -222,11 +223,17 @@ class SearchActivity : Activity() {
         queryView.marks = emptyList()
         queryScroll.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
         val first = text.indexOfFirst(Japanese::isJapanese)
+        val wildcard = Wildcard.parse(text)
         when {
             text.isEmpty() -> {
                 lookup.cancel()
                 show(Shown.Hint)
             }
+            wildcard != null && wildcard.affix.isEmpty() -> {
+                lookup.cancel()
+                show(Shown.Message, getString(R.string.search_wildcard_empty))
+            }
+            wildcard != null -> lookUpWildcard(wildcard)
             first < 0 -> {
                 lookup.cancel()
                 show(Shown.Message, getString(R.string.search_not_japanese))
@@ -240,15 +247,25 @@ class SearchActivity : Activity() {
     private fun lookUpAt(offset: Int) {
         val text = queryView.text.toString()
         show(Shown.Message, getString(R.string.looking_up))
-        lookup.lookUp(text, offset) { outcome ->
-            if (queryView.text.toString() != text) return@lookUp
-            when (outcome) {
-                is DictionaryLookup.Lookup.Message -> show(Shown.Message, outcome.text)
-                is DictionaryLookup.Lookup.Found -> {
-                    queryView.highlight = outcome.result.start to outcome.result.end
-                    show(Shown.Results)
-                    lookup.show(outcome)
-                }
+        lookup.lookUp(text, offset) { showOutcome(text, it, 0) }
+    }
+
+    /** Words starting or ending with the text around the asterisk, which is highlighted. */
+    private fun lookUpWildcard(wildcard: Wildcard) {
+        val text = queryView.text.toString()
+        show(Shown.Message, getString(R.string.looking_up))
+        lookup.lookUpWildcard(wildcard) { showOutcome(text, it, wildcard.start) }
+    }
+
+    /** [outcome] of looking up in [text], unless it changed meanwhile; the result's text starts at [shift] in it. */
+    private fun showOutcome(text: String, outcome: DictionaryLookup.Lookup, shift: Int) {
+        if (queryView.text.toString() != text) return
+        when (outcome) {
+            is DictionaryLookup.Lookup.Message -> show(Shown.Message, outcome.text)
+            is DictionaryLookup.Lookup.Found -> {
+                queryView.highlight = outcome.result.start + shift to outcome.result.end + shift
+                show(Shown.Results)
+                lookup.show(outcome)
             }
         }
     }

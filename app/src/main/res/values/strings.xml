@@ -271,8 +271,10 @@
     <string name="search_label">Hiroi search</string>
     <string name="search_hint">Search dictionaries</string>
     <string name="search_clear">Clear</string>
-    <string name="search_intro">Type or paste Japanese: a word, as written or conjugated (食べさせられた), or a whole sentence. Romaji works too (taberu, TEREBI for katakana) while a→あ is on. Results are for the text from its first character; tap another character in the text above to look up the word starting there.\n\nYou can also select text in any app and choose \"Hiroi search\" in the selection menu.</string>
+    <string name="search_intro">Type or paste Japanese: a word, as written or conjugated (食べさせられた), or a whole sentence. Romaji works too (taberu, TEREBI for katakana) while a→あ is on. Results are for the text from its first character; tap another character in the text above to look up the word starting there.\n\nAn asterisk searches for words starting or ending with the text, as written: 食べ* finds 食べる, 食べ物, …, and *べる finds 食べる, 調べる, …\n\nYou can also select text in any app and choose \"Hiroi search\" in the selection menu.</string>
     <string name="search_not_japanese">Type Japanese text to search for.</string>
+    <string name="search_wildcard_empty">Type text before the * to find words starting with it, or after it for words ending with it.</string>
+    <string name="search_preparing_suffix">Preparing suffix search, once: this takes a while with big dictionaries…</string>
     <string name="search_romaji_on">Romaji is searched as kana</string>
     <string name="search_romaji_off">Romaji stays as typed</string>
 

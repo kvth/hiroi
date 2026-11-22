@@ -28,7 +28,7 @@ data class DictionaryInfo(
 
 /** Imported Yomitan dictionaries in SQLite. Priority is import order: the first imported comes first. */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 7), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 8), DictionaryStore {
 
     /** The dictionaries' images, a folder per dictionary; the media table says what they are. */
     private val mediaDir = File(context.filesDir, "dictionary-media")
@@ -45,7 +45,7 @@ class DictionaryDb private constructor(context: Context) :
         )
         db.execSQL(
             "CREATE TABLE terms (dict INTEGER, expression TEXT, reading TEXT, definition_tags TEXT, rules TEXT, " +
-                "score INTEGER, glossary TEXT, sequence INTEGER, term_tags TEXT)",
+                "score INTEGER, glossary TEXT, sequence INTEGER, term_tags TEXT, expression_reverse TEXT, reading_reverse TEXT)",
         )
         db.execSQL("CREATE INDEX terms_expression ON terms (expression)")
         db.execSQL("CREATE INDEX terms_reading ON terms (reading)")
@@ -97,6 +97,11 @@ class DictionaryDb private constructor(context: Context) :
         if (oldVersion < 7) {
             db.execSQL("ALTER TABLE dictionaries ADD COLUMN images INTEGER DEFAULT 0")
             createMedia(db)
+        }
+        // 8: expression and reading reversed, for suffix search (filled on its first use: see ensureReverseIndex)
+        if (oldVersion < 8) {
+            db.execSQL("ALTER TABLE terms ADD COLUMN expression_reverse TEXT")
+            db.execSQL("ALTER TABLE terms ADD COLUMN reading_reverse TEXT")
         }
     }
 
@@ -487,9 +492,10 @@ class DictionaryDb private constructor(context: Context) :
 
     private fun insertTerms(db: SQLiteDatabase, dict: Long, rows: List<TermEntry>): Int = inTransaction(db) {
         val insert = db.compileStatement(
-            "INSERT INTO terms (dict, expression, reading, definition_tags, rules, score, glossary, sequence, term_tags) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO terms (dict, expression, reading, definition_tags, rules, score, glossary, sequence, term_tags, expression_reverse, reading_reverse) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
+        val reverse = hasReverseIndex(db)
         for (row in rows) {
             insert.bindLong(1, dict)
             insert.bindString(2, row.expression)
@@ -500,6 +506,13 @@ class DictionaryDb private constructor(context: Context) :
             insert.bindString(7, row.glossary)
             insert.bindLong(8, row.sequence)
             insert.bindString(9, row.termTags)
+            if (reverse) {
+                insert.bindString(10, reversed(row.expression))
+                insert.bindString(11, reversed(row.reading))
+            } else {
+                insert.bindNull(10)
+                insert.bindNull(11)
+            }
             insert.executeInsert()
         }
         rows.size
@@ -562,22 +575,98 @@ class DictionaryDb private constructor(context: Context) :
         val out = mutableListOf<TermEntry>()
         for (chunk in forms.chunked(MAX_ARGS / 2)) {
             val placeholders = chunk.joinToString(",") { "?" }
-            readableDatabase.rawQuery(
-                "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
-                    "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict " +
-                    "WHERE (t.expression IN ($placeholders) OR t.reading IN ($placeholders)) AND d.enabled = 1",
+            out += termRows(
+                "WHERE (t.expression IN ($placeholders) OR t.reading IN ($placeholders)) AND d.enabled = 1",
                 (chunk + chunk).toTypedArray(),
-            ).use { c ->
-                while (c.moveToNext()) {
-                    out += TermEntry(
-                        expression = c.getString(0), reading = c.getString(1), definitionTags = c.getString(2),
-                        rules = c.getString(3), score = c.getInt(4), glossary = c.getString(5), sequence = c.getLong(6),
-                        termTags = c.getString(7), dictionary = c.getString(8), priority = c.getInt(9),
-                    )
-                }
-            }
+            )
         }
         return out
+    }
+
+    /** Terms (with their dictionary's title and position) of the terms and dictionaries rows [where] picks. */
+    private fun termRows(where: String, args: Array<String>): List<TermEntry> =
+        readableDatabase.rawQuery(
+            "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
+                "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict $where",
+            args,
+        ).use { c ->
+            List(c.count) {
+                c.moveToNext()
+                TermEntry(
+                    expression = c.getString(0), reading = c.getString(1), definitionTags = c.getString(2),
+                    rules = c.getString(3), score = c.getInt(4), glossary = c.getString(5), sequence = c.getLong(6),
+                    termTags = c.getString(7), dictionary = c.getString(8), priority = c.getInt(9),
+                )
+            }
+        }
+
+    /**
+     * Prefix search uses the indexes on expression and reading; suffix search the same on them
+     * reversed, which are made on its first use ([ensureReverseIndex]).
+     */
+    override fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int): List<TermEntry> {
+        if (affix.isEmpty()) return emptyList()
+        if (suffix) ensureReverseIndex()
+        val (expression, reading) = if (suffix) "expression_reverse" to "reading_reverse" else "expression" to "reading"
+        val from = if (suffix) reversed(affix) else affix
+        // Everything starting with [from] sorts from it to before it followed by the last code point.
+        val until = from + "\uDBFF\uDFFF"
+        fun matching(column: String) =
+            "SELECT t.rowid AS id, length(t.$column) AS n FROM terms t JOIN dictionaries d ON d.id = t.dict " +
+                "WHERE t.$column >= ? AND t.$column < ? AND d.enabled = 1"
+        return termRows(
+            "WHERE t.rowid IN (SELECT id FROM (${matching(expression)} UNION ALL ${matching(reading)}) GROUP BY id ORDER BY min(n) LIMIT $limit) " +
+                "ORDER BY length(t.expression)",
+            arrayOf(from, until, from, until),
+        )
+    }
+
+    /** Whether the reversed expressions and readings are filled and indexed (see [ensureReverseIndex]) */
+    @Volatile
+    private var reverseIndex = false
+
+    private fun hasReverseIndex(db: SQLiteDatabase): Boolean {
+        if (!reverseIndex) {
+            reverseIndex = DatabaseUtils.longForQuery(db, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'terms_expression_reverse'", null) > 0
+        }
+        return reverseIndex
+    }
+
+    /** Whether suffix search is ready; if not, the first one takes a while on big dictionaries ([ensureReverseIndex]). */
+    fun suffixSearchReady(): Boolean = hasReverseIndex(readableDatabase)
+
+    /**
+     * Fills the reversed expressions and readings of the terms that don't have them yet, and
+     * indexes them, for suffix search. Done on its first use rather than on every import, so
+     * that the extra columns and indexes only take space for those who search by suffix; from
+     * then on imports fill them. The index on expression_reverse, made last, says it's done.
+     * Batches in their own transactions, so lookups and imports aren't held up for long; the
+     * last one (which finds nothing left) makes the indexes, so no import slips in between.
+     */
+    private fun ensureReverseIndex() {
+        val db = writableDatabase
+        if (hasReverseIndex(db)) return
+        val update = db.compileStatement("UPDATE terms SET expression_reverse = ?, reading_reverse = ? WHERE rowid = ?")
+        var last = 0L
+        while (!reverseIndex) {
+            reverseIndex = inTransaction(db) {
+                val rows = db.rawQuery(
+                    "SELECT rowid, expression, reading FROM terms WHERE rowid > $last AND expression_reverse IS NULL ORDER BY rowid LIMIT $REVERSE_BATCH", null,
+                ).use { c -> List(c.count) { c.moveToNext(); Triple(c.getLong(0), c.getString(1).orEmpty(), c.getString(2).orEmpty()) } }
+                for ((rowid, expression, reading) in rows) {
+                    update.bindString(1, reversed(expression))
+                    update.bindString(2, reversed(reading))
+                    update.bindLong(3, rowid)
+                    update.executeUpdateDelete()
+                }
+                last = rows.lastOrNull()?.first ?: last
+                if (rows.isEmpty()) {
+                    db.execSQL("CREATE INDEX IF NOT EXISTS terms_reading_reverse ON terms (reading_reverse)")
+                    db.execSQL("CREATE INDEX IF NOT EXISTS terms_expression_reverse ON terms (expression_reverse)")
+                }
+                rows.isEmpty()
+            }
+        }
     }
 
     /** Whether the index on sequence numbers is there (see [findTermsBySequence]) */
@@ -597,20 +686,10 @@ class DictionaryDb private constructor(context: Context) :
         val out = mutableListOf<TermEntry>()
         for (chunk in sequences.chunked(MAX_ARGS - 1)) {
             val placeholders = chunk.joinToString(",") { "?" }
-            readableDatabase.rawQuery(
-                "SELECT t.expression, t.reading, t.definition_tags, t.rules, t.score, t.glossary, t.sequence, t.term_tags, " +
-                    "d.title, d.position FROM terms t JOIN dictionaries d ON d.id = t.dict " +
-                    "WHERE d.title = ? AND t.dict = d.id AND t.sequence IN ($placeholders)",
+            out += termRows(
+                "WHERE d.title = ? AND t.dict = d.id AND t.sequence IN ($placeholders)",
                 (listOf(dictionary) + chunk.map { it.toString() }).toTypedArray(),
-            ).use { c ->
-                while (c.moveToNext()) {
-                    out += TermEntry(
-                        expression = c.getString(0), reading = c.getString(1), definitionTags = c.getString(2),
-                        rules = c.getString(3), score = c.getInt(4), glossary = c.getString(5), sequence = c.getLong(6),
-                        termTags = c.getString(7), dictionary = c.getString(8), priority = c.getInt(9),
-                    )
-                }
-            }
+            )
         }
         return out
     }
@@ -719,6 +798,12 @@ class DictionaryDb private constructor(context: Context) :
         private val MORE_COMMON = listOf("来る", "言う", "出る", "入る", "方", "男", "女", "今", "何", "時")
         private val LESS_COMMON = listOf("行なう", "論じる", "過す", "行方", "人口", "猫", "犬", "滝", "理", "暁")
         private const val MAX_ARGS = 900
+
+        /** Terms filled per transaction when making the index for suffix search */
+        private const val REVERSE_BATCH = 5000
+
+        /** [text] backwards, by code point (StringBuilder keeps surrogate pairs together). */
+        fun reversed(text: String): String = StringBuilder(text).reverse().toString()
 
         @Volatile
         private var instance: DictionaryDb? = null

@@ -29,6 +29,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Translator
+import io.github.kvth.hiroi.dictionary.Wildcard
 import io.github.kvth.hiroi.translation.Translations
 import java.util.concurrent.Executors
 
@@ -115,8 +116,26 @@ class DictionaryLookup(
      * Looks up the word at [offset] in [text] and calls [onResult] on the main thread, unless
      * another lookup or [cancel] came in between.
      */
-    fun lookUp(text: String, offset: Int, onResult: (Lookup) -> Unit) {
+    fun lookUp(text: String, offset: Int, onResult: (Lookup) -> Unit) =
+        find("at $offset", text, onResult) { translator.lookUp(text, offset) }
+
+    /**
+     * A wildcard search ([Wildcard]), as [lookUp]; the result spans its affix, which is the
+     * text of [Lookup.Found]. The first suffix search says first that it prepares for that, which
+     * takes a while once on big dictionaries.
+     */
+    fun lookUpWildcard(wildcard: Wildcard, onResult: (Lookup) -> Unit) =
+        find("for $wildcard", wildcard.affix, onResult) { post ->
+            if (wildcard.suffix && !dictionaries.suffixSearchReady()) post(Lookup.Message(activity.getString(R.string.search_preparing_suffix)))
+            translator.lookUpWildcard(wildcard.affix, wildcard.suffix)
+        }
+
+    /** Runs [search] on the worker, which can [post] something to show before its outcome. */
+    private fun find(what: String, text: String, onResult: (Lookup) -> Unit, search: (post: (Lookup) -> Unit) -> LookupResult?) {
         val generation = ++generation
+        fun post(outcome: Lookup) = activity.runOnUiThread {
+            if (generation == this.generation && !activity.isDestroyed) onResult(outcome)
+        }
         worker.execute {
             val started = SystemClock.elapsedRealtime()
             // Formatting big structured-content glossaries takes a while too, so it happens here as well.
@@ -124,7 +143,7 @@ class DictionaryLookup(
                 when {
                     !dictionaries.hasDictionaries() -> Lookup.Message(activity.getString(R.string.no_dictionaries))
                     dictionaries.enabledDictionaries().isEmpty() -> Lookup.Message(activity.getString(R.string.no_enabled_dictionaries))
-                    else -> when (val result = translator.lookUp(text, offset)) {
+                    else -> when (val result = search(::post)) {
                         null -> Lookup.Message(activity.getString(R.string.not_japanese))
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
                             Lookup.Message(activity.getString(R.string.no_match))
@@ -148,10 +167,8 @@ class DictionaryLookup(
                 Log.e(TAG, "Lookup failed", it)
                 Lookup.Message(activity.getString(R.string.lookup_failed, it.message ?: it.javaClass.simpleName))
             }
-            Log.d(TAG, "Lookup at $offset took ${SystemClock.elapsedRealtime() - started} ms")
-            activity.runOnUiThread {
-                if (generation == this.generation && !activity.isDestroyed) onResult(outcome)
-            }
+            Log.d(TAG, "Lookup $what took ${SystemClock.elapsedRealtime() - started} ms")
+            post(outcome)
         }
     }
 

@@ -22,6 +22,31 @@ interface DictionaryStore {
 
     /** [dictionary]'s entries with one of [sequences] (its related terms, for "Group related terms"). */
     fun findTermsBySequence(dictionary: String, sequences: Collection<Long>): List<TermEntry> = emptyList()
+
+    /**
+     * Up to [limit] entries of the dictionaries turned on whose expression or reading starts
+     * with [affix], or ends with it if [suffix]; the shortest first.
+     */
+    fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int): List<TermEntry> = emptyList()
+}
+
+/**
+ * A wildcard search, as on Yomitan's search page: `食べ*` finds the words starting with 食べ,
+ * `*べる` ([suffix]) those ending in べる, without deinflecting. Either asterisk works (* or ＊);
+ * with both, as in Yomitan, it's a suffix search. [start] is where [affix] begins in the query.
+ */
+data class Wildcard(val affix: String, val suffix: Boolean, val start: Int) {
+    companion object {
+        /** The wildcard search [query] asks for; null if it has no asterisk at either end. */
+        fun parse(query: String): Wildcard? {
+            val lead = query.takeWhile(::isStar).length
+            val trail = query.drop(lead).takeLastWhile(::isStar).length
+            if (lead == 0 && trail == 0) return null
+            return Wildcard(query.substring(lead, query.length - trail), lead > 0, lead)
+        }
+
+        private fun isStar(c: Char) = c == '*' || c == '＊'
+    }
 }
 
 /**
@@ -127,8 +152,35 @@ class Translator(
                 if (entry.dictionary in anyPartOfSpeech || Deinflector.accepts(candidate.conditions, entry.rules)) matched.putIfAbsent(entry, candidate)
             }
         }
-        val rank = candidates.withIndex().associate { (i, c) -> c to i }
+        val terms = results(matched, candidates.withIndex().associate { (i, c) -> c to i })
 
+        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
+            val character = text[start].toString()
+            val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
+            store.findKanji(character).map { it.copy(frequencies = frequencies) }
+        }
+        val length = terms.firstOrNull()?.source?.length ?: 1
+        return LookupResult(start, start + length, terms, kanji)
+    }
+
+    /**
+     * A wildcard search ([Wildcard]): the words starting with [affix], or ending with it if
+     * [suffix], as written (not deinflected), sorted as other results. The result spans [affix].
+     */
+    fun lookUpWildcard(affix: String, suffix: Boolean): LookupResult {
+        fun matches(form: String) = if (suffix) form.endsWith(affix) else form.startsWith(affix)
+        val matched = LinkedHashMap<TermEntry, Candidate>()
+        val candidates = LinkedHashMap<String, Candidate>()
+        for (entry in store.findTermsByAffix(affix, suffix, MAX_WILDCARD_ENTRIES)) {
+            val form = if (matches(entry.expression)) entry.expression else entry.reading
+            matched[entry] = candidates.getOrPut(form) { Candidate(form, affix, 0, emptyList(), false) }
+        }
+        val terms = results(matched, candidates.values.withIndex().associate { (i, c) -> c to i })
+        return LookupResult(0, affix.length, terms, emptyList())
+    }
+
+    /** The results for the [matched] entries, each with the candidate that found it; [rank]: the candidates' order, best first. */
+    private fun results(matched: Map<TermEntry, Candidate>, rank: Map<Candidate, Int>): List<TermGroup> {
         val groups = group(matched.keys, grouping())
         val expressions = groups.flatMapTo(HashSet()) { entries -> entries.map { it.expression } }
         val meta = if (expressions.isEmpty()) emptyList() else store.findTermMeta(expressions)
@@ -155,15 +207,7 @@ class Translator(
             )
             Sortable(term, candidate.processed, candidate.form == first.expression, frequencyOrder(term, sort))
         }.sortedWith(ORDER)
-        val terms = sorted.map { it.term }.take(MAX_RESULTS)
-
-        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
-            val character = text[start].toString()
-            val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
-            store.findKanji(character).map { it.copy(frequencies = frequencies) }
-        }
-        val length = terms.firstOrNull()?.source?.length ?: 1
-        return LookupResult(start, start + length, terms, kanji)
+        return sorted.map { it.term }.take(MAX_RESULTS)
     }
 
     /** The matched [entries] in groups, one per result, as Yomitan's result grouping mode groups them. */
@@ -240,6 +284,9 @@ class Translator(
     private companion object {
         const val MAX_LENGTH = 20
         const val MAX_RESULTS = 20
+
+        /** The entries a wildcard search sorts its results from, the shortest that match */
+        const val MAX_WILDCARD_ENTRIES = 500
 
         /** Yomitan's order (translator.js, _sortTermDictionaryEntries). */
         val ORDER: Comparator<Sortable> = compareByDescending<Sortable> { it.term.source.length }
