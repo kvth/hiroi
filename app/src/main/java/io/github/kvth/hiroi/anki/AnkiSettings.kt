@@ -64,7 +64,15 @@ class AnkiSettings(context: Context) {
         get() = prefs.getBoolean("screenshot_crop", false)
         set(value) = prefs.edit().putBoolean("screenshot_crop", value).apply()
 
-    fun client(timeoutMs: Int = 3000) = AnkiConnect(url, apiKey.ifEmpty { null }, timeoutMs)
+    /**
+     * Take the dictionaries' stylesheets out of new cards and keep them in Hiroi, to add to the
+     * note type's Styling once ([NoteTypeStyles]), as anki-yomitan-css-dedup does for old notes.
+     */
+    var dedupStyles: Boolean
+        get() = prefs.getBoolean("dedup_styles", false)
+        set(value) = prefs.edit().putBoolean("dedup_styles", value).apply()
+
+        fun client(timeoutMs: Int = 3000) = AnkiConnect(url, apiKey.ifEmpty { null }, timeoutMs)
 
     companion object {
         /** AnkiConnect Android on the same phone; desktop Anki's AnkiConnect uses the same port */

@@ -45,6 +45,7 @@ import android.widget.Toast
 import io.github.kvth.hiroi.anki.AnkiConnect
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardFormat
+import io.github.kvth.hiroi.anki.NoteTypeStyles
 import io.github.kvth.hiroi.anki.AnkiTemplates
 import io.github.kvth.hiroi.anki.YomitanCardFormat
 import io.github.kvth.hiroi.anki.YomitanSettings
@@ -314,6 +315,15 @@ class MainActivity : Activity() {
             }
         }
         showDuplicateOptions()
+        findViewById<CheckBox>(R.id.cards_dedup_styles).apply {
+            isChecked = anki.dedupStyles
+            setOnCheckedChangeListener { _, checked ->
+                anki.dedupStyles = checked
+                showNoteTypeStyles()
+            }
+        }
+        findViewById<Button>(R.id.cards_note_type_css).setOnClickListener { exportNoteTypeStyles() }
+        showNoteTypeStyles()
         findViewById<CheckBox>(R.id.cards_screenshot_crop).apply {
             isChecked = anki.screenshotCrop
             setOnCheckedChangeListener { _, checked -> anki.screenshotCrop = checked }
@@ -514,6 +524,60 @@ class MainActivity : Activity() {
         findViewById<EditText>(R.id.cards_tags).setText(format.tags.joinToString(" "))
         showDuplicateOptions()
         showAnkiChoices()
+    }
+
+    /** Whether the stylesheets kept for the note type changed since they were copied. */
+    private fun showNoteTypeStyles() {
+        val styles = NoteTypeStyles(this)
+        findViewById<TextView>(R.id.cards_note_type_css_status).setText(
+            when {
+                styles.sheets.isEmpty() -> R.string.dedup_status_empty
+                styles.changedSinceCopied -> R.string.dedup_status_changed
+                else -> R.string.dedup_status_ok
+            },
+        )
+    }
+
+    /** Shows the note type's section, to copy or share it. */
+    private fun exportNoteTypeStyles() {
+        val styles = NoteTypeStyles(this)
+        val section = styles.section()
+        if (section == null) {
+            AlertDialog.Builder(this).setTitle(R.string.dedup_export_title).setMessage(R.string.dedup_export_empty).setPositiveButton(R.string.done, null).show()
+            return
+        }
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val text = TextView(this).apply {
+            this.text = section
+            setTextIsSelectable(true)
+            typeface = android.graphics.Typeface.MONOSPACE
+            textSize = 11f
+            setPadding(pad, 0, pad, 0)
+        }
+        val size = android.text.format.Formatter.formatShortFileSize(this, section.toByteArray().size.toLong())
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dedup_export_title)
+            .setMessage(getString(R.string.dedup_export_message, styles.sheets.size, size))
+            .setView(object : ScrollView(this) {
+                // At most part of the screen, so the buttons stay on it
+                override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) = super.onMeasure(
+                    widthMeasureSpec,
+                    MeasureSpec.makeMeasureSpec((resources.displayMetrics.heightPixels * 0.45f).toInt(), MeasureSpec.AT_MOST),
+                )
+            }.apply { addView(text) })
+            .setPositiveButton(R.string.dedup_copy) { _, _ ->
+                getSystemService(android.content.ClipboardManager::class.java)
+                    .setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.dedup_export_title), section))
+                styles.copied()
+                showNoteTypeStyles()
+            }
+            .setNeutralButton(R.string.dedup_share) { _, _ ->
+                startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, section), null))
+                styles.copied()
+                showNoteTypeStyles()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun screenshotFormatLabel(format: String) = if (format == "jpeg") R.string.cards_screenshot_jpeg else R.string.cards_screenshot_png
@@ -769,6 +833,7 @@ class MainActivity : Activity() {
         super.onResume()
         setStatus(R.id.accessibility_status, accessibilityServiceEnabled())
         setStatus(R.id.assistant_status, getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT))
+        showNoteTypeStyles()
         showDictionaries()
     }
 

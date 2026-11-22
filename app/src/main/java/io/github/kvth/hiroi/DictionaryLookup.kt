@@ -375,6 +375,8 @@ class DictionaryLookup(
                         if (added.noteId !in notes) notes += added.noteId
                         // Fields whose templates failed show {marker-render-error}, as in Yomitan; say which.
                         if (added.errors.isNotEmpty()) toast(activity.getString(R.string.anki_template_errors, added.errors.joinToString("\n")))
+                        // The stylesheets kept for the note type changed: it needs them to show the card as before.
+                        if (added.stylesChanged) toast(activity.getString(R.string.dedup_changed_toast))
                         button(if (overwrite != null) R.string.anki_overwritten else R.string.anki_added, false)
                         web.evaluateJavascript("inAnki($index, '${activity.getString(R.string.anki_in_deck)}')", null)
                     },

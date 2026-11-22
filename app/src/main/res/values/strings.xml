@@ -211,6 +211,18 @@
         <item>Overwrite (even if the new value is empty)</item>
     </string-array>
     <string name="cards_word_audio">Word audio for {audio}, from the audio sources</string>
+    <string name="dedup_option">Dictionary styles once in the note type, not in every card</string>
+    <string name="dedup_hint">Yomitan\'s templates copy each dictionary\'s whole stylesheet into every card (tens of KB per card, which can push a collection over AnkiWeb\'s limit). With this on, Hiroi takes those rules out of new cards and keeps them here: copy them with \"Note type CSS…\" and paste them at the end of the note type\'s Styling (Anki: Note types → Cards → Styling), or the cards lose the dictionaries\' styles. Same as the anki-yomitan-css-dedup add-on, which shares that section.</string>
+    <string name="dedup_export">Note type CSS…</string>
+    <string name="dedup_export_title">Note type CSS</string>
+    <string name="dedup_export_message">Paste this at the end of the note type\'s Styling, replacing the section between the same BEGIN and END lines if it\'s already there. %1$d dictionaries, %2$s.</string>
+    <string name="dedup_export_empty">No dictionary styles yet: they\'re collected from the cards you make with this on.</string>
+    <string name="dedup_copy">Copy</string>
+    <string name="dedup_share">Share</string>
+    <string name="dedup_status_changed">The dictionary styles changed since you last copied them: copy them again and replace the section in the note type.</string>
+    <string name="dedup_status_ok">The note type has the latest styles, if you pasted what you copied.</string>
+    <string name="dedup_status_empty">No dictionary styles collected yet.</string>
+    <string name="dedup_changed_toast">The dictionary styles for the note type changed: copy them again (Hiroi → Anki → Note type CSS…)</string>
     <string name="cards_screenshot_crop">{screenshot}: just the box or region, not the whole screen</string>
     <string name="cards_screenshot_format">{screenshot} format: %1$s</string>
     <string name="cards_screenshot_png">PNG (lossless, larger)</string>

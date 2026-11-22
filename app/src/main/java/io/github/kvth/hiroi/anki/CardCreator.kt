@@ -133,22 +133,29 @@ class CardCreator(
     /** How {screenshot} is stored: "png", or "jpeg" with [screenshotQuality] */
     private val screenshotFormat: String = "png",
     private val screenshotQuality: Int = 92,
+    /** Where the dictionaries' stylesheets go when they're taken out of the cards; null keeps them in ([StyleDedup]) */
+    private val styles: NoteTypeStyles? = null,
 ) {
     constructor(context: Context, settings: AnkiSettings, clipboard: () -> String? = { null }) :
         this(
             settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard,
             DictionaryDb.get(context)::findMedia, AudioSettings(context).sources,
             screenshotFormat = settings.screenshotFormat, screenshotQuality = settings.screenshotQuality,
+            styles = NoteTypeStyles(context).takeIf { settings.dedupStyles },
         )
 
-    /** An added or overwritten note, and the templates that failed on it. */
-    class Result(val noteId: Long, val errors: List<String>)
+    /**
+     * An added or overwritten note, and the templates that failed on it; [stylesChanged]: its
+     * dictionary stylesheets went to [NoteTypeStyles] and changed them (the note type needs them).
+     */
+    class Result(val noteId: Long, val errors: List<String>, val stylesChanged: Boolean = false)
 
     /** Adds the note; throws [DuplicateNoteException] if duplicates are prevented. */
     fun add(data: CardData, screenshot: Bitmap?): Result {
         if (format.preventDuplicates && !anki.canAddNote(duplicateCheckNote(data.term))) throw DuplicateNoteException()
         val note = render(data, screenshot)
-        return Result(anki.addNote(note(format, note.fields)), note.errors)
+        val (fields, stylesChanged) = withoutStyles(note.fields)
+        return Result(anki.addNote(note(format, fields)), note.errors, stylesChanged)
     }
 
     /**
@@ -158,12 +165,13 @@ class CardCreator(
     fun overwrite(id: Long, data: CardData, screenshot: Bitmap?): Result {
         val existing = anki.notesInfo(listOf(id)).singleOrNull()?.fields ?: throw AnkiException("Note $id is gone")
         val note = render(data, screenshot)
-        val fields = note.fields
+        val (newFields, stylesChanged) = withoutStyles(note.fields)
+        val fields = newFields
             .filterKeys { it in existing }
             .mapValues { (name, value) -> CardFormat.overwrite(format.overwriteMode(name), existing.getValue(name), value) }
             .filter { (name, value) -> value != existing[name] }
         if (fields.isNotEmpty()) anki.updateNoteFields(id, fields)
-        return Result(id, note.errors)
+        return Result(id, note.errors, stylesChanged)
     }
 
     /**
@@ -190,6 +198,14 @@ class CardCreator(
         }
         if (!format.checkAllModels) append("\"note:").append(AnkiConnect.escape(format.model)).append("\" ")
         append('"').append(AnkiConnect.escape(field)).append(':').append(AnkiConnect.escape(value)).append('"')
+    }
+
+    /** [fields] without the dictionaries' stylesheets, which go to [styles], if that's on; and whether they changed it. */
+    private fun withoutStyles(fields: Map<String, String>): Pair<Map<String, String>, Boolean> {
+        val styles = styles ?: return fields to false
+        val moved = mutableListOf<String>()
+        val out = fields.mapValues { (_, value) -> StyleDedup.field(value).also { moved += it.moved }.text }
+        return out to styles.add(moved)
     }
 
     /** Both passes: the fields, and, if they need media, the fields again with the media stored. */
