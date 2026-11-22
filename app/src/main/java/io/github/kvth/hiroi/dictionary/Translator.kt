@@ -91,6 +91,8 @@ class Translator(
     private val store: DictionaryStore,
     private val frequencySort: () -> FrequencySort? = { null },
     private val grouping: () -> Grouping = { Grouping() },
+    /** Dictionaries with Yomitan's "Part of speech filtering" off */
+    private val partsOfSpeechFilterOff: () -> Set<String> = { emptySet() },
 ) {
 
     /** [processed]: read as hiragana rather than as written (Yomitan's text processing). */
@@ -117,10 +119,12 @@ class Translator(
         }
 
         // Each entry with the first (best) candidate that found it
+        // (unless its dictionary takes any part of speech)
+        val anyPartOfSpeech = partsOfSpeechFilterOff()
         val matched = LinkedHashMap<TermEntry, Candidate>()
         for (candidate in candidates) {
             for (entry in byForm[candidate.form].orEmpty()) {
-                if (Deinflector.accepts(candidate.conditions, entry.rules)) matched.putIfAbsent(entry, candidate)
+                if (entry.dictionary in anyPartOfSpeech || Deinflector.accepts(candidate.conditions, entry.rules)) matched.putIfAbsent(entry, candidate)
             }
         }
         val rank = candidates.withIndex().associate { (i, c) -> c to i }

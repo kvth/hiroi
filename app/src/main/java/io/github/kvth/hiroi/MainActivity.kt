@@ -55,6 +55,7 @@ import io.github.kvth.hiroi.audio.AudioSources
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
+import io.github.kvth.hiroi.dictionary.DictionaryUpdates
 import io.github.kvth.hiroi.dictionary.Grouping
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.settings.SettingsFile
@@ -113,6 +114,7 @@ class MainActivity : Activity() {
             isChecked = DictionarySettings(this@MainActivity).averageFrequencies
             setOnCheckedChangeListener { _, checked -> DictionarySettings(this@MainActivity).averageFrequencies = checked }
         }
+        findViewById<Button>(R.id.check_updates).setOnClickListener { checkForUpdates() }
         findViewById<Button>(R.id.export_collection).setOnClickListener {
             val create = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
                 .setType("application/json")
@@ -788,7 +790,7 @@ class MainActivity : Activity() {
     /** Runs [work] in the background with its progress in the import status line, keeping the screen on. */
     private fun dictionaryWork(start: Int, work: ((String) -> Unit) -> String) {
         val status = findViewById<TextView>(R.id.import_status)
-        val buttons = listOf(R.id.import_dictionary, R.id.export_collection, R.id.import_collection).map { findViewById<Button>(it) }
+        val buttons = listOf(R.id.import_dictionary, R.id.check_updates, R.id.export_collection, R.id.import_collection).map { findViewById<Button>(it) }
         buttons.forEach { it.isEnabled = false }
         status.visibility = View.VISIBLE
         status.setText(start)
@@ -891,8 +893,10 @@ class MainActivity : Activity() {
             })
             row.addView(
                 TextView(this).apply {
-                    text = describe(info)
+                    text = describe(info) + (updates[info.id]?.let { "\n" + getString(R.string.update_available_line, it.revision) } ?: "")
                     alpha = if (info.enabled) 1f else 0.5f
+                    // Its settings, as Yomitan's per dictionary
+                    setOnClickListener { showDictionarySettings(info) }
                 },
                 LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
             )
@@ -1165,6 +1169,140 @@ class MainActivity : Activity() {
                     runOnUiThread { if (!isDestroyed) showSorting() }
                 }
             }
+            .show()
+    }
+
+    /** Updates found by the last check, by dictionary */
+    private val updates = java.util.concurrent.ConcurrentHashMap<Long, DictionaryUpdates.Update>()
+
+    /** Asks each dictionary's update link for its latest revision, then offers the newer ones. */
+    private fun checkForUpdates(only: DictionaryInfo? = null) {
+        val status = findViewById<TextView>(R.id.import_status)
+        val button = findViewById<Button>(R.id.check_updates)
+        status.visibility = View.VISIBLE
+        status.setText(R.string.updates_checking)
+        button.isEnabled = false
+        background.execute {
+            val installed = (only?.let(::listOf) ?: dictionaries.dictionaries())
+            val sources = installed.mapNotNull { info -> DictionaryUpdates.source(dictionaries.summary(info.id))?.let { info to it } }
+            val found = LinkedHashMap<DictionaryInfo, DictionaryUpdates.Update>()
+            val current = mutableListOf<String>()
+            val failed = mutableListOf<String>()
+            for ((info, source) in sources) {
+                runCatching { DictionaryUpdates.check(source) }.fold(
+                    { update -> if (update != null) found[info] = update else current += info.title },
+                    { error ->
+                        Log.w(TAG, "Update check of ${info.title} failed", error)
+                        failed += "${info.title} (${error.message ?: error.javaClass.simpleName})"
+                    },
+                )
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                button.isEnabled = true
+                for (info in installed) updates.remove(info.id)
+                for ((info, update) in found) updates[info.id] = update
+                status.text = when {
+                    sources.isEmpty() -> getString(R.string.updates_none_updatable)
+                    else -> listOfNotNull(
+                        found.takeIf { it.isNotEmpty() }?.let { getString(R.string.updates_available, it.entries.joinToString(", ") { (i, u) -> "${i.title} → ${u.revision}" }) },
+                        current.takeIf { it.isNotEmpty() }?.let { getString(R.string.updates_up_to_date, it.joinToString(", ")) },
+                        failed.takeIf { it.isNotEmpty() }?.let { getString(R.string.updates_failed, it.joinToString(", ")) },
+                    ).joinToString("\n")
+                }
+                showDictionaries()
+                if (found.isNotEmpty()) confirmUpdate(found.keys.toList())
+            }
+        }
+    }
+
+    /** Asks before downloading (saying so on mobile data), then updates [list]. */
+    private fun confirmUpdate(list: List<DictionaryInfo>) {
+        val names = list.joinToString(", ") { info -> "${info.title} → ${updates[info.id]?.revision}" }
+        val metered = getSystemService(android.net.ConnectivityManager::class.java)?.isActiveNetworkMetered == true
+        AlertDialog.Builder(this)
+            .setTitle(R.string.updates_confirm_title)
+            .setMessage(getString(R.string.updates_confirm, names) + if (metered) "\n\n" + getString(R.string.updates_metered) else "")
+            .setPositiveButton(R.string.updates_update) { _, _ -> updateDictionaries(list) }
+            .setNegativeButton(R.string.updates_later, null)
+            .show()
+    }
+
+    /**
+     * Downloads each new version and imports it in place of the old one; settings that name the
+     * old one by its title (an update can change it: Jitendex and JMdict have their date in it)
+     * then name the new one.
+     */
+    private fun updateDictionaries(list: List<DictionaryInfo>) = dictionaryWork(R.string.updates_updating) { progress ->
+        val done = mutableListOf<String>()
+        for (old in list) {
+            val update = updates[old.id] ?: continue
+            val zip = File(cacheDir, "update.zip")
+            try {
+                DictionaryUpdates.download(update.downloadUrl, zip) { bytes, total ->
+                    val size = android.text.format.Formatter.formatShortFileSize(this, bytes)
+                    progress(
+                        if (total > 0) getString(R.string.updates_downloading_of, old.title, size, android.text.format.Formatter.formatShortFileSize(this, total))
+                        else getString(R.string.updates_downloading, old.title, size),
+                    )
+                }
+                val info = dictionaries.replace(old.id, zip, progress)
+                renameDictionary(old.title, info.title)
+                updates.remove(old.id)
+                done += info.title
+            } finally {
+                zip.delete()
+            }
+        }
+        getString(R.string.updates_done, done.joinToString(", "))
+    }
+
+    /** Settings that name dictionary [old] name [new]: sorting, grouping, the part of speech switch, and the card format's per-dictionary markers. */
+    private fun renameDictionary(old: String, new: String) {
+        if (old == new) return
+        DictionarySettings(this).rename(old, new)
+        val format = anki.cardFormat
+        val markers = listOf("single-glossary-", "single-frequency-number-").associate { "{$it${AnkiTemplates.kebabCase(old)}}" to "{$it${AnkiTemplates.kebabCase(new)}}" }
+        val fields = format.fields.mapValuesTo(LinkedHashMap()) { (_, value) -> markers.entries.fold(value) { v, (from, to) -> v.replace(from, to) } }
+        if (fields != format.fields) anki.cardFormat = format.copy(fields = fields)
+    }
+
+    /** A dictionary's own settings, as Yomitan's: part of speech filtering, and its updates. */
+    private fun showDictionarySettings(info: DictionaryInfo) {
+        val settings = DictionarySettings(this)
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val source = DictionaryUpdates.source(dictionaries.summary(info.id))
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(TextView(this@MainActivity).apply { text = describe(info) })
+            addView(TextView(this@MainActivity).apply {
+                setPadding(0, pad / 2, 0, 0)
+                text = source?.let { getString(R.string.dictionary_settings_updates, android.net.Uri.parse(it.indexUrl).host) }
+                    ?: getString(R.string.dictionary_settings_no_updates)
+            })
+            if (info.terms > 0) {
+                addView(CheckBox(this@MainActivity).apply {
+                    setText(R.string.dictionary_parts_of_speech)
+                    isChecked = info.title !in settings.partsOfSpeechFilterOff
+                    setOnCheckedChangeListener { _, on ->
+                        settings.partsOfSpeechFilterOff = if (on) settings.partsOfSpeechFilterOff - info.title else settings.partsOfSpeechFilterOff + info.title
+                    }
+                })
+                addView(TextView(this@MainActivity).apply { setText(R.string.dictionary_parts_of_speech_hint) })
+            }
+        }
+        val update = updates[info.id]
+        AlertDialog.Builder(this)
+            .setTitle(info.title)
+            .setView(ScrollView(this).apply { addView(form) })
+            .apply {
+                when {
+                    update != null -> setPositiveButton(getString(R.string.dictionary_update_to, update.revision)) { _, _ -> confirmUpdate(listOf(info)) }
+                    source != null -> setNeutralButton(R.string.updates_check) { _, _ -> checkForUpdates(info) }
+                }
+            }
+            .setNegativeButton(R.string.done, null)
             .show()
     }
 

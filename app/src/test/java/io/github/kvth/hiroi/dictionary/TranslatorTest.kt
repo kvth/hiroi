@@ -134,7 +134,7 @@ class TranslatorTest {
             terms.filter { it.dictionary == dictionary && it.sequence in sequences }
     }
 
-    private fun lookUp(text: String, grouping: Grouping) = Translator(groupingStore, { null }) { grouping }.lookUp(text, 0)!!.terms
+    private fun lookUp(text: String, grouping: Grouping) = Translator(groupingStore, { null }, { grouping }).lookUp(text, 0)!!.terms
 
     private fun TermGroup.glosses() = definitions.map { it.entry.glossary.removeSurrounding("[\"", "\"]") to it.headwordIndices }
 
@@ -163,5 +163,20 @@ class TranslatorTest {
         assertEquals(listOf("to see" to listOf(0, 1), "to look" to listOf(0)), noSecondary.glosses())
         // Without a main dictionary, it groups term-reading pairs
         assertEquals(listOf("見る"), lookUp("見る", Grouping("merge")).single().headwords.map { it.expression })
+    }
+
+    @Test
+    fun partOfSpeechFilteringCanBeTurnedOffPerDictionary() {
+        // A dictionary without parts of speech: 食べた deinflects to 食べる, which it doesn't say is a verb
+        val store = object : DictionaryStore {
+            val terms = listOf(TermEntry("食べる", "たべる", "", "", 0, """["to eat"]""", 0, "", "NoPos", 1))
+            override fun findTerms(forms: Collection<String>) = terms.filter { it.expression in forms || it.reading in forms }
+            override fun findTermMeta(expressions: Collection<String>) = emptyList<TermMeta>()
+            override fun findKanji(character: String) = emptyList<KanjiEntry>()
+        }
+        assertTrue(Translator(store).lookUp("食べた", 0)!!.terms.none { it.expression == "食べる" })
+        val unfiltered = Translator(store, { null }, { Grouping() }) { setOf("NoPos") }.lookUp("食べた", 0)!!
+        assertEquals("食べる", unfiltered.terms.first().expression)
+        assertEquals("食べた", unfiltered.terms.first().source)
     }
 }

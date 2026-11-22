@@ -435,6 +435,43 @@ class DictionaryDb private constructor(context: Context) :
         return states.map { it.title }.filter { it !in byTitle }
     }
 
+    /** Dictionary [id]'s index.json as stored (with its update links), if it was stored. */
+    fun summary(id: Long): String? =
+        readableDatabase.rawQuery("SELECT summary FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }
+
+    /**
+     * Replaces dictionary [oldId] with the one in [zip] (its update): the new one takes the old
+     * one's place in the order and its on/off switch, and the old one goes once the new one is
+     * imported. Its title may differ (Jitendex and JMdict have their date in it), and may be the
+     * same: the old one is renamed meanwhile, and gets its title back if the import fails.
+     */
+    fun replace(oldId: Long, zip: File, onProgress: (String) -> Unit): DictionaryInfo {
+        val db = writableDatabase
+        val (title, position, enabled) = db.rawQuery("SELECT title, position, enabled FROM dictionaries WHERE id = ?", arrayOf(oldId.toString())).use { c ->
+            require(c.moveToFirst()) { "The dictionary to update is gone" }
+            Triple(c.getString(0), c.getLong(1), c.getInt(2))
+        }
+        db.update("dictionaries", ContentValues().apply { put("title", "$title (updating)") }, "id = ?", arrayOf(oldId.toString()))
+        val info = try {
+            import(zip, onProgress)
+        } catch (e: Exception) {
+            db.update("dictionaries", ContentValues().apply { put("title", title) }, "id = ?", arrayOf(oldId.toString()))
+            throw e
+        }
+        db.update(
+            "dictionaries",
+            ContentValues().apply {
+                put("position", position)
+                put("enabled", enabled)
+            },
+            "id = ?", arrayOf(info.id.toString()),
+        )
+        delete(oldId)
+        return dictionaries().first { it.id == info.id }
+    }
+
     fun delete(id: Long) {
         val db = writableDatabase
         db.beginTransaction()

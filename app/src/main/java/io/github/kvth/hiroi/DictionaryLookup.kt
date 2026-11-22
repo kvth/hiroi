@@ -65,7 +65,11 @@ class DictionaryLookup(
     private val worker = Executors.newSingleThreadExecutor()
     private val dictionaries by lazy { DictionaryDb.get(activity) }
     val translator by lazy {
-        Translator(dictionaries, { DictionarySettings(activity).frequencySort(dictionaries) }) { DictionarySettings(activity).grouping() }
+        Translator(
+            dictionaries,
+            { DictionarySettings(activity).frequencySort(dictionaries) },
+            { DictionarySettings(activity).grouping() },
+        ) { DictionarySettings(activity).partsOfSpeechFilterOff }
     }
     private val styles by lazy { dictionaries.styles() } // read on the lookup thread
     private var generation = 0

@@ -39,6 +39,23 @@ class DictionarySettings(context: Context) {
     fun grouping() = Grouping(resultGrouping, mainDictionary, secondaryDictionaries)
 
     /**
+     * The dictionaries with Yomitan's "Part of speech filtering" off: a deinflected word finds
+     * their entries whatever part of speech those have (or don't say). On for all by default.
+     */
+    var partsOfSpeechFilterOff: Set<String>
+        get() = prefs.getStringSet("parts_of_speech_filter_off", null)?.toSet().orEmpty()
+        set(value) = prefs.edit().putStringSet("parts_of_speech_filter_off", value).apply()
+
+    /** Settings that name dictionary [old] name [new] instead (an update can change its title). */
+    fun rename(old: String, new: String) {
+        if (old == new) return
+        if (sortDictionary == old) sortDictionary = new
+        if (mainDictionary == old) mainDictionary = new
+        if (old in secondaryDictionaries) secondaryDictionaries = secondaryDictionaries - old + new
+        if (old in partsOfSpeechFilterOff) partsOfSpeechFilterOff = partsOfSpeechFilterOff - old + new
+    }
+
+    /**
      * The sorting to use. Until one is chosen, it's the first imported dictionary with
      * frequencies, in the order it says or Yomitan's check finds; that choice is then kept.
      */
