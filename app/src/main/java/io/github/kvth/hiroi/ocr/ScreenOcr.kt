@@ -67,8 +67,38 @@ object ScreenOcr {
             overlap.setIntersect(block.bounds, other.bounds) &&
                 overlap.width().toLong() * overlap.height() * 2 >= area &&
                 compact(other.text).let { it.contains(text) || text.contains(it) }
-        }
+        } || coveredByAppCharacters(block, text, appText)
     }
+
+    /**
+     * Whether the app reported most of the line's text in its place, character by character,
+     * though in several boxes: a web page's paragraph is split at its links and bold words.
+     * OCR misreads a few characters, so most of them must be there, not all.
+     */
+    private fun coveredByAppCharacters(block: TextBlock, text: String, appText: List<TextBlock>): Boolean {
+        if (text.isEmpty()) return true
+        val there = HashMap<Char, Int>()
+        for (other in appText) {
+            val characters = other.characters ?: continue
+            if (!Rect.intersects(block.bounds, other.bounds)) continue
+            for (i in other.text.indices) {
+                val box = characters.getOrNull(other.textOffset + i) ?: continue
+                if (block.bounds.contains(box.centerX().toInt(), box.centerY().toInt())) there.merge(other.text[i], 1, Int::plus)
+            }
+        }
+        if (there.isEmpty()) return false
+        var found = 0
+        for (c in text) {
+            val left = there[c] ?: 0
+            if (left > 0) {
+                found++
+                there[c] = left - 1
+            }
+        }
+        return found >= text.length * COVERED
+    }
+
+    private const val COVERED = 0.8
 
     private fun compact(text: String) = text.filterNot { it.isWhitespace() }
 }

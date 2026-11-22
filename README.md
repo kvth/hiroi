@@ -4,14 +4,15 @@ A small Android app that picks up the text on your screen, even in apps that don
 
 It reads text through an **accessibility service**, which sees every window, including the status bar, notifications and dialogs. It draws a box over each piece of text that contains Japanese. Tap a word in a box to look it up in your own **Yomitan dictionaries**, the same zip files desktop Yomitan uses. This works in web pages too (Chrome, apps' WebViews). If the app doesn't report where its characters are (games, some custom views), the tap opens the box's text in a panel, and you tap the word there. Conjugated forms are found too: 食べさせられなかった → 食べる. Drag over the screen to take just the text in that region. The panel translates the sentence you're reading, and **Share** sends the word, its sentence, the box, the region or your selection to the clipboard, any app, DeepL, ChatGPT and so on.
 
-| The overlay | A lookup | A region, shared | Search |
-|---|---|---|---|
-| ![Boxes over the text on screen, words from Anki marked by rule, a picture read with OCR](docs/screenshots/overlay.png) | ![The panel with the tapped sentence, its translation and the results for 勉強](docs/screenshots/lookup.png) | ![Two sentences taken with a dragged region; the Share menu with Word, Sentence and Region, Copy, Share…, DeepL and ChatGPT](docs/screenshots/share.png) | ![The search page: tabesaserareta typed in romaji finds 食べる](docs/screenshots/search.png) |
+| The overlay | A lookup | A region, shared | In a web page | Search |
+|---|---|---|---|---|
+| ![Boxes over the text on screen, words from Anki marked by rule, a picture read with OCR](docs/screenshots/overlay.png) | ![The panel with the tapped sentence, its translation and the results for 勉強](docs/screenshots/lookup.png) | ![Two sentences taken with a dragged region; the Share menu with Word, Sentence and Region, Copy, Share…, DeepL and ChatGPT](docs/screenshots/share.png) | ![Japanese Wikipedia in a browser: 日本語 tapped on the page, one result with both readings, にほんご・にっぽんご](docs/screenshots/web.png) | ![The search page: tabesaserareta typed in romaji finds 食べる](docs/screenshots/search.png) |
 
 The screenshots are from the emulator (`scripts/emulator.sh`), on Hiroi's example sentences with the example dictionary and a small Anki deck:
 - **The overlay:** every piece of Japanese text gets a box. Words you have in Anki are marked in their rule's colour (mature, learning, new), and the bar shows how much of the screen's text that is. The sentence in the picture at the bottom is read with OCR (the dashed box).
 - **A lookup:** tapping 勉強 shows its reading, Anki status and the dictionary's definitions; under the sentence, its translation (by ML Kit, on the phone).
 - **A region, shared:** dragging over two sentences puts just their text in the panel. After tapping 届かなかった, **Share** offers the word, its sentence or the whole region, for the clipboard, any app, DeepL or ChatGPT.
+- **In a web page:** tapping 日本語 on Japanese Wikipedia (text CC BY-SA 4.0) looks it up right away. With *Group related terms*, both readings are one result, にほんご・にっぽんご, and each definition says which reading it's for.
 - **Search:** typing `tabesaserareta` searches たべさせられた and finds 食べる; **文A Translate** translates the searched text.
 
 ## Ways to open it
