@@ -157,11 +157,11 @@ class MarksActivity : Activity() {
         content.addView(mono("}"))
         content.addView(button(R.string.marks_script_example) {
             val current = script.text.toString()
-            if (current.isBlank() || current == FORMS_EXAMPLE) {
-                script.setText(FORMS_EXAMPLE)
+            if (current.isBlank() || current == MarkSettings.FORMS_SCRIPT) {
+                script.setText(MarkSettings.FORMS_SCRIPT)
             } else {
                 AlertDialog.Builder(this).setMessage(R.string.marks_script_replace)
-                    .setPositiveButton(android.R.string.ok) { _, _ -> script.setText(FORMS_EXAMPLE) }
+                    .setPositiveButton(android.R.string.ok) { _, _ -> script.setText(MarkSettings.FORMS_SCRIPT) }
                     .setNegativeButton(android.R.string.cancel, null)
                     .show()
             }
@@ -695,24 +695,5 @@ class MarksActivity : Activity() {
             "#e5484d", "#ff6b3d", "#ffa600", "#f5d90a", "#28c85a", "#00b3b3",
             "#408cff", "#6e56cf", "#b45cff", "#e93d82", "#9a9aa3", "#8d6e63",
         )
-
-        // Yomitan puts every dictionary's entry into one Glossary field; some list the word's
-        // other spellings as "forms". (AnkiMark's example.)
-        const val FORMS_EXAMPLE = """// Yomitan's Glossary field: add the spellings the dictionaries list as "forms".
-const html = note.fields.Glossary;
-if (!html) return [];
-const doc = new DOMParser().parseFromString(html, "text/html");
-const forms = [];
-// Jitendex: <li data-sc-content="forms"> holding a list (or a table) of spellings
-for (const el of doc.querySelectorAll('[data-sc-content="forms"] li, [data-sc-content="forms"] th')) {
-  forms.push(el.textContent);
-}
-// JMdict: <li><i>(forms)</i> 刺（★） | 棘（★） | トゲ</li>
-// (the cleaning drops the parentheses and splits at "|")
-for (const label of doc.querySelectorAll("li > i")) {
-  if (label.textContent === "(forms)") forms.push(label.parentElement.textContent);
-}
-return forms;
-"""
     }
 }

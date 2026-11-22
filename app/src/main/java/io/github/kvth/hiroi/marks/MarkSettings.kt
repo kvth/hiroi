@@ -56,9 +56,9 @@ class MarkSettings(context: Context) {
         get() = prefs.getString("fields", null)?.let { JSONArray(it).strings() } ?: listOfNotNull(anki.field.takeIf { it.isNotEmpty() })
         set(value) = prefs.edit().putString("fields", JSONArray(value).toString()).apply()
 
-    /** JavaScript function body: note -> extra words (see FieldScript). */
+    /** JavaScript function body: note -> extra words (see FieldScript); [FORMS_SCRIPT] until set, "" for none. */
     var fieldScript: String
-        get() = prefs.getString("field_script", null).orEmpty()
+        get() = prefs.getString("field_script", null) ?: FORMS_SCRIPT
         set(value) = prefs.edit().putString("field_script", value).apply()
 
     var style: String
@@ -161,6 +161,25 @@ class MarkSettings(context: Context) {
             MarkRule("learning", "Learning", "-is:new", "#ffa600"),
             MarkRule("new", "New", "is:new", "#408cff"),
         )
+
+        // Yomitan puts every dictionary's entry into one Glossary field; some list the word's
+        // other spellings as "forms". (AnkiMark's example.) The default field script.
+        const val FORMS_SCRIPT = """// Yomitan's Glossary field: add the spellings the dictionaries list as "forms".
+const html = note.fields.Glossary;
+if (!html) return [];
+const doc = new DOMParser().parseFromString(html, "text/html");
+const forms = [];
+// Jitendex: <li data-sc-content="forms"> holding a list (or a table) of spellings
+for (const el of doc.querySelectorAll('[data-sc-content="forms"] li, [data-sc-content="forms"] th')) {
+  forms.push(el.textContent);
+}
+// JMdict: <li><i>(forms)</i> 刺（★） | 棘（★） | トゲ</li>
+// (the cleaning drops the parentheses and splits at "|")
+for (const label of doc.querySelectorAll("li > i")) {
+  if (label.textContent === "(forms)") forms.push(label.parentElement.textContent);
+}
+return forms;
+"""
 
         /** One-tap rules for the settings screen, as in AnkiMark. */
         val EXAMPLES = listOf(
