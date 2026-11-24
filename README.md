@@ -144,6 +144,8 @@ Yomitan has no translation; this is Hiroi's own. Under the text in the overlay's
 - otherwise the sentence of the word you looked up;
 - otherwise all of the panel's text (*All* puts the whole screen's text there).
 
+In the overlay, **Sentence · Box · All** above that line switch what it translates: the above, the whole box (or region) in the panel, or the text of all boxes. Only the ones with different text show, and the choice stays while the overlay is open.
+
 Tap it to translate, or turn on *Translate automatically* (*Translation* in the setup screen). The translation language can be picked there, English by default. Long-press the translation to use another service, send the text to a translation app, or copy the translation.
 
 The **services** are tried in their order until one has a translation:

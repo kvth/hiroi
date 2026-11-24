@@ -12,6 +12,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Insets
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -69,6 +70,8 @@ class LookupActivity : Activity() {
     private var lookedUp: Pair<Int, Int>? = null // the looked-up word in the panel's text, whose sentence is translated
     private var panelSource = R.string.scope_box // where the panel's text is from: a box, a region, all boxes
     private lateinit var translation: TranslationStrip
+    private lateinit var scopeRow: LinearLayout // what the strip translates, when there's a choice
+    private var translateScope = TranslateScope.SENTENCE // kept while the overlay is open
 
     private val dp by lazy { resources.displayMetrics.density }
     private var systemBars = Insets.NONE
@@ -156,6 +159,7 @@ class LookupActivity : Activity() {
         scroll = maxHeightScrollView(0.3f)
         scroll.addView(textView)
         translation = TranslationStrip(this, ::translationSource)
+        scopeRow = LinearLayout(this).apply { visibility = View.GONE }
 
         resultsList = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -203,6 +207,7 @@ class LookupActivity : Activity() {
             val pad = (16 * dp).toInt()
             setPadding(pad, (12 * dp).toInt(), pad, (4 * dp).toInt())
             addView(scroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+            addView(scopeRow, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
             addView(translation.view, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(resultsScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
             addView(resultsWebFrame, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
@@ -296,25 +301,86 @@ class LookupActivity : Activity() {
                 lookup.show(outcome)
             }
         }
-        translation.refresh()
+        refreshTranslation()
     }
 
+    /** What the translation strip translates, as Share's scopes: a sentence, the panel's text, or all boxes. */
+    private enum class TranslateScope { SENTENCE, PANEL, ALL }
+
+    /** What the translation strip translates, in the scope chosen ([scopeTexts]). Nothing while the panel shows the hint. */
+    private fun translationSource(): String? =
+        if (!hasText) null else scopeTexts().getValue(translateScope).takeIf { it.isNotEmpty() }
+
     /**
-     * What the translation strip translates: the text selected in the panel, else the sentence
-     * of the looked-up word, else all of the panel's text. Nothing while it shows the hint.
+     * The text of each scope: for a sentence, the text selected in the panel, else the sentence
+     * of the looked-up word, else all of the panel's text; the panel's text (a box, a region or
+     * all boxes); the text of all boxes.
      */
-    private fun translationSource(): String? {
-        if (!hasText) return null
+    private fun scopeTexts(): Map<TranslateScope, String> {
         val text = textView.text.toString()
         val start = minOf(textView.selectionStart, textView.selectionEnd)
         val end = maxOf(textView.selectionStart, textView.selectionEnd)
         val word = lookedUp
-        val source = when {
+        val sentence = when {
             start >= 0 && start < end && (start to end) != word -> text.substring(start, end)
             word != null && word.second <= text.length -> YomitanNoteData.sentence(text, word.first, word.second).let { (s, e) -> text.substring(s, e) }
             else -> text
         }
-        return source.trim().takeIf { it.isNotEmpty() }
+        return mapOf(TranslateScope.SENTENCE to sentence.trim(), TranslateScope.PANEL to text.trim(), TranslateScope.ALL to allBoxesText().trim())
+    }
+
+    /**
+     * The translation strip for the panel's text now, with a choice of what it translates above
+     * it: only the scopes whose text differs, the one chosen (or the one with the same text) marked.
+     * Choosing one translates it.
+     */
+    private fun refreshTranslation() {
+        translation.refresh()
+        scopeRow.removeAllViews()
+        scopeRow.visibility = View.GONE
+        if (!hasText || translation.view.visibility != View.VISIBLE) return
+        val texts = scopeTexts()
+        val options = buildList {
+            if (texts[TranslateScope.SENTENCE] != texts[TranslateScope.PANEL]) add(TranslateScope.SENTENCE)
+            if (texts[TranslateScope.PANEL] != texts[TranslateScope.ALL]) add(TranslateScope.PANEL)
+            add(TranslateScope.ALL)
+        }
+        if (options.size < 2) return
+        val chosen = options.firstOrNull { it == translateScope } ?: options.first { texts[it] == texts[translateScope] }
+        for (scope in options) {
+            val label = when (scope) {
+                TranslateScope.SENTENCE -> R.string.scope_sentence
+                TranslateScope.PANEL -> panelSource
+                TranslateScope.ALL -> R.string.scope_all
+            }
+            scopeRow.addView(TextView(this).apply {
+                setText(label)
+                textSize = 14f
+                setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+                isSelected = scope == chosen
+                setTextColor(themeColor(if (isSelected) android.R.attr.textColorPrimary else android.R.attr.textColorSecondary))
+                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                if (isSelected) {
+                    background = GradientDrawable().apply {
+                        setColor(themeColor(android.R.attr.colorControlHighlight))
+                        cornerRadius = 12 * dp
+                    }
+                }
+                setOnClickListener {
+                    translateScope = scope
+                    refreshTranslation()
+                    translation.view.performClick()
+                }
+            })
+        }
+        scopeRow.visibility = View.VISIBLE
+    }
+
+    /** The text of all boxes, a line each, the same line once where boxes repeat it. */
+    private fun allBoxesText(): String {
+        val lines = mutableListOf<String>()
+        for (block in overlay.blocks) if (lines.lastOrNull() != block.text) lines += block.text
+        return lines.joinToString("\n")
     }
 
     private fun showResultsText(text: CharSequence) {
@@ -571,10 +637,10 @@ class LookupActivity : Activity() {
 
     private fun showAll() {
         overlay.selected = null
-        val lines = mutableListOf<String>()
-        for (block in overlay.blocks) if (lines.lastOrNull() != block.text) lines += block.text
-        setPanelText(lines.joinToString("\n"), atTop = false, isText = lines.isNotEmpty())
+        val text = allBoxesText()
+        setPanelText(text, atTop = false, isText = text.isNotEmpty())
         panelSource = R.string.scope_all
+        refreshTranslation()
     }
 
     /** The text inside a region dragged out on the screen, which then stays outlined. */
@@ -589,6 +655,7 @@ class LookupActivity : Activity() {
         setPanelText(text, atTop = region.centerY() > resources.displayMetrics.heightPixels / 2, isText = true)
         panelSource = R.string.scope_region
         overlay.region = region
+        refreshTranslation()
     }
 
     /**
@@ -639,7 +706,7 @@ class LookupActivity : Activity() {
         textActions.forEach { it.visibility = if (isText) View.VISIBLE else View.GONE }
         marksButton.visibility = if (!isText && marksAvailable) View.VISIBLE else View.GONE
         markPanel()
-        translation.refresh()
+        refreshTranslation()
         showPanelOrChip()
         scroll.scrollTo(0, 0)
         if (panelAtTop != atTop) {
