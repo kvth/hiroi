@@ -23,13 +23,16 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.widget.ArrayAdapter
@@ -38,6 +41,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Spinner
@@ -70,7 +74,10 @@ import java.io.File
 import java.io.InputStream
 import java.util.concurrent.Executors
 
-/** Setup screen: shows what is enabled, links to the system settings pages and manages dictionaries. */
+/**
+ * Setup screen: shows what is enabled, links to the system settings pages and manages dictionaries.
+ * A home screen lists the settings' pages ([Page]); one shows at a time, back returns to the list.
+ */
 class MainActivity : Activity() {
 
     private val dictionaries by lazy { DictionaryDb.get(this) }
@@ -157,7 +164,132 @@ class MainActivity : Activity() {
         }
         findViewById<ImageView>(R.id.example_image).setImageBitmap(exampleImage())
         setUpAnki()
+        showPage(savedInstanceState?.getString(KEY_PAGE)?.let(Page::valueOf) ?: pageFrom(intent))
         if (savedInstanceState == null) importFrom(intent)
+    }
+
+    /** The settings' pages, with their titles */
+    private enum class Page(val view: Int, val title: Int) {
+        SETUP(R.id.page_setup, R.string.page_setup),
+        DICTIONARIES(R.id.page_dictionaries, R.string.page_dictionaries),
+        RESULTS(R.id.page_results, R.string.page_results),
+        AUDIO(R.id.page_audio, R.string.audio_title),
+        TRANSLATION(R.id.page_translation, R.string.translation_title),
+        ANKI(R.id.page_anki, R.string.page_anki),
+        MARKS(R.id.page_marks, R.string.marks_section),
+        SHARING(R.id.page_sharing, R.string.share_title),
+        BACKUP(R.id.page_backup, R.string.settings_backup_title),
+        USAGE(R.id.page_usage, R.string.page_usage),
+    }
+
+    /** The page showing; null while the home screen is */
+    private var page: Page? = null
+
+    /** The page an intent's [EXTRA_PAGE] names, e.g. `usage` (scripts/emulator.sh app) */
+    private fun pageFrom(intent: Intent): Page? =
+        intent.getStringExtra(EXTRA_PAGE)?.let { name -> Page.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } }
+
+    /** Shows [shown], from its top, or the home screen if null. */
+    private fun showPage(shown: Page?) {
+        page = shown
+        findViewById<View>(R.id.home).visibility = if (shown == null) View.VISIBLE else View.GONE
+        for (p in Page.entries) findViewById<View>(p.view).visibility = if (p == shown) View.VISIBLE else View.GONE
+        setTitle(shown?.title ?: R.string.app_name)
+        actionBar?.setDisplayHomeAsUpEnabled(shown != null)
+        when (shown) {
+            null -> showHome()
+            else -> {
+                if (shown == Page.SETUP) placeSetupSteps(onHome = false)
+                findViewById<ScrollView>(shown.view).scrollTo(0, 0)
+            }
+        }
+    }
+
+    /**
+     * The home screen. Until the accessibility service is on, it has the setup steps, then the
+     * pages that are steps too (dictionaries, Anki, trying it) with their numbers, then the rest;
+     * after that a list of all pages, each with a line on what's in it.
+     */
+    private fun showHome() {
+        val ready = accessibilityServiceEnabled()
+        placeSetupSteps(onHome = !ready)
+        val list = findViewById<LinearLayout>(R.id.home_pages)
+        list.removeAllViews()
+        fun row(page: Page, summary: String, title: String = getString(page.title)) = list.addView(pageRow(title, summary) { showPage(page) })
+        val installed = dictionaries.dictionaries().size
+        val dictionariesSummary = if (installed == 0) getString(R.string.page_dictionaries_none)
+        else resources.getQuantityString(R.plurals.page_dictionaries_summary, installed, installed)
+        if (ready) {
+            val assistant = getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT)
+            row(Page.SETUP, getString(R.string.page_setup_summary, getString(R.string.status_on), getString(if (assistant) R.string.status_on else R.string.status_off)))
+            row(Page.DICTIONARIES, dictionariesSummary)
+        } else {
+            row(Page.DICTIONARIES, dictionariesSummary, getString(R.string.step_dictionaries))
+            row(Page.ANKI, getString(R.string.page_anki_summary), getString(R.string.step_anki))
+            row(Page.USAGE, getString(R.string.page_usage_summary), getString(R.string.step_example))
+        }
+        row(Page.RESULTS, getString(R.string.page_results_summary))
+        row(Page.AUDIO, getString(R.string.page_audio_summary))
+        row(Page.TRANSLATION, getString(R.string.page_translation_summary))
+        if (ready) row(Page.ANKI, getString(R.string.page_anki_summary))
+        row(Page.MARKS, getString(R.string.page_marks_summary))
+        row(Page.SHARING, getString(R.string.page_sharing_summary))
+        row(Page.BACKUP, getString(R.string.page_backup_summary))
+        if (ready) row(Page.USAGE, getString(R.string.page_usage_summary))
+    }
+
+    /** The setup steps on the home screen, or on their own page. */
+    private fun placeSetupSteps(onHome: Boolean) {
+        val steps = findViewById<View>(R.id.setup_steps)
+        val home = findViewById<LinearLayout>(R.id.home_setup)
+        val into = if (onHome) home else findViewById<LinearLayout>(R.id.page_setup_content)
+        if (steps.parent !== into) {
+            (steps.parent as ViewGroup).removeView(steps)
+            into.addView(steps)
+        }
+        home.visibility = if (onHome) View.VISIBLE else View.GONE
+    }
+
+    /** A home screen row: a page's [title] and [summary], opening it on a tap. */
+    private fun pageRow(title: String, summary: String, open: () -> Unit): View {
+        val density = resources.displayMetrics.density
+        return LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (12 * density).toInt(), 0, (12 * density).toInt())
+            background = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).run {
+                getDrawable(0).also { recycle() }
+            }
+            setOnClickListener { open() }
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    setTextAppearance(android.R.style.TextAppearance_DeviceDefault_Medium)
+                })
+                addView(TextView(this@MainActivity).apply { text = summary })
+            }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+            addView(TextView(this@MainActivity).apply {
+                text = "›"
+                textSize = 24f
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            })
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (page != null) showPage(null) else @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId != android.R.id.home) return super.onOptionsItemSelected(item)
+        showPage(null)
+        return true
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_PAGE, page?.name)
     }
 
     /** A sentence drawn into a bitmap: an image to try OCR on, since apps don't expose that as text. */
@@ -667,6 +799,7 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        pageFrom(intent)?.let(::showPage)
         importFrom(intent)
     }
 
@@ -688,8 +821,10 @@ class MainActivity : Activity() {
             // A JSON file is a Yomitan settings export (scripts/emulator.sh yomitan); anything else a
             // dictionary, or a collection of them.
             if (intent.type != "application/json" && !uri.path.orEmpty().endsWith(".json")) {
-                importDictionary { contentResolver.openInputStream(uri)!! }
+                showPage(Page.DICTIONARIES)
+                importDictionary(sizeOf(uri)) { contentResolver.openInputStream(uri)!! }
             } else {
+                showPage(Page.ANKI)
                 importYomitanSettings(uri)
             }
         }
@@ -701,7 +836,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data
         if (requestCode == REQUEST_IMPORT && resultCode == RESULT_OK && uri != null) {
-            importDictionary { contentResolver.openInputStream(uri)!! }
+            importDictionary(sizeOf(uri)) { contentResolver.openInputStream(uri)!! }
         }
         if (requestCode == REQUEST_YOMITAN_SETTINGS && resultCode == RESULT_OK && uri != null) importYomitanSettings(uri)
         if (requestCode == REQUEST_EXPORT_COLLECTION && resultCode == RESULT_OK && uri != null) exportCollection(uri)
@@ -782,48 +917,102 @@ class MainActivity : Activity() {
             .show()
     }
 
-    /** Runs [work] in the background with its progress in the import status line, keeping the screen on. */
-    private fun dictionaryWork(start: Int, work: ((String) -> Unit) -> String) {
-        val status = findViewById<TextView>(R.id.import_status)
+    /** Runs [work] in the background with its progress in the import status line and bar, keeping the screen on. */
+    private fun dictionaryWork(start: Int, work: ((DictionaryDb.Progress) -> Unit) -> String) {
         val buttons = listOf(R.id.import_dictionary, R.id.check_updates, R.id.export_collection, R.id.import_collection).map { findViewById<Button>(it) }
         buttons.forEach { it.isEnabled = false }
-        status.visibility = View.VISIBLE
-        status.setText(start)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val progress = startProgress(start)
         background.execute {
             val message = try {
-                work { progress -> runOnUiThread { status.text = progress } }
+                work(progress)
             } catch (e: Exception) {
                 Log.w(TAG, "Dictionary work failed: ${e.message}", e)
                 getString(R.string.collection_failed, e.message ?: e.javaClass.simpleName)
             }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 buttons.forEach { it.isEnabled = true }
-                status.text = message
+                endProgress(message)
                 showDictionaries()
             }
         }
     }
 
+    /**
+     * Shows [start] in the import status line, with the bar going, and keeps the screen on; what
+     * it returns, called from any thread, shows how far the work is: a few times a second at most,
+     * as some work tells it after each 64 kB.
+     */
+    private fun startProgress(start: Int): (DictionaryDb.Progress) -> Unit {
+        val status = findViewById<TextView>(R.id.import_status)
+        val bar = findViewById<ProgressBar>(R.id.import_progress)
+        status.visibility = View.VISIBLE
+        status.setText(start)
+        bar.visibility = View.VISIBLE
+        bar.isIndeterminate = true
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        var shown = 0L
+        var known = false
+        return { progress ->
+            val now = SystemClock.elapsedRealtime()
+            // At once when the bar goes from unknown to known or back, so a long last step shows as one
+            if (now - shown >= 100 || (progress.total > 0) != known) {
+                shown = now
+                known = progress.total > 0
+                val determinate = known
+                runOnUiThread {
+                    if (!isDestroyed) {
+                        bar.isIndeterminate = !determinate
+                        if (determinate) {
+                            val permille = (progress.done * 1000 / progress.total).toInt().coerceIn(0, 1000)
+                            bar.setProgress(permille, true)
+                            status.text = getString(R.string.progress_percent, progress.text, permille / 10)
+                        } else {
+                            status.text = progress.text
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Shows [message] in the import status line, in place of the progress, and lets the screen turn off. */
+    private fun endProgress(message: String) {
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        findViewById<ProgressBar>(R.id.import_progress).visibility = View.GONE
+        findViewById<TextView>(R.id.import_status).text = message
+    }
+
+    /** The size of the file at [uri], or 0 if its app doesn't say */
+    private fun sizeOf(uri: Uri): Long = runCatching {
+        if (uri.scheme == ContentResolver.SCHEME_FILE) File(uri.path!!).length()
+        else contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L }
+    }.getOrNull() ?: 0L
+
+    private fun fileSize(bytes: Long): String = android.text.format.Formatter.formatShortFileSize(this, bytes)
+
     /** All dictionaries as one file (their own files, zipped), for Hiroi on another phone or a copy to keep. */
     private fun exportCollection(uri: Uri) = dictionaryWork(R.string.collection_exporting) { progress ->
         val count = contentResolver.openOutputStream(uri, "wt")!!.use { out ->
-            dictionaries.exportCollection(out) { done, total -> progress(getString(R.string.collection_export_progress, done, total)) }
+            dictionaries.exportCollection(out) { done, total -> progress(DictionaryDb.Progress(getString(R.string.collection_export_progress, done, total), done, total)) }
         }
         getString(R.string.collection_exported, count)
     }
 
     /** Dictionaries from a collection Hiroi exported, added after the ones here. */
     private fun importCollection(uri: Uri) = dictionaryWork(R.string.collection_importing) { progress ->
-        contentResolver.openInputStream(uri)!!.use { input -> importCollection(input, progress) }
+        contentResolver.openInputStream(uri)!!.use { input -> importCollection(input, sizeOf(uri), progress) }
     }
 
-    /** Imports the collection in [input]; returns what to show. */
-    private fun importCollection(input: InputStream, progress: (String) -> Unit): String {
+    /** Imports the collection in [input], of [size] bytes (0 if unknown); returns what to show. */
+    private fun importCollection(input: InputStream, size: Long, progress: (DictionaryDb.Progress) -> Unit): String {
         val started = SystemClock.elapsedRealtime()
-        val result = dictionaries.importCollection(input) { progress(getString(R.string.collection_import_progress, it)) }
+        val result = dictionaries.importCollection(input) { read ->
+            progress(
+                if (size > 0) DictionaryDb.Progress(getString(R.string.collection_import_progress_of, fileSize(read), fileSize(size)), read, size)
+                else DictionaryDb.Progress(getString(R.string.collection_import_progress, fileSize(read))),
+            )
+        }
         Log.i(TAG, "Imported a collection of ${result.added.size} dictionaries in ${SystemClock.elapsedRealtime() - started} ms")
         return listOfNotNull(
             getString(R.string.collection_imported, result.added.size, result.added.joinToString(", ")),
@@ -837,31 +1026,43 @@ class MainActivity : Activity() {
         setStatus(R.id.assistant_status, getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT))
         showNoteTypeStyles()
         showDictionaries()
+        if (page == null) showHome()
     }
 
-    private fun importDictionary(open: () -> InputStream) {
-        val status = findViewById<TextView>(R.id.import_status)
+    /** Imports the dictionary, or collection, that [open] reads, of [size] bytes (0 if unknown). */
+    private fun importDictionary(size: Long = 0, open: () -> InputStream) {
         val button = findViewById<Button>(R.id.import_dictionary)
         button.isEnabled = false
-        status.visibility = View.VISIBLE
-        status.setText(R.string.import_copying)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val progress = startProgress(R.string.import_copying)
         background.execute {
             val message = try {
-                // ZipFile needs random access, so copy the picked document first.
-                val zip = File(cacheDir, "import.zip")
-                try {
-                    open().use { input -> zip.outputStream().use { input.copyTo(it) } }
-                    if (HiroiCollection.isCollection(zip)) {
-                        zip.inputStream().use { input -> importCollection(input) { progress -> runOnUiThread { status.text = progress } } }
+                open().buffered(1 shl 16).use { input ->
+                    if (HiroiCollection.isCollection(input)) {
+                        // Read as it comes: a collection can be gigabytes, too much to copy first
+                        importCollection(input, size, progress)
                     } else {
-                        val started = SystemClock.elapsedRealtime()
-                        val info = dictionaries.import(zip) { progress -> runOnUiThread { status.text = progress } }
-                        Log.i(TAG, "Imported ${info.title} in ${SystemClock.elapsedRealtime() - started} ms: ${info.terms} terms, ${info.meta} meta, ${info.kanji} kanji")
-                        getString(R.string.import_done, info.title)
+                        // ZipFile needs random access, so copy the picked dictionary first.
+                        val zip = File(cacheDir, "import.zip")
+                        try {
+                            zip.outputStream().use { out ->
+                                val buffer = ByteArray(1 shl 16)
+                                var copied = 0L
+                                while (true) {
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    out.write(buffer, 0, n)
+                                    copied += n
+                                    progress(DictionaryDb.Progress(getString(R.string.import_copying), copied, size))
+                                }
+                            }
+                            val started = SystemClock.elapsedRealtime()
+                            val info = dictionaries.import(zip, progress)
+                            Log.i(TAG, "Imported ${info.title} in ${SystemClock.elapsedRealtime() - started} ms: ${info.terms} terms, ${info.meta} meta, ${info.kanji} kanji")
+                            getString(R.string.import_done, info.title)
+                        } finally {
+                            zip.delete()
+                        }
                     }
-                } finally {
-                    zip.delete()
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Import failed: ${e.message}", e)
@@ -869,9 +1070,8 @@ class MainActivity : Activity() {
             }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 button.isEnabled = true
-                status.text = message
+                endProgress(message)
                 showDictionaries()
             }
         }
@@ -1245,10 +1445,9 @@ class MainActivity : Activity() {
             val zip = File(cacheDir, "update.zip")
             try {
                 DictionaryUpdates.download(update.downloadUrl, zip) { bytes, total ->
-                    val size = android.text.format.Formatter.formatShortFileSize(this, bytes)
                     progress(
-                        if (total > 0) getString(R.string.updates_downloading_of, old.title, size, android.text.format.Formatter.formatShortFileSize(this, total))
-                        else getString(R.string.updates_downloading, old.title, size),
+                        if (total > 0) DictionaryDb.Progress(getString(R.string.updates_downloading_of, old.title, fileSize(bytes), fileSize(total)), bytes, total)
+                        else DictionaryDb.Progress(getString(R.string.updates_downloading, old.title, fileSize(bytes))),
                     )
                 }
                 val info = dictionaries.replace(old.id, zip, progress)
@@ -1337,6 +1536,8 @@ class MainActivity : Activity() {
 
     private companion object {
         const val TAG = "HiroiImport"
+        const val EXTRA_PAGE = "page"
+        const val KEY_PAGE = "page"
         const val REQUEST_IMPORT = 1
         const val REQUEST_YOMITAN_SETTINGS = 2
         const val REQUEST_EXPORT_COLLECTION = 3

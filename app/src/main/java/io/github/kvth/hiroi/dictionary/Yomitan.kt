@@ -26,14 +26,28 @@ data class TermEntry(
     val id: Long = 0,
 )
 
-/** One term meta bank row: [mode] is freq, pitch or ipa; [data] is the value wrapped in a JSON array. */
+/**
+ * One term meta bank row: [mode] is freq, pitch or ipa; [data] is the value wrapped in a JSON array.
+ * [parsed]: the same value already read, when the dictionary's file keeps it so ([DictionaryFile]),
+ * so that lookups needn't parse [data].
+ */
 data class TermMeta(
     val expression: String,
     val mode: String,
     val data: String,
     val dictionary: String = "",
     val priority: Int = 0,
+    val parsed: MetaData? = null,
 )
+
+/** A term meta row's value as [TermMeta.parsed] has it */
+sealed class MetaData {
+    /** [display] null: the value is a plain number; [reading] null: it's for any reading. */
+    data class Frequency(val reading: String?, val value: Int, val display: String?) : MetaData()
+
+    /** The downstep positions of [reading]'s pitch accents */
+    data class Pitch(val reading: String, val positions: List<Int>) : MetaData()
+}
 
 /** A tag bank row: what a tag such as "v1" or "★" means, as Yomitan shows and sorts it. */
 data class TagInfo(val name: String, val category: String, val order: Int, val notes: String, val score: Int, val dictionary: String = "")
@@ -75,9 +89,19 @@ object Yomitan {
     // Banks are read with BankReader rather than org.json: a term bank's glossaries go straight
     // into the database as the JSON text they are.
 
-    fun parseTermBank(json: String, format: Int): List<TermEntry> {
-        val out = ArrayList<TermEntry>()
-        BankReader(json).forEachRow { row ->
+    fun parseTermBank(json: String, format: Int): List<TermEntry> =
+        ArrayList<TermEntry>().also { out -> parseTermBank(BankReader(json), format, Int.MAX_VALUE) { out += it } }
+
+    /**
+     * The rows of term bank [input], read as it's read, given to [each] [chunk] at a time: a bank
+     * can be bigger than the memory there is for it.
+     */
+    fun parseTermBank(input: java.io.Reader, format: Int, chunk: Int, each: (List<TermEntry>) -> Unit) =
+        parseTermBank(BankReader(input), format, chunk, each)
+
+    private fun parseTermBank(reader: BankReader, format: Int, chunk: Int, each: (List<TermEntry>) -> Unit) {
+        var out = ArrayList<TermEntry>()
+        reader.forEachRow { row ->
             val expression = row.text(0)
             val glossary = if (format == 1) {
                 // Version 1 lists the definitions as the remaining array items.
@@ -95,8 +119,12 @@ object Yomitan {
                 sequence = if (format == 1) 0 else row.long(6),
                 termTags = if (format == 1) "" else row.str(7),
             )
+            if (out.size >= chunk) {
+                each(out)
+                out = ArrayList()
+            }
         }
-        return out
+        if (out.isNotEmpty()) each(out)
     }
 
     /** tag_bank rows: [name, category, order, notes, score]. */
@@ -107,10 +135,22 @@ object Yomitan {
     }
 
     /** Term and kanji meta banks share a layout: [term or kanji, mode, data]. */
-    fun parseTermMetaBank(json: String): List<TermMeta> {
-        val out = ArrayList<TermMeta>()
-        BankReader(json).forEachRow { row -> out += TermMeta(row.text(0), row.text(1), "[" + BankReader.json(row.getOrNull(2)) + "]") }
-        return out
+    fun parseTermMetaBank(json: String): List<TermMeta> =
+        ArrayList<TermMeta>().also { out -> parseTermMetaBank(BankReader(json), Int.MAX_VALUE) { out += it } }
+
+    /** The rows of meta bank [input], read as it's read, given to [each] [chunk] at a time */
+    fun parseTermMetaBank(input: java.io.Reader, chunk: Int, each: (List<TermMeta>) -> Unit) = parseTermMetaBank(BankReader(input), chunk, each)
+
+    private fun parseTermMetaBank(reader: BankReader, chunk: Int, each: (List<TermMeta>) -> Unit) {
+        var out = ArrayList<TermMeta>()
+        reader.forEachRow { row ->
+            out += TermMeta(row.text(0), row.text(1), "[" + BankReader.json(row.getOrNull(2)) + "]")
+            if (out.size >= chunk) {
+                each(out)
+                out = ArrayList()
+            }
+        }
+        if (out.isNotEmpty()) each(out)
     }
 
     fun parseKanjiBank(json: String, format: Int): List<KanjiEntry> {
@@ -221,6 +261,10 @@ object Yomitan {
      */
     fun frequency(meta: TermMeta, reading: String?): Frequency? {
         if (meta.mode != "freq") return null
+        (meta.parsed as? MetaData.Frequency)?.let { f ->
+            if (reading != null && f.reading != null && f.reading != reading) return null
+            return Frequency(f.value, f.display?.ifEmpty { null } ?: f.value.toString())
+        }
         var data = JSONArray(meta.data).get(0)
         if (data is JSONObject && data.has("frequency")) {
             if (reading != null && data.optString("reading", reading) != reading) return null
@@ -250,6 +294,10 @@ object Yomitan {
     /** Downstep positions for [reading] as "[0]" / "[2]", or null if the meta row isn't pitch data for it. */
     fun pitch(meta: TermMeta, reading: String): String? {
         if (meta.mode != "pitch") return null
+        (meta.parsed as? MetaData.Pitch)?.let { p ->
+            if (p.reading != reading) return null
+            return p.positions.takeIf { it.isNotEmpty() }?.joinToString(" ") { "[$it]" }
+        }
         val data = JSONArray(meta.data).optJSONObject(0) ?: return null
         if (data.optString("reading") != reading) return null
         val pitches = data.optJSONArray("pitches") ?: return null

@@ -130,8 +130,35 @@ class DictionaryLookup(
             translator.lookUpWildcard(wildcard.affix, wildcard.suffix)
         }
 
-    /** Runs [search] on the worker, which can [post] something to show before its outcome. */
-    private fun find(what: String, text: String, onResult: (Lookup) -> Unit, search: (post: (Lookup) -> Unit) -> LookupResult?) {
+    /**
+     * A search of [query] in Latin letters ([Translator.lookUpLatin]), as [lookUp]: in sections,
+     * the word [kana] is all of (the query typed as romaji), the words of its meaning (English,
+     * German…), and what it might have been meant as if neither finds anything; [correctRomaji]:
+     * romaji is searched as kana, so romaji one edit away counts too.
+     */
+    fun lookUpLatin(query: String, kana: String?, correctRomaji: Boolean, onResult: (Lookup) -> Unit) {
+        val titles = Translator.SectionTitles(
+            japanese = { activity.getString(R.string.section_japanese, it) },
+            meaning = activity.getString(R.string.section_meaning),
+            didYouMean = { activity.getString(R.string.section_did_you_mean, it) },
+        )
+        find(
+            "for $query", query, onResult,
+            noMatch = { activity.getString(if (kana != null || dictionaries.meaningSearchAvailable()) R.string.no_match else R.string.search_meaning_unavailable) },
+        ) { translator.lookUpLatin(query, kana, correctRomaji, titles) }
+    }
+
+    /**
+     * Runs [search] on the worker, which can [post] something to show before its outcome.
+     * [noMatch]: what to say if it finds nothing.
+     */
+    private fun find(
+        what: String,
+        text: String,
+        onResult: (Lookup) -> Unit,
+        noMatch: () -> String = { activity.getString(R.string.no_match) },
+        search: (post: (Lookup) -> Unit) -> LookupResult?,
+    ) {
         val generation = ++generation
         fun post(outcome: Lookup) = activity.runOnUiThread {
             if (generation == this.generation && !activity.isDestroyed) onResult(outcome)
@@ -147,7 +174,7 @@ class DictionaryLookup(
                     else -> when (val result = search(::post).also { searched = SystemClock.elapsedRealtime() }) {
                         null -> Lookup.Message(activity.getString(R.string.not_japanese))
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
-                            Lookup.Message(activity.getString(R.string.no_match))
+                            Lookup.Message(noMatch())
                         } else {
                             val cards = AnkiSettings(activity).cardFormat.complete
                             val anki = ankiStatus(result)

@@ -19,7 +19,7 @@
 #                            where Hiroi looks by default (scripts/fake-ankiconnect.py); then pick
 #                            the deck Japanese::Core and the field Word in Hiroi's Anki section
 #   settings                 open the Settings app (Japanese text to try Hiroi on)
-#   app                      open Hiroi, scrolled down to its example sentences
+#   app                      open Hiroi at its example sentences (How to use)
 #   trigger                  open the Hiroi overlay on the current screen, as long-pressing power does
 #   tap <x> <y>              tap at screen pixels (the screen is 1080x2400)
 #   texts                    list the text on screen with the position to tap it. Run it
@@ -285,9 +285,7 @@ cmd_view() {
 
 cmd_app() {
   require_running
-  adb shell am start -n "$PACKAGE/.MainActivity" >/dev/null 2>&1
-  sleep 1
-  for _ in 1 2 3 4 5 6; do adb shell input swipe 540 1900 540 400 150; done
+  adb shell am start -n "$PACKAGE/.MainActivity" --es page usage >/dev/null 2>&1
 }
 
 cmd_texts() {

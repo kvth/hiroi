@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/page_anki"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:visibility="gone">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/step_anki_hint" />
+
+        <EditText
+            android:id="@+id/anki_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/anki_url_hint"
+            android:importantForAutofill="no"
+            android:inputType="textUri" />
+
+        <EditText
+            android:id="@+id/anki_key"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/anki_key_hint"
+            android:importantForAutofill="no"
+            android:inputType="textPassword" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <Button
+                android:id="@+id/anki_deck"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true" />
+
+            <Button
+                android:id="@+id/anki_field"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/anki_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            style="@android:style/TextAppearance.DeviceDefault.Small"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/cards_title"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_hint" />
+
+        <Button
+            android:id="@+id/cards_import"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_import" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <Button
+                android:id="@+id/cards_deck"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true" />
+
+            <Button
+                android:id="@+id/cards_model"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <Button
+                android:id="@+id/cards_fields"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/cards_fields" />
+
+            <Button
+                android:id="@+id/cards_templates"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/cards_templates" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/cards_tags"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/cards_tags_hint"
+            android:importantForAutofill="no"
+            android:inputType="text" />
+
+        <CheckBox
+            android:id="@+id/cards_check_duplicates"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_check_duplicates" />
+
+        <Button
+            android:id="@+id/cards_duplicate_behavior"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <Button
+            android:id="@+id/cards_duplicate_scope"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <CheckBox
+            android:id="@+id/cards_check_all_models"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_check_all_models" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_duplicates_hint" />
+
+        <CheckBox
+            android:id="@+id/cards_word_audio"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_word_audio" />
+
+        <CheckBox
+            android:id="@+id/cards_screenshot_crop"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cards_screenshot_crop" />
+
+        <Button
+            android:id="@+id/cards_screenshot_format"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/cards_screenshot_quality_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <SeekBar
+            android:id="@+id/cards_screenshot_quality"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="100" />
+
+        <CheckBox
+            android:id="@+id/cards_dedup_styles"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dedup_option" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/dedup_hint" />
+
+        <Button
+            android:id="@+id/cards_note_type_css"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dedup_export" />
+
+        <TextView
+            android:id="@+id/cards_note_type_css_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/cards_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+    </LinearLayout>
+</ScrollView>

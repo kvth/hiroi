@@ -20,7 +20,8 @@
     <string name="collection_export_progress">Exporting: %1$d / %2$d MB</string>
     <string name="collection_exported">Exported %d dictionaries.</string>
     <string name="collection_importing">Reading the collection…</string>
-    <string name="collection_import_progress">Importing: %d MB</string>
+    <string name="collection_import_progress">Importing: %s</string>
+    <string name="collection_import_progress_of">Importing: %1$s of %2$s</string>
     <string name="collection_imported">Imported %1$d dictionaries: %2$s</string>
     <string name="collection_skipped">Already here, left as they are: %s</string>
     <string name="collection_failed">Failed: %s</string>
@@ -31,6 +32,7 @@
     <string name="import_copying">Reading file…</string>
     <string name="import_done">Imported %s</string>
     <string name="import_failed">Import failed: %s</string>
+    <string name="progress_percent">%1$s (%2$d%%)</string>
     <string name="no_dictionaries_installed">No dictionaries yet.</string>
     <string name="remove">Remove</string>
     <string name="remove_confirm">Remove %s?</string>
@@ -75,7 +77,7 @@
     <string name="freeze_screen">Freeze the screen while Hiroi is open</string>
     <string name="freeze_screen_hint">Hiroi shows the screen as it was when you triggered it, so a notification or toast that closes itself, a video or an animation stays where its text was. Apps that forbid screenshots stay live.</string>
     <string name="settings_backup_title">Settings backup</string>
-    <string name="settings_backup_hint">All of Hiroi\'s settings in one file, to move them to another phone or keep a copy: Anki and card formats with their templates, marks, audio, translation, sorting, and the dictionaries\' order and switches (the dictionaries themselves go in a collection, above). Importing replaces the settings here.</string>
+    <string name="settings_backup_hint">All of Hiroi\'s settings in one file, to move them to another phone or keep a copy: Anki and card formats with their templates, marks, audio, translation, sorting, and the dictionaries\' order and switches (the dictionaries themselves go in a collection: see Dictionaries). Importing replaces the settings here.</string>
     <string name="settings_export">Export settings</string>
     <string name="settings_import">Import settings</string>
     <string name="settings_export_keys">Include API keys (AnkiConnect, DeepL, LibreTranslate)</string>
@@ -271,8 +273,12 @@
     <string name="search_label">Hiroi search</string>
     <string name="search_hint">Search dictionaries</string>
     <string name="search_clear">Clear</string>
-    <string name="search_intro">Type or paste Japanese: a word, as written or conjugated (食べさせられた), or a whole sentence. Romaji works too (taberu, TEREBI for katakana) while a→あ is on. Results are for the text from its first character; tap another character in the text above to look up the word starting there.\n\nAn asterisk searches for words starting or ending with the text, as written: 食べ* finds 食べる, 食べ物, …, and *べる finds 食べる, 調べる, …\n\nYou can also select text in any app and choose \"Hiroi search\" in the selection menu.</string>
+    <string name="search_intro">Type or paste Japanese: a word, as written or conjugated (食べさせられた), or a whole sentence. Romaji works too (taberu, TEREBI for katakana) while a→あ is on. Results are for the text from its first character; tap another character in the text above to look up the word starting there.\n\nEnglish or German finds the words whose definitions have it (eat, essen), in the dictionaries with definitions in it; with a→あ on, what reads as romaji in full shows its Japanese words first. If nothing is found, what\'s one letter away is: wter finds water, tbaeru 食べる.\n\nAn asterisk searches for words starting or ending with the text, as written: 食べ* finds 食べる, 食べ物, …, and *べる finds 食べる, 調べる, …\n\nYou can also select text in any app and choose \"Hiroi search\" in the selection menu.</string>
     <string name="search_not_japanese">Type Japanese text to search for.</string>
+    <string name="section_japanese">Japanese: %1$s</string>
+    <string name="section_meaning">Meaning</string>
+    <string name="section_did_you_mean">Did you mean %1$s?</string>
+    <string name="search_meaning_unavailable">None of the dictionaries turned on can be searched in English or German. Dictionaries with English or German definitions imported before Hiroi could search them by meaning need importing again.</string>
     <string name="search_wildcard_empty">Type text before the * to find words starting with it, or after it for words ending with it.</string>
     <string name="search_preparing_suffix">Preparing suffix search, once: this takes a while with big dictionaries…</string>
     <string name="search_romaji_on">Romaji is searched as kana</string>
@@ -391,9 +397,30 @@
     <string name="open_assistant">Digital assistant settings</string>
     <string name="status_on">✓ enabled</string>
     <string name="status_off">✗ not enabled</string>
+    <string name="page_setup">Setup</string>
+    <string name="page_setup_summary">Accessibility service %1$s, assistant app %2$s</string>
+    <string name="page_dictionaries">Dictionaries</string>
+    <string name="page_dictionaries_none">None yet: import one to look words up</string>
+    <plurals name="page_dictionaries_summary">
+        <item quantity="one">%d dictionary</item>
+        <item quantity="other">%d dictionaries</item>
+    </plurals>
+    <string name="page_collections">Collections</string>
+    <string name="page_results">Results</string>
+    <string name="page_results_summary">Sorting and grouping, as in Yomitan</string>
+    <string name="page_audio_summary">Pronunciations and where they come from</string>
+    <string name="page_translation_summary">Translating the sentence you read</string>
+    <string name="page_anki">Anki</string>
+    <string name="page_anki_summary">Which words have a note, and adding cards</string>
+    <string name="page_marks_summary">Colours for the words you have in Anki</string>
+    <string name="page_sharing_summary">Where the panel\'s Share button sends text</string>
+    <string name="page_backup_summary">All settings in one file</string>
+    <string name="page_usage">How to use</string>
+    <string name="page_usage_summary">Example sentences to try Hiroi on</string>
+    <string name="page_try">Try it</string>
 
-    <string name="hint_tap">Tap a word in a box, or drag over a region · %d found. Tap this bar to move it.</string>
-    <string name="hint_tap_scanning">Tap a word in a box, or drag over a region · %d found, looking for more in images… Tap this bar to move it.</string>
+    <string name="hint_tap">Tap a word in a box, or drag over a region · %d found. Tap this bar to shrink it.</string>
+    <string name="hint_tap_scanning">Tap a word in a box, or drag over a region · %d found, looking for more in images… Tap this bar to shrink it.</string>
     <string name="region_empty">No Japanese text in that region</string>
     <string name="region_empty_scanning">No Japanese text in that region yet: images are still being read</string>
     <string name="share">Share</string>
@@ -422,6 +449,11 @@
     <string name="share_url_help">The URL opens in the browser, or in the app for those links (DeepL\'s, ChatGPT\'s, …). {text} is what\'s sent and {target} the translation language\'s code. What\'s sent can put words around {text}, e.g. a prompt; {language} is the translation language.</string>
     <string name="share_app_help">What\'s sent to the app can put words around {text}, e.g. a prompt; {language} is the translation language.</string>
     <string name="hint_none">No Japanese text found.</string>
+    <plurals name="chip_boxes">
+        <item quantity="one">%d box</item>
+        <item quantity="other">%d boxes</item>
+    </plurals>
+    <string name="chip_marked">%s marked</string>
     <string name="hint_none_scanning">Looking for Japanese text in images…</string>
     <string name="copy">Copy</string>
     <string name="look_up">Look up</string>

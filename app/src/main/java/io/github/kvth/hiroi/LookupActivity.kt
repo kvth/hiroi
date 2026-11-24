@@ -74,6 +74,9 @@ class LookupActivity : Activity() {
     private var systemBars = Insets.NONE
     private var panelAtTop = false
     private var hasText = false
+    private lateinit var chip: TextView // the hint in short, in a corner, until a box is tapped
+    private var hintExpanded = false // the hint as the full bar (with the Marks button) instead of the chip
+    private var chipGravity = Gravity.TOP or Gravity.RIGHT
     private val scanner: ExecutorService = Executors.newSingleThreadExecutor() // OCR, apart from lookups
     private var scanning = false
     private var pendingTap: Pair<Int, Int>? = null // a tap outside the boxes while scanning
@@ -191,7 +194,7 @@ class LookupActivity : Activity() {
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             isClickable = true // keep taps on the panel from reaching the overlay
-            setOnClickListener { if (!hasText) moveHint() }
+            setOnClickListener { if (!hasText) shrinkHint() }
             elevation = 8 * dp
             background = GradientDrawable().apply {
                 setColor(themeColor(android.R.attr.colorBackground))
@@ -206,6 +209,20 @@ class LookupActivity : Activity() {
             addView(buttons, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
         }
         root.addView(panel)
+        chip = TextView(this).apply {
+            elevation = 8 * dp
+            background = GradientDrawable().apply {
+                setColor(themeColor(android.R.attr.colorBackground))
+                cornerRadius = 20 * dp
+            }
+            setPadding((14 * dp).toInt(), (8 * dp).toInt(), (14 * dp).toInt(), (8 * dp).toInt())
+            textSize = 14f
+            setOnClickListener {
+                hintExpanded = true
+                showHint()
+            }
+        }
+        root.addView(chip)
         placePanel()
 
         root.setOnApplyWindowInsetsListener { _, insets ->
@@ -233,7 +250,7 @@ class LookupActivity : Activity() {
         val taps = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapUp(e: MotionEvent): Boolean {
                 if (!hasText) {
-                    moveHint()
+                    shrinkHint()
                     return true
                 }
                 val offset = textView.characterAt(e.x, e.y)
@@ -249,10 +266,10 @@ class LookupActivity : Activity() {
         }
     }
 
-    /** Tapping the hint moves the bar to the other edge, uncovering what's under it. */
-    private fun moveHint() {
-        panelAtTop = !panelAtTop
-        placePanel()
+    /** Tapping the hint shrinks it back to the chip, uncovering what's under it. */
+    private fun shrinkHint() {
+        hintExpanded = false
+        showHint()
     }
 
     private fun lookUpAt(offset: Int) {
@@ -324,16 +341,26 @@ class LookupActivity : Activity() {
             .getOrDefault(packageName)
     }
 
+    /** The panel at the top or bottom edge, the chip in its corner, both clear of the system bars. */
     private fun placePanel() {
         val margin = (8 * dp).toInt()
-        panel.layoutParams = FrameLayout.LayoutParams(
-            MATCH_PARENT, WRAP_CONTENT, if (panelAtTop) Gravity.TOP else Gravity.BOTTOM,
-        ).apply {
+        fun FrameLayout.LayoutParams.clearOfBars() = apply {
             setMargins(
                 systemBars.left + margin, systemBars.top + margin,
                 systemBars.right + margin, systemBars.bottom + margin,
             )
         }
+        panel.layoutParams = FrameLayout.LayoutParams(
+            MATCH_PARENT, WRAP_CONTENT, if (panelAtTop) Gravity.TOP else Gravity.BOTTOM,
+        ).clearOfBars()
+        chip.layoutParams = FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, chipGravity).clearOfBars()
+    }
+
+    /** The panel while a box's text (or the full hint) shows, else the chip. */
+    private fun showPanelOrChip() {
+        val full = hasText || hintExpanded
+        panel.visibility = if (full) View.VISIBLE else View.GONE
+        chip.visibility = if (full) View.GONE else View.VISIBLE
     }
 
     private fun showHint() {
@@ -346,6 +373,47 @@ class LookupActivity : Activity() {
             else -> getString(R.string.hint_none)
         }
         setPanelText(withCoverage(hint), atTop = hintAtTop(), isText = false)
+        chip.text = chipText(count)
+        val corner = chipCorner()
+        if (corner != chipGravity) {
+            chipGravity = corner
+            placePanel()
+        }
+    }
+
+    /** The hint in short: the boxes found (or that there are none yet) and how much of their text is marked. */
+    private fun chipText(count: Int): String {
+        val parts = mutableListOf(
+            when {
+                count > 0 -> resources.getQuantityString(R.plurals.chip_boxes, count, count) + if (scanning) "…" else ""
+                scanning -> getString(R.string.hint_none_scanning)
+                else -> getString(R.string.hint_none)
+            },
+        )
+        val stats = markStats
+        if (marksAvailable && stats != null && stats.total > 0) {
+            parts += getString(R.string.chip_marked, percent(stats.rules.sumOf { it.chars }, stats.total))
+        }
+        return parts.joinToString(" · ")
+    }
+
+    /** The corner where the chip hides the least of the boxes (by area); on a tie the first of top right, top left, bottom right, bottom left. */
+    private fun chipCorner(): Int {
+        chip.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val margin = (8 * dp).toInt()
+        val width = chip.measuredWidth + margin
+        val height = chip.measuredHeight + margin
+        val screenWidth = window.decorView.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
+        val screenHeight = window.decorView.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
+        fun hidden(gravity: Int): Long {
+            val left = if (gravity and Gravity.RIGHT == Gravity.RIGHT) screenWidth - systemBars.right - width else systemBars.left
+            val top = if (gravity and Gravity.TOP == Gravity.TOP) systemBars.top else screenHeight - systemBars.bottom - height
+            val area = Rect(left, top, left + width, top + height)
+            val overlap = Rect()
+            return overlay.blocks.sumOf { if (overlap.setIntersect(it.bounds, area)) overlap.width().toLong() * overlap.height() else 0L }
+        }
+        return listOf(Gravity.TOP or Gravity.RIGHT, Gravity.TOP or Gravity.LEFT, Gravity.BOTTOM or Gravity.RIGHT, Gravity.BOTTOM or Gravity.LEFT)
+            .minBy(::hidden)
     }
 
     /**
@@ -572,6 +640,7 @@ class LookupActivity : Activity() {
         marksButton.visibility = if (!isText && marksAvailable) View.VISIBLE else View.GONE
         markPanel()
         translation.refresh()
+        showPanelOrChip()
         scroll.scrollTo(0, 0)
         if (panelAtTop != atTop) {
             panelAtTop = atTop

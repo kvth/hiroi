@@ -7,10 +7,12 @@ import io.github.kvth.hiroi.anki.StructuredHtml
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
+import io.github.kvth.hiroi.dictionary.Meanings
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** The looked-up words' notes in the chosen Anki deck, by word; [error] if Anki couldn't be asked. */
 class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null)
@@ -64,9 +66,26 @@ class ResultsHtml(private val colors: Colors) {
         append("e.preventDefault(); b.timer = setTimeout(function () { b.timer = null; Hiroi.audioMenu(+b.dataset.index); }, 500); }, {passive: false});")
         append("document.addEventListener('touchend', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
         append("e.preventDefault(); if (b.timer) { clearTimeout(b.timer); b.timer = null; Hiroi.playAudio(+b.dataset.index); } }, {passive: false});")
+        // A tile opens into its result (and closes when its headword is tapped)
+        append("function openTile(i) { var t = document.getElementById('tile' + i); t.classList.add('open'); t.scrollIntoView({block: 'nearest'}); }")
+        append("document.addEventListener('click', function (e) { var h = e.target.closest && e.target.closest('.tile.open .headword'); ")
+        append("if (h) h.closest('.tile').classList.remove('open'); });")
         append("</script></head><body>")
         anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
-        for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies, media, audio)
+        if (result.sections.isEmpty()) {
+            for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies, media, audio)
+        } else {
+            // A search in sections (Latin text): each a grid of small tiles, as Akebi shows them, that open into the whole result
+            for ((s, section) in result.sections.withIndex()) {
+                append("<div class=\"section\">").append(Html.escape(section.title)).append("</div><div class=\"tiles\">")
+                for (i in section.first until (result.sections.getOrNull(s + 1)?.first ?: result.terms.size)) {
+                    tile(i, result.terms[i], frequencies, section.words)
+                    term(i, result.terms[i], anki, cards, frequencies, media, audio)
+                    append("</div></div>")
+                }
+                append("</div>")
+            }
+        }
         for (kanji in result.kanji) kanji(kanji, frequencies)
         append("</body></html>")
     }
@@ -121,7 +140,63 @@ class ResultsHtml(private val colors: Colors) {
             }
             definition(definition.entry, media, only)
         }
-        append("</ol></div>")
+        append("</ol>")
+        kanjiOf(term)
+        append("</div>")
+    }
+
+    /** The kanji of [term]'s word, folded: each kanji dictionary's meanings, readings and numbers for it */
+    private fun StringBuilder.kanjiOf(term: TermGroup) {
+        if (term.kanji.isEmpty()) return
+        val characters = term.kanji.map { it.character }.distinct()
+        append("<details class=\"kanji-breakdown\"><summary>Kanji <span lang=\"ja\">").append(Html.escape(characters.joinToString(" "))).append("</span></summary>")
+        for (character in characters) {
+            append("<div class=\"kanji-card\"><div class=\"kanji-character\" lang=\"ja\">").append(Html.escape(character)).append("</div><div>")
+            for (kanji in term.kanji.filter { it.character == character }) {
+                append("<div class=\"kanji-dictionary\">")
+                tag("dictionary", kanji.dictionary)
+                if (kanji.meanings.isNotEmpty()) append(" ").append(Html.escape(kanji.meanings.joinToString(", ")))
+                append("</div>")
+                val readings = listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi).filter { it.second.isNotBlank() }
+                if (readings.isNotEmpty()) {
+                    append("<div class=\"kanji-readings\" lang=\"ja\">")
+                    readings.joinTo(this, " · ") { (label, r) -> "<span class=\"kanji-label\">$label</span> " + Html.escape(r.replace(" ", "、")) }
+                    append("</div>")
+                }
+                val numbers = kanjiNumbers(kanji) + kanji.frequencies.map { (dictionary, f) -> "${Html.escape(dictionary)} ${Html.escape(f.display)}" }
+                if (numbers.isNotEmpty()) append("<div class=\"kanji-numbers\">").append(numbers.joinToString(" · ")).append("</div>")
+            }
+            append("</div></div>")
+        }
+        append("</details>")
+    }
+
+    /** What a kanji dictionary's stats say that's worth a glance: strokes, grade, JLPT level, frequency, Kanken level */
+    private fun kanjiNumbers(kanji: KanjiEntry): List<String> {
+        val stats = runCatching { JSONObject(kanji.stats) }.getOrNull() ?: return emptyList()
+        return listOf("strokes" to "%s strokes", "grade" to "grade %s", "jlpt" to "old JLPT %s", "freq" to "frequency %s", "漢字検定" to "Kanken %s")
+            .mapNotNull { (key, format) -> stats.optString(key).takeIf { it.isNotEmpty() }?.let { format.format(Html.escape(it)) } }
+    }
+
+    /**
+     * A result as a tile (its reading, its word, its glosses: first the one with [words], what
+     * its definitions were searched for, if they were), darker for a common word; what follows,
+     * up to two closing divs, is shown in its place once it's tapped.
+     */
+    private fun StringBuilder.tile(index: Int, term: TermGroup, frequencies: Frequencies, words: List<String>) {
+        val ranks = term.meta.filter { it.dictionary !in frequencies.occurrenceBased }.mapNotNull { Yomitan.frequency(it, term.reading)?.value }
+        val common = ranks.isNotEmpty() && ranks.min() <= COMMON_RANK
+        val glosses = term.entries.take(TILE_ENTRIES).flatMap { Meanings.glosses(it.glossary) }.distinct()
+        val matching = if (words.isEmpty()) null else glosses.firstOrNull { gloss ->
+            val its = Meanings.words(gloss)
+            words.dropLast(1).all { it in its } && its.any { it.startsWith(words.last()) }
+        }
+        val gloss = (listOfNotNull(matching) + glosses.filter { it != matching }).take(2).joinToString("; ")
+        append("<div class=\"tile").append(if (common) " common" else "").append("\" id=\"tile$index\">")
+        append("<div class=\"tile-head\" onclick=\"openTile($index)\">")
+        append("<div class=\"tile-reading\" lang=\"ja\">").append(if (term.reading != term.expression) Html.escape(term.reading) else "&nbsp;").append("</div>")
+        append("<div class=\"tile-word\" lang=\"ja\">").append(Html.escape(term.expression)).append("</div>")
+        append("<div class=\"tile-gloss\">").append(Html.escape(gloss)).append("</div></div><div class=\"tile-full\">")
     }
 
     /** A headword as it's told apart from the others: its spelling, or its reading where the spellings are the same. */
@@ -192,12 +267,40 @@ class ResultsHtml(private val colors: Colors) {
         append("</span>")
     }
 
+    private companion object {
+        /** Up to which frequency rank a word's tile is marked as common */
+        const val COMMON_RANK = 10_000
+
+        /** The entries of a result whose glosses its tile looks through */
+        const val TILE_ENTRIES = 4
+    }
+
     private fun cssString(text: String) = text.replace("\\", "\\\\").replace("\"", "\\\"")
 
     private fun css() = """
         body { margin: 0; color: ${colors.text}; background: transparent; font-family: sans-serif; font-size: 15px; line-height: 1.45; }
         .error { color: ${colors.secondary}; font-size: 0.85em; margin-bottom: 8px; }
         .entry + .entry { margin-top: 14px; padding-top: 12px; border-top: 1px solid ${colors.secondary}40; }
+        .section { margin: 18px 0 8px; padding-bottom: 3px; border-bottom: 2px solid ${colors.accent}80; color: ${colors.accent}; font-size: 0.85em; font-weight: bold; }
+        .section:first-child { margin-top: 0; }
+        .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5em, 1fr)); gap: 4px; }
+        .tile-head { padding: 6px 4px; border-radius: 6px; background: ${colors.accent}14; text-align: center; overflow: hidden; }
+        .tile.common .tile-head { background: ${colors.accent}33; }
+        .tile-reading { color: ${colors.secondary}; font-size: 0.75em; line-height: 1.3; }
+        .tile-word { font-size: 1.45em; line-height: 1.25; overflow-wrap: anywhere; }
+        .tile-gloss { font-size: 0.8em; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        .tile-full { display: none; }
+        .tile.open { grid-column: 1 / -1; padding: 8px 0 12px; border-bottom: 1px solid ${colors.secondary}40; }
+        .tile.open .tile-head { display: none; }
+        .tile.open .tile-full { display: block; }
+        .kanji-breakdown { margin-top: 8px; }
+        .kanji-breakdown > summary { color: ${colors.accent}; font-size: 0.9em; }
+        .kanji-card { display: flex; gap: 10px; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: ${colors.secondary}14; }
+        .kanji-character { font-size: 2.2em; line-height: 1.1; }
+        .kanji-dictionary { font-size: 0.9em; }
+        .kanji-dictionary + .kanji-readings, .kanji-numbers + .kanji-dictionary { margin-top: 2px; }
+        .kanji-readings, .kanji-numbers { color: ${colors.secondary}; font-size: 0.8em; }
+        .kanji-label { font-weight: bold; }
         .header { display: flex; align-items: flex-end; gap: 8px; }
         .headword { flex: 1; font-size: 2em; line-height: 1.25; }
         .headword .separator { color: ${colors.secondary}; }

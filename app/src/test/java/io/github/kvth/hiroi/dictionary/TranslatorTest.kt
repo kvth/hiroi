@@ -31,6 +31,104 @@ class TranslatorTest {
     }
     private val translator = Translator(store)
 
+    /** A store that can be searched by meaning: "eat", "water" */
+    private val latin = object : DictionaryStore by store {
+        val meanings = mapOf("eat" to listOf("食べる"), "water" to listOf("勉強"), "taberu" to listOf("書く"), "neko" to listOf("書く"))
+
+        override fun findTermsByMeaning(query: String, limit: Int) =
+            meanings[Meanings.words(query).joinToString(" ")].orEmpty().flatMap { e -> store.terms.filter { it.expression == e } }.map { it to 32 }
+
+        override fun meaningWordCounts(words: Collection<String>) = words.filter { it in meanings }.associateWith { 1 }
+
+        override fun existingForms(forms: Collection<String>) =
+            forms.filterTo(HashSet()) { f -> store.terms.any { it.expression == f || it.reading == f } }
+    }
+    private val titles = Translator.SectionTitles({ "Japanese: $it" }, "Meaning", { "Did you mean $it?" })
+
+    private fun sections(result: LookupResult) = result.sections.map { s ->
+        val end = result.sections.firstOrNull { it.first > s.first }?.first ?: result.terms.size
+        s.title to result.terms.subList(s.first, end).map { it.expression }
+    }
+
+    @Test
+    fun latinTextIsSearchedInSections() {
+        val translator = Translator(latin)
+        // By meaning
+        assertEquals(listOf("Meaning" to listOf("食べる")), sections(translator.lookUpLatin("eat", null, true, titles)))
+        // Romaji read as kana, all of it a word; then what has it in its definitions
+        assertEquals(listOf("Japanese: たべる" to listOf("食べる"), "Meaning" to listOf("書く")), sections(translator.lookUpLatin("taberu", "たべる", true, titles)))
+        // Nothing as typed: a spelling one letter away, by meaning and as romaji
+        assertEquals(listOf("Did you mean water?" to listOf("勉強")), sections(translator.lookUpLatin("wter", null, true, titles)))
+        // tbaeru doesn't read as kana: a spelling by meaning first ("taberu" is in definitions here, as in Wadoku's)
+        assertEquals(
+            listOf("Did you mean taberu?" to listOf("書く"), "Did you mean たべる?" to listOf("食べる")),
+            sections(translator.lookUpLatin("tbaeru", null, true, titles)),
+        )
+        assertEquals(listOf("Did you mean taberu?" to listOf("書く")), sections(translator.lookUpLatin("tbaeru", null, false, titles)))
+        // Romaji that reads as kana but isn't a word: romaji one edit away first
+        assertEquals(listOf("Did you mean たべもの?" to listOf("食べ物")), sections(translator.lookUpLatin("tabemonoo", "たべものお", true, titles)))
+    }
+
+    @Test
+    fun aCommonJapaneseWordComesBeforeTheMeaningARareOneAfter() {
+        val translator = Translator(latin, frequencySort = { FrequencySort("Freq", true) })
+        // 食べる is ranked 300
+        assertEquals(listOf("Japanese: たべる", "Meaning"), translator.lookUpLatin("taberu", "たべる", true, titles).sections.map { it.title })
+        // 猫 has no rank
+        assertEquals(listOf("Meaning", "Japanese: ねこ"), translator.lookUpLatin("neko", "ねこ", true, titles).sections.map { it.title })
+    }
+
+    @Test
+    fun aWordNoDefinitionHasIsSpelledAsTheMostCommonOneEditAway() {
+        val counts = object : DictionaryStore by store {
+            override fun meaningWordCounts(words: Collection<String>) = mapOf("water" to 50, "wader" to 2, "eat" to 9).filterKeys { it in words }
+        }
+        val translator = Translator(counts)
+        assertEquals("water", translator.correctMeaning("wter"))
+        assertEquals("eat water", translator.correctMeaning("eat watr"))
+        assertEquals(null, translator.correctMeaning("eat"))
+        // Too short to tell
+        assertEquals(null, translator.correctMeaning("wa"))
+    }
+
+    @Test
+    fun aWordSeveralDictionariesAgreeOnComesBeforeOneThatFitsBetterInOne() {
+        val agreeing = object : DictionaryStore by store {
+            override fun findTermsByMeaning(query: String, limit: Int) = listOf(
+                term("食う", "くう", "v5") to 32,
+                term("食べる", "たべる", "v1").copy(dictionary = "A") to 48,
+                term("食べる", "たべる", "v1").copy(dictionary = "B") to 48,
+                term("食べる", "たべる", "v1").copy(dictionary = "C") to 64,
+                // Too far off to agree
+                term("食べる", "たべる", "v1").copy(dictionary = "D") to 200,
+            )
+        }
+        // 食べる: 48, and two more dictionaries about as good: as good as 16
+        assertEquals(listOf("食べる", "食う"), Translator(agreeing).lookUpMeaning("eat").terms.map { it.expression })
+    }
+
+    @Test
+    fun aResultHasTheKanjiOfItsWord() {
+        val result = translator.lookUp("書いた", 0)!!
+        assertEquals(listOf("書"), result.terms.first { it.expression == "書く" }.kanji.map { it.character })
+        assertEquals(emptyList<KanjiEntry>(), translator.lookUp("ねこ", 0)!!.terms.first { it.expression == "ネコ" }.kanji)
+    }
+
+    @Test
+    fun searchByMeaningPutsTheBestFittingFirstThenTheMoreCommon() {
+        val meanings = object : DictionaryStore by store {
+            override fun findTermsByMeaning(query: String, limit: Int) = listOf(
+                term("食事", "しょくじ", "") to 65,
+                term("食う", "くう", "v5") to 32,
+                term("食べる", "たべる", "v1") to 32,
+            )
+        }
+        val result = Translator(meanings, frequencySort = { FrequencySort("Freq", true) }).lookUpMeaning("eat")
+        // 食べる and 食う fit as well; 食べる is the more common
+        assertEquals(listOf("食べる", "食う", "食事"), result.terms.map { it.expression })
+        assertEquals(0 to 3, result.start to result.end)
+    }
+
     @Test
     fun wildcardSearchFindsWordsStartingWithTheText() {
         val result = translator.lookUpWildcard("食べ", suffix = false)

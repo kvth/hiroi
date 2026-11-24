@@ -5,10 +5,14 @@ import android.content.Context
 import android.database.DatabaseUtils
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.graphics.BitmapFactory
 import io.github.kvth.hiroi.settings.SettingsBackup
+import org.json.JSONObject
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.Callable
@@ -38,11 +42,11 @@ data class DictionaryInfo(
 
 /**
  * The imported Yomitan dictionaries: each in a file of its own ([DictionaryFile]), and their list
- * here, in SQLite too, with their order (their priority: the first comes first) and switches.
+ * here, in SQLite, with their order (their priority: the first comes first) and switches.
  * The list is kept in memory, so a lookup only opens the files of the dictionaries it needs.
  */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 9), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 10), DictionaryStore {
 
     /** The dictionaries' files */
     private val folder = File(context.filesDir, "dictionaries")
@@ -64,14 +68,15 @@ class DictionaryDb private constructor(context: Context) :
     }
 
     /**
-     * Up to 8, the dictionaries' rows were in tables here that they shared; they aren't carried
-     * over to files of their own: the dictionaries need importing again.
+     * Before 10, dictionaries were SQLite files (up to 8, tables here that they shared). Those
+     * aren't carried over to [DictionaryFile]s: the dictionaries need importing again.
      */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 9) {
+        if (oldVersion < 10) {
             for (table in listOf("dictionaries", "terms", "term_meta", "kanji", "kanji_meta", "tags", "media")) db.execSQL("DROP TABLE IF EXISTS $table")
             onCreate(db)
             legacyMediaDir.deleteRecursively()
+            folder.deleteRecursively()
         }
     }
 
@@ -106,9 +111,10 @@ class DictionaryDb private constructor(context: Context) :
         }
         if (!tidied) {
             tidied = true
-            val known = entries.mapTo(HashSet()) { it.file }
-            // With their journals: "x.db-journal", "x.db.importing"
-            folder.listFiles()?.filter { it.name.substringBefore(".db") + ".db" !in known }?.forEach { it.delete() }
+            // A dictionary's file and its suffix search keys ("x.hd.rev"); not what imports leave
+            // behind ("x.hd.importing", files they sort in).
+            val known = entries.flatMapTo(HashSet()) { listOf(it.file, it.file + ".rev") }
+            folder.listFiles()?.filter { it.name !in known }?.forEach { it.delete() }
         }
         return entries
     }
@@ -161,10 +167,14 @@ class DictionaryDb private constructor(context: Context) :
 
     private fun setOrder(order: List<Long>) {
         val db = writableDatabase
-        DictionaryFile.inTransaction(db) {
+        db.beginTransaction()
+        try {
             for ((i, dict) in order.withIndex()) {
                 db.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
             }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
         changed()
     }
@@ -195,24 +205,20 @@ class DictionaryDb private constructor(context: Context) :
             put("styles", facts.styles)
             put("enabled", if (enabled) 1 else 0)
             put("file", name)
-            putCounts(facts)
+            put("terms", facts.terms)
+            put("meta", facts.meta)
+            put("kanji", facts.kanji)
+            put("frequencies", facts.frequencies)
+            put("images", facts.images)
         })
         changed()
         return DictionaryInfo(id, facts.title, facts.revision, facts.terms, facts.meta, facts.kanji, facts.frequencies, facts.frequencyMode, enabled, facts.images)
     }
 
-    private fun ContentValues.putCounts(facts: DictionaryFacts) {
-        put("terms", facts.terms)
-        put("meta", facts.meta)
-        put("kanji", facts.kanji)
-        put("frequencies", facts.frequencies)
-        put("images", facts.images)
-    }
-
     /** A name for a new dictionary file; while it's written, it has ".importing" after it. */
     private fun newFile(): String {
         folder.mkdirs()
-        return UUID.randomUUID().toString() + ".db"
+        return UUID.randomUUID().toString() + ".hd"
     }
 
     private fun writing(name: String) = File(folder, "$name.importing")
@@ -235,8 +241,8 @@ class DictionaryDb private constructor(context: Context) :
 
     /**
      * Runs [query] on each of [entries] and gives their rows in the dictionaries' order. A
-     * dictionary removed meanwhile (its file closed) gives none. One after the other: each takes
-     * well under a millisecond, less than handing it to another thread.
+     * dictionary removed meanwhile (its file closed) gives none. One after the other: with the
+     * files' filters, a dictionary without the forms looked up takes microseconds.
      */
     private fun <T> each(entries: List<Entry>, query: (Entry, DictionaryFile) -> List<T>): List<T> =
         entries.flatMap { entry ->
@@ -246,12 +252,6 @@ class DictionaryDb private constructor(context: Context) :
                 emptyList()
             }
         }
-
-    private fun <T> Future<T>.result(): T = try {
-        get()
-    } catch (e: ExecutionException) {
-        throw e.cause ?: e
-    }
 
     override fun findTerms(forms: Collection<String>): List<TermEntry> {
         if (forms.isEmpty()) return emptyList()
@@ -290,6 +290,30 @@ class DictionaryDb private constructor(context: Context) :
             .sortedBy { it.second }.take(limit).map { it.first }
             .sortedBy { it.expression.length }
     }
+
+    override fun findTermsByMeaning(query: String, limit: Int): List<Pair<TermEntry, Int>> {
+        val words = Meanings.words(query)
+        if (words.isEmpty()) return emptyList()
+        return each(searchable().filter { it.info.terms > 0 }) { e, f -> f.findTermsByMeaning(words, true, limit, e.info.title, e.position) }
+            .sortedBy { it.second }.take(limit)
+    }
+
+    override fun meaningWordCounts(words: Collection<String>): Map<String, Int> {
+        val out = HashMap<String, Int>()
+        for ((word, count) in each(searchable().filter { it.info.terms > 0 }) { _, f -> if (f.hasMeanings()) words.map { it to f.meaningWordCount(it) } else emptyList() }) {
+            if (count > 0) out.merge(word, count, Int::plus)
+        }
+        return out
+    }
+
+    override fun existingForms(forms: Collection<String>): Set<String> =
+        each(searchable().filter { it.info.terms > 0 }) { _, f -> forms.filter(f::hasForm) }.toSet()
+
+    /** Whether dictionary [id] can be searched by meaning */
+    fun meaningSearchAvailableFor(id: Long): Boolean = entries().firstOrNull { it.info.id == id }?.let { it.info.terms > 0 && file(it).hasMeanings() } ?: false
+
+    /** Whether a dictionary turned on can be searched by meaning (English, German…) */
+    fun meaningSearchAvailable(): Boolean = searchable().any { it.info.terms > 0 && file(it).hasMeanings() }
 
     /** Whether suffix search is ready; if not, the first one takes a while on big dictionaries. */
     fun suffixSearchReady(): Boolean = searchable().filter { it.info.terms > 0 }.all { file(it).hasReverseKeys() }
@@ -344,105 +368,34 @@ class DictionaryDb private constructor(context: Context) :
 
     // ---- Importing -----------------------------------------------------------------------------
 
-    /** Held while a dictionary file changes after its import (suffix search's keys), so it isn't exported meanwhile */
+    /** Held while a dictionary file is made for suffix search after its import, so it isn't exported meanwhile */
     private val writing = Any()
 
-    /**
-     * Imports a Yomitan dictionary zip into a file of its own; [onProgress] gets short status
-     * lines. A failed import leaves nothing behind. The banks are parsed on several threads while
-     * this one writes them, in their order.
-     */
-    fun import(zip: File, onProgress: (String) -> Unit): DictionaryInfo {
-        ZipFile(zip).use { file ->
-            val indexEntry = file.getEntry("index.json")
-                ?: throw IllegalArgumentException("Not a Yomitan dictionary (no index.json)")
-            val indexJson = file.getInputStream(indexEntry).use { String(it.readBytes(), Charsets.UTF_8) }
-            val index = Yomitan.parseIndex(indexJson)
-            require(entries().none { it.info.title == index.title }) { "\"${index.title}\" is already imported" }
-            val styles = file.getEntry("styles.css")?.let { entry -> file.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) } }
-            val banks = file.entries().asSequence()
-                .mapNotNull { entry -> BANK.matchEntire(entry.name)?.let { entry to it } }
-                .sortedWith(compareBy({ it.second.groupValues[1] }, { it.second.groupValues[2].toInt() }))
-                .map { (entry, match) -> entry to match.groupValues[1] }
-                .toList()
-            // Once suffix search was used, imports make its keys too.
-            val reverseKeys = searchable().any { runCatching { file(it).hasReverseKeys() }.getOrDefault(false) }
-            val name = newFile()
-            val facts = DictionaryFile.Writer(writing(name)).use { writer ->
-                // Images first, so the definitions can get their sizes as Yomitan stores them.
-                val sizes = HashMap<String, Pair<Int, Int>>()
-                for (entry in file.entries().asSequence().filter { !it.isDirectory && DictionaryImages.mediaType(it.name) != null }.toList()) {
-                    val bytes = file.getInputStream(entry).use { it.readBytes() }
-                    sizes[entry.name] = writer.media(entry.name, bytes)
-                }
-                if (sizes.isNotEmpty()) onProgress("${index.title}: ${sizes.size} images")
-                val parsers = Executors.newFixedThreadPool(PARSE_THREADS)
-                try {
-                    // A few banks ahead of the writer, as many as the memory allows: a bank's text
-                    // and rows take a few times its size, and some are tens of MB.
-                    val budget = Runtime.getRuntime().maxMemory() / 3
-                    val pending = ArrayDeque<Pair<Long, Future<(DictionaryFile.Writer) -> Unit>>>()
-                    var next = 0
-                    var parsing = 0L
-                    fun parseMore() {
-                        while (next < banks.size && pending.size < PARSE_THREADS * 2) {
-                            val (entry, kind) = banks[next]
-                            val cost = 4 * (entry.size.takeIf { it > 0 } ?: (entry.compressedSize * 10))
-                            if (pending.isNotEmpty() && parsing + cost > budget) return
-                            parsing += cost
-                            next++
-                            pending += cost to parsers.submit(Callable { parseBank(file, entry, kind, index.format, sizes) })
-                        }
-                    }
-                    parseMore()
-                    var written = 0
-                    while (pending.isNotEmpty()) {
-                        val (cost, parsed) = pending.removeFirst()
-                        parsed.result()(writer)
-                        parsing -= cost
-                        parseMore()
-                        onProgress("${index.title}: ${++written} / ${banks.size}")
-                    }
-                } finally {
-                    parsers.shutdownNow()
-                }
-                writer.finish(DictionaryFacts(index.title, index.revision, index.frequencyMode, indexJson, styles), reverseKeys)
-            }
-            try {
-                finishWriting(name)
-                return register(facts, name)
-            } catch (e: Exception) {
-                SQLiteDatabase.deleteDatabase(writing(name))
-                SQLiteDatabase.deleteDatabase(File(folder, name))
-                throw e
-            }
-        }
-    }
+    /** How far a long piece of work is: a short status line, and [done] of [total]; a [total] of 0 is unknown. */
+    class Progress(val text: String, val done: Long = 0, val total: Long = 0)
 
-    /** Reads bank [entry], of [kind]; what it returns writes the rows. */
-    private fun parseBank(zip: ZipFile, entry: ZipEntry, kind: String, format: Int, sizes: Map<String, Pair<Int, Int>>): (DictionaryFile.Writer) -> Unit {
-        val json = zip.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) }
-        when (kind) {
-            "term_bank" -> {
-                val rows = Yomitan.parseTermBank(json, format).let { rows ->
-                    if (sizes.isEmpty()) rows else rows.map { it.copy(glossary = DictionaryImages.prepare(it.glossary, sizes::get)) }
-                }
-                return { it.terms(rows) }
-            }
-            "term_meta_bank", "kanji_meta_bank" -> {
-                val rows = Yomitan.parseTermMetaBank(json)
-                return { it.meta(rows, ofKanji = kind == "kanji_meta_bank") }
-            }
-            "kanji_bank" -> {
-                val rows = Yomitan.parseKanjiBank(json, format)
-                return { it.kanji(rows) }
-            }
-            "tag_bank" -> {
-                val rows = Yomitan.parseTagBank(json)
-                return { it.tags(rows) }
-            }
+    /**
+     * Imports a Yomitan dictionary zip into a file of its own ([write]); [onProgress] gets how
+     * far it is. A failed import leaves nothing behind.
+     */
+    fun import(zip: File, onProgress: (Progress) -> Unit): DictionaryInfo {
+        val title = ZipFile(zip).use { file ->
+            val indexEntry = file.getEntry("index.json") ?: throw IllegalArgumentException("Not a Yomitan dictionary (no index.json)")
+            Yomitan.parseIndex(file.getInputStream(indexEntry).use { String(it.readBytes(), Charsets.UTF_8) }).title
         }
-        return {}
+        require(entries().none { it.info.title == title }) { "\"$title\" is already imported" }
+        // Once suffix search was used, imports make its keys too.
+        val reverseKeys = searchable().any { runCatching { file(it).hasReverseKeys() }.getOrDefault(false) }
+        val name = newFile()
+        try {
+            val facts = write(zip, writing(name), reverseKeys, onProgress)
+            if (reverseKeys) File(writing(name).path + ".rev").renameTo(File(folder, "$name.rev"))
+            finishWriting(name)
+            return register(facts, name)
+        } catch (e: Exception) {
+            for (f in listOf(writing(name), File(folder, name), File(writing(name).path + ".rev"), File(folder, "$name.rev"))) f.delete()
+            throw e
+        }
     }
 
     /**
@@ -451,7 +404,7 @@ class DictionaryDb private constructor(context: Context) :
      * imported. Its title may differ (Jitendex and JMdict have their date in it), and may be the
      * same: the old one is renamed meanwhile, and gets its title back if the import fails.
      */
-    fun replace(oldId: Long, zip: File, onProgress: (String) -> Unit): DictionaryInfo {
+    fun replace(oldId: Long, zip: File, onProgress: (Progress) -> Unit): DictionaryInfo {
         val db = writableDatabase
         val (title, position, enabled) = db.rawQuery("SELECT title, position, enabled FROM dictionaries WHERE id = ?", arrayOf(oldId.toString())).use { c ->
             require(c.moveToFirst()) { "The dictionary to update is gone" }
@@ -488,7 +441,8 @@ class DictionaryDb private constructor(context: Context) :
         changed()
         if (name != null) {
             files.remove(name)?.close()
-            SQLiteDatabase.deleteDatabase(File(folder, name))
+            File(folder, name).delete()
+            File(folder, "$name.rev").delete()
         }
     }
 
@@ -499,28 +453,30 @@ class DictionaryDb private constructor(context: Context) :
 
     /**
      * Writes every dictionary, in their order and with their switches, as a [HiroiCollection]:
-     * their files, zipped. [onProgress] gets the MB written and the total. Returns how many
-     * dictionaries it wrote.
+     * their files as [DictionaryFile.writePortable] writes them, zipped. [onProgress] gets the MB
+     * written and the total. Returns how many dictionaries it wrote.
      */
     fun exportCollection(out: OutputStream, onProgress: (Long, Long) -> Unit): Int = synchronized(writing) {
         val list = entries()
         val items = list.mapIndexed { i, entry -> HiroiCollection.Item(entry.info.title, HiroiCollection.path(i + 1), entry.info.enabled) }
-        val total = list.sumOf { File(folder, it.file).length() }
+        val total = list.sumOf { file(it).portableSize() }
         var written = 0L
         ZipOutputStream(out.buffered(BUFFER)).use { zip ->
-            // Dictionary files pack to about half; the fastest level does nearly as well as the best.
+            // Glossaries and images are deflated already; the fastest level does the rest nearly as well as the best.
             zip.setLevel(Deflater.BEST_SPEED)
             zip.putNextEntry(ZipEntry(HiroiCollection.MANIFEST))
             zip.write(HiroiCollection.manifest(items).toByteArray())
             zip.closeEntry()
             for ((entry, item) in list.zip(items)) {
                 zip.putNextEntry(ZipEntry(item.path))
-                File(folder, entry.file).inputStream().use { input ->
-                    copy(input, zip) { n ->
-                        written += n
+                file(entry).writePortable(object : OutputStream() {
+                    override fun write(b: Int) = write(byteArrayOf(b.toByte()), 0, 1)
+                    override fun write(b: ByteArray, off: Int, len: Int) {
+                        zip.write(b, off, len)
+                        written += len
                         onProgress(written shr 20, total shr 20)
                     }
-                }
+                })
                 zip.closeEntry()
             }
         }
@@ -529,8 +485,8 @@ class DictionaryDb private constructor(context: Context) :
 
     /**
      * Adds the dictionaries of a [HiroiCollection] after the ones here, with their switches;
-     * those already here (by title) are left as they are. [onProgress] gets the MB read. A failed
-     * import leaves nothing behind.
+     * those already here (by title) are left as they are. [onProgress] gets the bytes of [input]
+     * read so far. A failed import leaves nothing behind.
      */
     fun importCollection(input: InputStream, onProgress: (Long) -> Unit): CollectionImport {
         val titles = entries().mapTo(HashSet()) { it.info.title }
@@ -539,34 +495,43 @@ class DictionaryDb private constructor(context: Context) :
         val skipped = mutableListOf<String>()
         var read = 0L
         try {
-            ZipInputStream(input.buffered(BUFFER)).use { zip ->
+            val counted = object : FilterInputStream(input) {
+                override fun read(): Int = super.read().also { if (it >= 0) onProgress(++read) }
+                override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { n ->
+                    if (n > 0) {
+                        read += n
+                        onProgress(read)
+                    }
+                }
+            }
+            ZipInputStream(counted.buffered(BUFFER)).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     if (entry.name == HiroiCollection.MANIFEST) {
                         items = HiroiCollection.items(String(zip.readBytes(), Charsets.UTF_8)).associateBy { it.path }
                         continue
                     }
-                    if (entry.isDirectory || !entry.name.endsWith(".db")) continue
+                    if (entry.isDirectory || !entry.name.endsWith(HiroiCollection.EXTENSION)) continue
                     val listed = items ?: throw IllegalArgumentException("Not a Hiroi dictionary collection")
                     val name = newFile()
+                    val portable = File(folder, "$name.portable")
                     try {
-                        writing(name).outputStream().use { out ->
-                            copy(zip, out) { n ->
-                                read += n
-                                onProgress(read shr 20)
-                            }
-                        }
+                        portable.outputStream().use { out -> zip.copyTo(out, BUFFER) }
+                        // The keys again, which the collection leaves out
+                        DictionaryFile.restore(portable, writing(name))
+                        portable.delete()
                         val facts = DictionaryFile.open(writing(name)).use { it.facts() }
                         if (facts.title in titles) {
                             skipped += facts.title
-                            SQLiteDatabase.deleteDatabase(writing(name))
+                            writing(name).delete()
                         } else {
                             finishWriting(name)
                             added += register(facts, name, listed[entry.name]?.enabled ?: true)
                             titles += facts.title
                         }
                     } catch (e: Exception) {
-                        SQLiteDatabase.deleteDatabase(writing(name))
+                        portable.delete()
+                        writing(name).delete()
                         throw e
                     }
                 }
@@ -577,17 +542,6 @@ class DictionaryDb private constructor(context: Context) :
             throw e
         }
         return CollectionImport(added.map { it.title }, skipped)
-    }
-
-    /** Copies [input] to [out], telling [onCopied] the bytes of each piece. */
-    private inline fun copy(input: InputStream, out: OutputStream, onCopied: (Int) -> Unit) {
-        val buffer = ByteArray(BUFFER)
-        while (true) {
-            val n = input.read(buffer)
-            if (n < 0) break
-            out.write(buffer, 0, n)
-            onCopied(n)
-        }
     }
 
     companion object {
@@ -602,7 +556,145 @@ class DictionaryDb private constructor(context: Context) :
         /** Threads parsing banks while another writes them */
         private val PARSE_THREADS = (CORES - 1).coerceIn(1, 4)
 
+        /** Rows a bank is read in at a time, and how many the glossaries' deflate dictionary is made from */
+        private const val CHUNK = 2000
+        private const val SAMPLE = 8000
+
         private const val BUFFER = 1 shl 16
+
+        private class EnoughForSample : RuntimeException()
+
+        /** A zip entry's size, guessed from its compressed size if the zip doesn't say */
+        private fun size(entry: ZipEntry): Long = entry.size.takeIf { it > 0 } ?: (entry.compressedSize * 10)
+
+        private fun <T> Future<T>.result(): T = try {
+            get()
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
+        }
+
+        /** An image's size: an SVG's from its attributes (100 × 100 if it has none, Yomitan's default), else the image's own. */
+        private fun imageSize(type: String, bytes: ByteArray): Pair<Int, Int> =
+            if (type == "image/svg+xml") {
+                DictionaryImages.svgSize(String(bytes)) ?: (100 to 100)
+            } else {
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                if (options.outWidth > 0) options.outWidth to options.outHeight else 100 to 100
+            }
+
+        /**
+         * Writes the Yomitan dictionary in [zip] as a [DictionaryFile] at [out] (and its suffix
+         * search keys if [reverseKeys]); [onProgress] gets how far it is, by the bytes of the images
+         * and banks done, then (of no telling how long) the index being written. The banks are read
+         * as they're read, a chunk of rows at a time: some are 50 MB of JSON, some have a million
+         * rows. Several threads parse them and deflate the glossaries while this one writes, in
+         * their order.
+         */
+        fun write(zip: File, out: File, reverseKeys: Boolean, onProgress: (Progress) -> Unit): DictionaryFacts = ZipFile(zip).use { file ->
+            val indexJson = file.getInputStream(file.getEntry("index.json")).use { String(it.readBytes(), Charsets.UTF_8) }
+            val index = Yomitan.parseIndex(indexJson)
+            val styles = file.getEntry("styles.css")?.let { entry -> file.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) } }
+            val banks = file.entries().asSequence()
+                .mapNotNull { entry -> BANK.matchEntire(entry.name)?.let { entry to it } }
+                .sortedWith(compareBy({ it.second.groupValues[1] }, { it.second.groupValues[2].toInt() }))
+                .map { (entry, match) -> entry to match.groupValues[1] }
+                .toList()
+            val images = file.entries().asSequence().filter { !it.isDirectory && DictionaryImages.mediaType(it.name) != null }.toList()
+            val total = images.sumOf(::size) + banks.sumOf { size(it.first) }
+            var done = 0L
+            fun advance(entry: ZipEntry, step: String) {
+                done += size(entry)
+                onProgress(Progress("${index.title}: $step", done, total))
+            }
+            onProgress(Progress("${index.title}: reading entries", 0, total))
+            fun reader(entry: ZipEntry) = InputStreamReader(file.getInputStream(entry), Charsets.UTF_8)
+            fun json(entry: ZipEntry) = file.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) }
+
+            // What every glossary block starts from, from the start of the first term bank
+            val sample = ArrayList<String>()
+            banks.firstOrNull { it.second == "term_bank" }?.let { (entry, _) ->
+                try {
+                    reader(entry).use { r ->
+                        Yomitan.parseTermBank(r, index.format, CHUNK) { rows ->
+                            sample += rows.map { it.glossary }
+                            if (sample.size >= SAMPLE) throw EnoughForSample()
+                        }
+                    }
+                } catch (e: EnoughForSample) {
+                }
+            }
+
+            // Definitions in English, German… are indexed by their words, for searching by meaning
+            val meanings = Meanings.inLatinLetters(JSONObject(indexJson).optString("targetLanguage").ifEmpty { null }, sample)
+            DictionaryFile.Writer(out, DictionaryFile.trainDictionary(sample), meanings = meanings).use { writer ->
+                // Images first, so the definitions can get their sizes as Yomitan stores them.
+                val sizes = HashMap<String, Pair<Int, Int>>()
+                for (entry in images) {
+                    val bytes = file.getInputStream(entry).use { it.readBytes() }
+                    val type = DictionaryImages.mediaType(entry.name)!!
+                    val size = imageSize(type, bytes)
+                    writer.media(entry.name, bytes, type, size)
+                    sizes[entry.name] = size
+                    advance(entry, "reading images")
+                }
+
+                /** Reads bank [entry], of [kind], on a parsing thread; what it returns writes its rows. */
+                fun parse(entry: ZipEntry, kind: String): () -> Unit = when (kind) {
+                    "term_bank" -> {
+                        val prepared = ArrayList<DictionaryFile.PreparedTerms>()
+                        reader(entry).use { r ->
+                            Yomitan.parseTermBank(r, index.format, CHUNK) { rows ->
+                                val withSizes = if (sizes.isEmpty()) rows else rows.map { it.copy(glossary = DictionaryImages.prepare(it.glossary, sizes::get)) }
+                                prepared += writer.prepareTerms(withSizes)
+                            }
+                        }
+                        ({ prepared.forEach(writer::terms) })
+                    }
+                    "term_meta_bank", "kanji_meta_bank" -> {
+                        val prepared = ArrayList<DictionaryFile.PreparedMeta>()
+                        reader(entry).use { r -> Yomitan.parseTermMetaBank(r, CHUNK) { rows -> prepared += writer.prepareMeta(rows, kind == "kanji_meta_bank") } }
+                        ({ prepared.forEach(writer::meta) })
+                    }
+                    "kanji_bank" -> Yomitan.parseKanjiBank(json(entry), index.format).let { rows -> { writer.kanji(rows) } }
+                    "tag_bank" -> Yomitan.parseTagBank(json(entry)).let { rows -> { writer.tags(rows) } }
+                    else -> ({})
+                }
+
+                val parsers = Executors.newFixedThreadPool(PARSE_THREADS)
+                try {
+                    // A few banks ahead of the writer, as many as the memory allows: a bank being
+                    // read takes a chunk's rows and what the rows before it became.
+                    val budget = Runtime.getRuntime().maxMemory() / 3
+                    val pending = ArrayDeque<Pair<Long, Future<() -> Unit>>>()
+                    var next = 0
+                    var parsing = 0L
+                    fun parseMore() {
+                        while (next < banks.size && pending.size < PARSE_THREADS * 2) {
+                            val (entry, kind) = banks[next]
+                            val cost = minOf(4 * size(entry), 24L shl 20)
+                            if (pending.isNotEmpty() && parsing + cost > budget) return
+                            parsing += cost
+                            next++
+                            pending += cost to parsers.submit(Callable { parse(entry, kind) })
+                        }
+                    }
+                    parseMore()
+                    var written = 0
+                    while (pending.isNotEmpty()) {
+                        val (cost, parsed) = pending.removeFirst()
+                        parsed.result()()
+                        parsing -= cost
+                        parseMore()
+                        advance(banks[written++].first, "reading entries")
+                    }
+                } finally {
+                    parsers.shutdownNow()
+                }
+                onProgress(Progress("${index.title}: writing the index…"))
+                writer.finish(DictionaryFacts(index.title, index.revision, index.frequencyMode, indexJson, styles), reverseKeys)
+            }
+        }
 
         @Volatile
         private var instance: DictionaryDb? = null

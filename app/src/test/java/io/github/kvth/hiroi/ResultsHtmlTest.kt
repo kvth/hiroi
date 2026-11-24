@@ -1,6 +1,8 @@
 package io.github.kvth.hiroi
 
+import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
+import io.github.kvth.hiroi.dictionary.ResultSection
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
@@ -34,6 +36,39 @@ class ResultsHtmlTest {
         assertTrue(html, "class=\"tag pitch\"><span class=\"label\">NHK</span>" in html)
         assertTrue(html, "onclick=\"Hiroi.addCard(0)\"" in html)
         assertTrue("an existing note can be opened", "<button class=\"card\" id=\"open0\" onclick=\"Hiroi.openNote(0)\">Open in Anki</button>" in html)
+    }
+
+    @Test
+    fun headsTheSectionsOfASearch() {
+        val result = LookupResult(0, 5, listOf(term, term), emptyList(), listOf(ResultSection(0, "Japanese: ほうせ"), ResultSection(1, "Meaning")))
+        val sectioned = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(result, null, emptyMap(), cards = false)
+        val japanese = sectioned.indexOf("<div class=\"section\">Japanese: ほうせ</div>")
+        val meaning = sectioned.indexOf("<div class=\"section\">Meaning</div>")
+        val entries = Regex("<div class=\"entry\">").findAll(sectioned).map { it.range.first }.toList()
+        assertTrue(sectioned, japanese in 0 until entries[0] && meaning in entries[0] until entries[1])
+        // As tiles: the word, its reading and first glosses, common (JPDB 2412); the whole result inside, shown once tapped
+        assertTrue(sectioned, "<div class=\"tile common\" id=\"tile0\"><div class=\"tile-head\" onclick=\"openTile(0)\">" in sectioned)
+        assertTrue(sectioned, "<div class=\"tile-reading\" lang=\"ja\">とどく</div><div class=\"tile-word\" lang=\"ja\">届く</div>" in sectioned)
+        assertTrue(sectioned, "<div class=\"tile-gloss\">5-dan; to reach</div></div><div class=\"tile-full\"><div class=\"entry\">" in sectioned)
+        assertFalse("a lookup without sections isn't in tiles", "class=\"tile" in html)
+    }
+
+    @Test
+    fun aTileShowsTheGlossThatWasSearchedForFirst() {
+        val result = LookupResult(0, 6, listOf(term), emptyList(), listOf(ResultSection(0, "Meaning", listOf("arrive"))))
+        val sectioned = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(result, null, emptyMap(), cards = false)
+        assertTrue(sectioned, "<div class=\"tile-gloss\">to arrive; 5-dan</div>" in sectioned)
+    }
+
+    @Test
+    fun foldsTheKanjiOfTheWord() {
+        val withKanji = term.copy(kanji = listOf(KanjiEntry("届", "カイ", "とど.く", "", listOf("deliver", "reach"), "KANJIDIC", stats = """{"strokes":"8","grade":"6","skip":"3-3-5"}""")))
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(LookupResult(0, 6, listOf(withKanji), emptyList()), null, emptyMap(), cards = false)
+        assertTrue(page, "<details class=\"kanji-breakdown\"><summary>Kanji <span lang=\"ja\">届</span></summary>" in page)
+        assertTrue(page, "<span class=\"label\">KANJIDIC</span></span> deliver, reach" in page)
+        assertTrue(page, "<span class=\"kanji-label\">On</span> カイ · <span class=\"kanji-label\">Kun</span> とど.く" in page)
+        assertTrue(page, "<div class=\"kanji-numbers\">8 strokes · grade 6</div>" in page)
+        assertFalse("a word without kanji data has no kanji row", "kanji-breakdown\">" in html)
     }
 
     @Test

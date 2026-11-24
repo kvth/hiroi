@@ -2,6 +2,7 @@ package io.github.kvth.hiroi.dictionary
 
 import io.github.kvth.hiroi.japanese.Deinflector
 import io.github.kvth.hiroi.japanese.Japanese
+import io.github.kvth.hiroi.japanese.Romaji
 
 interface DictionaryStore {
     /** Entries whose expression or reading is one of [forms]; their glossaries may be left out ([withGlossaries]). */
@@ -35,6 +36,19 @@ interface DictionaryStore {
      * with [affix], or ends with it if [suffix]; the shortest first.
      */
     fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int): List<TermEntry> = emptyList()
+
+    /**
+     * Up to [limit] entries of the dictionaries turned on whose definitions have the words of
+     * [query] ([Meanings.words]), the last as the start of a word too; each with how well it fits,
+     * lower fitting better. Only dictionaries with definitions in Latin letters have them.
+     */
+    fun findTermsByMeaning(query: String, limit: Int): List<Pair<TermEntry, Int>> = emptyList()
+
+    /** How many terms' definitions have each of [words] in the dictionaries turned on, those that any have */
+    fun meaningWordCounts(words: Collection<String>): Map<String, Int> = emptyMap()
+
+    /** Those of [forms] that are a term's expression or reading in a dictionary turned on */
+    fun existingForms(forms: Collection<String>): Set<String> = emptySet()
 }
 
 /**
@@ -95,6 +109,8 @@ data class TermGroup(
     val deinflected: String = expression,
     val processed: Boolean = false,
     val headwords: List<Headword> = listOf(Headword(expression, reading)),
+    /** The kanji of [expression], each as the kanji dictionaries have it, in their order */
+    val kanji: List<KanjiEntry> = emptyList(),
 ) {
     /** The headword of [entry] in [headwords] */
     fun headwordIndex(entry: TermEntry): Int =
@@ -113,7 +129,17 @@ data class TermGroup(
 }
 
 /** [start]..[end] is the longest matched text. */
-data class LookupResult(val start: Int, val end: Int, val terms: List<TermGroup>, val kanji: List<KanjiEntry>)
+data class LookupResult(
+    val start: Int,
+    val end: Int,
+    val terms: List<TermGroup>,
+    val kanji: List<KanjiEntry>,
+    /** Headings of groups of [terms], for a search that finds them in several ways ([ResultSection]) */
+    val sections: List<ResultSection> = emptyList(),
+)
+
+/** A heading ([title]) over [terms][LookupResult.terms] from [first] on; [words]: what its definitions were searched for, if they were */
+data class ResultSection(val first: Int, val title: String, val words: List<String> = emptyList())
 
 /**
  * Yomitan-style lookup: the longest dictionary word, as written or deinflected, starting at a
@@ -128,7 +154,8 @@ class Translator(
 ) {
 
     /** [processed]: read as hiragana rather than as written (Yomitan's text processing). */
-    private class Candidate(val form: String, val source: String, val conditions: Int, val inflections: List<String>, val processed: Boolean)
+    /** [fit]: how well a search by meaning fits it, lower fitting better (0 for others) */
+    private class Candidate(val form: String, val source: String, val conditions: Int, val inflections: List<String>, val processed: Boolean, val fit: Int = 0)
 
     /** [definitions]: read the results' glossaries (not needed for furigana, say). */
     fun lookUp(text: String, start: Int, definitions: Boolean = true): LookupResult? {
@@ -145,6 +172,19 @@ class Translator(
             }
         }
 
+        val terms = match(candidates, definitions)
+
+        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
+            val character = text[start].toString()
+            val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
+            store.findKanji(character).map { it.copy(frequencies = frequencies) }
+        }
+        val length = terms.firstOrNull()?.source?.length ?: 1
+        return LookupResult(start, start + length, terms, kanji)
+    }
+
+    /** The results for [candidates], the best first: the entries of their forms that their conjugation fits */
+    private fun match(candidates: List<Candidate>, definitions: Boolean = true): List<TermGroup> {
         val byForm = HashMap<String, MutableList<TermEntry>>()
         for (entry in store.findTerms(candidates.mapTo(LinkedHashSet()) { it.form })) {
             byForm.getOrPut(entry.expression) { mutableListOf() } += entry
@@ -160,15 +200,98 @@ class Translator(
                 if (entry.dictionary in anyPartOfSpeech || Deinflector.accepts(candidate.conditions, entry.rules)) matched.putIfAbsent(entry, candidate)
             }
         }
-        val terms = results(matched, candidates.withIndex().associate { (i, c) -> c to i }, definitions)
+        return results(matched, candidates.withIndex().associate { (i, c) -> c to i }, definitions)
+    }
 
-        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
-            val character = text[start].toString()
-            val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
-            store.findKanji(character).map { it.copy(frequencies = frequencies) }
+    /** A section of [lookUpLatin]'s result, and the words its definitions were searched for if they were */
+    private class Section(val title: String, val terms: List<TermGroup>, val words: List<String> = emptyList())
+
+    /** What [lookUpLatin]'s sections are called: the romaji read as kana, by meaning, a spelling meant instead */
+    class SectionTitles(val japanese: (kana: String) -> String, val meaning: String, val didYouMean: (spelling: String) -> String)
+
+    /**
+     * A search of text in Latin letters, in sections as Akebi's: the word [kana] is all of, if it's
+     * the text typed as romaji; the words of [query]'s meaning; and if neither finds anything, the
+     * words of spellings one edit away ([correctMeaning]) and, if [correctRomaji], of romaji one
+     * edit away ([romajiCorrections]), the romaji first if the text reads as kana. Failing all that,
+     * the words [kana] starts with. The result spans [query].
+     */
+    fun lookUpLatin(query: String, kana: String?, correctRomaji: Boolean, titles: SectionTitles): LookupResult {
+        val sections = ArrayList<Section>()
+        var partial = emptyList<TermGroup>()
+        var japanese: Section? = null
+        if (kana != null) {
+            val found = lookUp(kana, 0)?.terms.orEmpty()
+            val whole = found.filter { it.source.length == kana.length }
+            if (whole.isNotEmpty()) japanese = Section(titles.japanese(kana), whole.take(MAX_SECTION)) else partial = found
         }
-        val length = terms.firstOrNull()?.source?.length ?: 1
-        return LookupResult(start, start + length, terms, kanji)
+        val meaning = lookUpMeaning(query).terms.takeIf { it.isNotEmpty() }?.let { Section(titles.meaning, it, Meanings.words(query)) }
+        // Japanese first if it's a common word (taberu, neko), else what the meaning finds (house, not 法施)
+        sections += listOfNotNull(japanese, meaning).sortedBy { if (it === japanese && common(it.terms)) 0 else if (it === meaning) 1 else 2 }
+        if (sections.isEmpty()) {
+            val byMeaning = correctMeaning(query)?.let { spelling ->
+                lookUpMeaning(spelling).terms.takeIf { it.isNotEmpty() }?.let { Section(titles.didYouMean(spelling), it.take(MAX_SECTION), Meanings.words(spelling)) }
+            }
+            val byRomaji = if (!correctRomaji) null else lookUpForms(romajiCorrections(query), query).takeIf { it.isNotEmpty() }?.let {
+                Section(titles.didYouMean(it.first().reading), it.take(MAX_SECTION))
+            }
+            // The same for what it might have been meant as: tbaemono as 食べ物, but hosue as house, not ホセ
+            sections += listOfNotNull(byRomaji, byMeaning).sortedBy { if (it === byRomaji && (kana != null && common(it.terms) || byMeaning == null)) 0 else if (it === byMeaning) 1 else 2 }
+        }
+        if (sections.isEmpty() && partial.isNotEmpty()) sections += Section(titles.japanese(kana!!), partial)
+        val terms = ArrayList<TermGroup>()
+        val headings = ArrayList<ResultSection>()
+        for (section in sections) {
+            headings += ResultSection(terms.size, section.title, section.words)
+            terms += section.terms
+        }
+        return LookupResult(0, query.length, terms, emptyList(), headings)
+    }
+
+    /**
+     * Whether the first of [terms] is a common word, as the frequency dictionary results are
+     * sorted by ranks it ([COMMON_RANK]); without one (or with occurrence counts) it counts as one.
+     */
+    private fun common(terms: List<TermGroup>): Boolean {
+        val sort = frequencySort() ?: return true
+        if (!sort.ascending) return true
+        return frequencyOrder(terms.first(), sort) <= COMMON_RANK
+    }
+
+    /**
+     * [query] with each of its words ([Meanings.words]) that no definition has spelled as the
+     * most common spelling one edit away that some have (wter → water); null if none is changed.
+     */
+    fun correctMeaning(query: String): String? {
+        val words = Meanings.words(query)
+        if (words.isEmpty()) return null
+        val known = store.meaningWordCounts(words)
+        var changed = false
+        val corrected = words.map { word ->
+            if (word in known || word.length < SHORTEST_CORRECTED) word
+            else store.meaningWordCounts(Spelling.edits(word)).maxByOrNull { it.value }?.key?.also { changed = true } ?: word
+        }
+        return if (changed) corrected.joinToString(" ") else null
+    }
+
+    /**
+     * The kana of the romaji one edit away from [romaji] (tbaeru → たべる) that are a word, or
+     * a conjugation of one, in a dictionary: hiragana, and katakana for words written in it.
+     */
+    fun romajiCorrections(romaji: String): List<String> {
+        val word = romaji.lowercase()
+        if (word.length < SHORTEST_CORRECTED || word.any { it !in 'a'..'z' }) return emptyList()
+        val kana = Spelling.edits(word).map(Romaji::toKana).filter { k -> k.isNotEmpty() && k.none { it in 'a'..'z' } }
+            .flatMap { listOf(it, Japanese.toKatakana(it)) }.distinct()
+        val forms = kana.associateWith { k -> Deinflector.deinflect(k).map { it.text } }
+        val existing = store.existingForms(forms.values.flatten().toSet())
+        return kana.filter { k -> forms.getValue(k).any { it in existing } }
+    }
+
+    /** The words [forms] are, or conjugations of, sorted as other results; [source] is what was searched */
+    private fun lookUpForms(forms: List<String>, source: String): List<TermGroup> {
+        if (forms.isEmpty()) return emptyList()
+        return match(forms.flatMap { form -> Deinflector.deinflect(form).map { Candidate(it.text, source, it.conditions, it.inflections, false) } })
     }
 
     /**
@@ -185,6 +308,20 @@ class Translator(
         }
         val terms = results(matched, candidates.values.withIndex().associate { (i, c) -> c to i })
         return LookupResult(0, affix.length, terms, emptyList())
+    }
+
+    /**
+     * A search by meaning: the words whose definitions have the words of [query] (English,
+     * German…), those whose definition is more nearly just those words first, then sorted as
+     * other results. The result spans [query].
+     */
+    fun lookUpMeaning(query: String): LookupResult {
+        val matched = LinkedHashMap<TermEntry, Candidate>()
+        for ((entry, fit) in store.findTermsByMeaning(query, MAX_MEANING_ENTRIES)) {
+            matched[entry] = Candidate(entry.expression, query, 0, emptyList(), false, fit)
+        }
+        val rank = matched.values.sortedBy { it.fit }.withIndex().associate { (i, c) -> c to i }
+        return LookupResult(0, query.length, results(matched, rank), emptyList())
     }
 
     /**
@@ -216,14 +353,38 @@ class Translator(
                 processed = candidate.processed,
                 headwords = headwords,
             )
-            Sortable(term, candidate.processed, candidate.form == first.expression, frequencyOrder(term, sort))
+            // Found by meaning, any spelling is as good (食べる and 喰べる)
+            val exact = candidate.fit > 0 || candidate.form == first.expression
+            Sortable(term, candidate.processed, exact, frequencyOrder(term, sort), agreed(entries, matched, candidate.fit))
         }.sortedWith(ORDER)
         val shown = sorted.map { it.term }.take(MAX_RESULTS)
         if (!definitions) return shown
         val entries = shown.flatMapTo(LinkedHashSet()) { it.entries }.toList()
         val full = entries.zip(store.withGlossaries(entries)).toMap()
-        return shown.map { term -> term.copy(entries = term.entries.map(full::getValue)) }
+        val kanji = HashMap<Char, List<KanjiEntry>>()
+        fun kanjiOf(word: String) = word.filter(Japanese::isKanji).toSet().flatMap { c ->
+            kanji.getOrPut(c) {
+                val frequencies = store.findKanjiMeta(c.toString()).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
+                store.findKanji(c.toString()).map { it.copy(frequencies = frequencies) }
+            }
+        }
+        return shown.map { term -> term.copy(entries = term.entries.map(full::getValue), kanji = kanjiOf(term.expression)) }
     }
+
+    /**
+     * How well a result found by meaning fits, [best] being its best fitting entry's fit: better
+     * for every other dictionary that defines it about as well (食べる, "to eat" in three of them),
+     * as much as a word less in its gloss each, up to [MOST_AGREEING]. 0 for other results.
+     */
+    private fun agreed(entries: List<TermEntry>, matched: Map<TermEntry, Candidate>, best: Int): Int {
+        if (best <= 0) return 0
+        val fit = lenient(best)
+        val agreeing = entries.mapNotNull { e -> matched[e]?.takeIf { it.fit > 0 && lenient(it.fit) <= fit + AGREEING_FIT }?.let { e.dictionary } }.distinct().size
+        return fit - minOf(agreeing - 1, MOST_AGREEING) * AGREEING_WORTH
+    }
+
+    /** A fit with a gloss of one word as good as one of two: "eat" as "to eat" */
+    private fun lenient(fit: Int): Int = (fit and 0xff.inv()) or (maxOf((fit shr 4) and 0xf, 2) shl 4) or (fit and 0xf)
 
     /** The matched [entries] in groups, one per result, as Yomitan's result grouping mode groups them. */
     private fun group(entries: Collection<TermEntry>, grouping: Grouping): List<List<TermEntry>> = when (grouping.mode) {
@@ -279,7 +440,7 @@ class Translator(
     }
 
     /** A result with what it's sorted by besides itself; [exact]: the headword is spelled as it was matched. */
-    private class Sortable(val term: TermGroup, val processed: Boolean, val exact: Boolean, val frequencyOrder: Long)
+    private class Sortable(val term: TermGroup, val processed: Boolean, val exact: Boolean, val frequencyOrder: Long, val fit: Int = 0)
 
     /**
      * The term's place by the sorting frequency dictionary, as Yomitan computes it: its lowest
@@ -303,11 +464,32 @@ class Translator(
         /** The entries a wildcard search sorts its results from, the shortest that match */
         const val MAX_WILDCARD_ENTRIES = 500
 
+        /** The entries a search by meaning sorts its results from, those fitting best */
+        const val MAX_MEANING_ENTRIES = 300
+
+        /** The results a section other than the search by meaning shows ([lookUpLatin]) */
+        const val MAX_SECTION = 8
+
+        /** Shorter words aren't corrected: too much is one edit away from them */
+        const val SHORTEST_CORRECTED = 3
+
+        /** Up to which frequency rank a word counts as common, for which way of reading Latin text comes first */
+        const val COMMON_RANK = 10_000L
+
+        /**
+         * A dictionary agrees with a result found by meaning if its gloss has at most a word more
+         * than the best ([AGREEING_FIT]); each agreeing is worth a word less ([AGREEING_WORTH]).
+         */
+        const val AGREEING_FIT = 1 shl 4
+        const val AGREEING_WORTH = 1 shl 4
+        const val MOST_AGREEING = 3
+
         /** Yomitan's order (translator.js, _sortTermDictionaryEntries). */
         val ORDER: Comparator<Sortable> = compareByDescending<Sortable> { it.term.source.length }
             .thenBy { it.processed }
             .thenBy { it.term.inflections.size }
             .thenByDescending { it.exact }
+            .thenBy { it.fit }
             .thenBy { it.frequencyOrder }
             .thenBy { s -> s.term.entries.minOf { it.priority } }
             .thenByDescending { s -> s.term.entries.maxOf { it.score } }

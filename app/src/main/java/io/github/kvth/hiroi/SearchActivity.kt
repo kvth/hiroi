@@ -26,6 +26,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import io.github.kvth.hiroi.dictionary.Meanings
 import io.github.kvth.hiroi.dictionary.Wildcard
 import io.github.kvth.hiroi.japanese.Japanese
 import io.github.kvth.hiroi.japanese.Romaji
@@ -214,7 +215,11 @@ class SearchActivity : Activity() {
         search()
     }
 
-    /** Searches the box's text (as kana, if typed in romaji), from its first Japanese character. */
+    /**
+     * Searches the box's text (as kana, if typed in romaji), from its first Japanese character;
+     * text in Latin letters that isn't romaji by meaning (eat, essen), and romaji that finds
+     * nothing too.
+     */
     private fun search() {
         val typed = input.text.toString().trim()
         val text = if (romaji && Romaji.hasRomaji(typed)) Romaji.toKana(typed) else typed
@@ -234,6 +239,9 @@ class SearchActivity : Activity() {
                 show(Shown.Message, getString(R.string.search_wildcard_empty))
             }
             wildcard != null -> lookUpWildcard(wildcard)
+            // Latin letters only: English, German… or romaji that's all kana now
+            typed.none(Japanese::isJapanese) && Meanings.words(typed).isNotEmpty() ->
+                lookUpLatin(typed, kana = text.takeIf { first == 0 && it.none { c -> c in 'a'..'z' || c in 'A'..'Z' } })
             first < 0 -> {
                 lookup.cancel()
                 show(Shown.Message, getString(R.string.search_not_japanese))
@@ -248,6 +256,16 @@ class SearchActivity : Activity() {
         val text = queryView.text.toString()
         show(Shown.Message, getString(R.string.looking_up))
         lookup.lookUp(text, offset) { showOutcome(text, it, 0) }
+    }
+
+    /**
+     * Text in Latin letters, in sections: the word [kana] (the query typed as romaji) is all of,
+     * the words of its meaning, and what it might have been meant as. The query box shows it as typed.
+     */
+    private fun lookUpLatin(query: String, kana: String?) {
+        queryView.text = query
+        show(Shown.Message, getString(R.string.looking_up))
+        lookup.lookUpLatin(query, kana, correctRomaji = romaji) { showOutcome(query, it, 0) }
     }
 
     /** Words starting or ending with the text around the asterisk, which is highlighted. */
