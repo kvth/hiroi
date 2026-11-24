@@ -103,6 +103,40 @@ class ResultsHtmlTest {
     }
 
     @Test
+    fun makesThePageInParts() {
+        val other = term.copy(expression = "届ける", reading = "とどける")
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).Page(
+            LookupResult(0, 6, listOf(term, other), emptyList()), AnkiStatus.ASKING,
+            styles = mapOf("Jitendex" to "span { color: red; }", "JMdict <b>" to "li { color: blue; }"), cards = false,
+        )
+        // The first definition only, with the styles it needs; the Anki tags wait hidden for Anki
+        val first = page.first(budget = 1)
+        assertTrue(first, "5-dan" in first && "color: red" in first)
+        assertFalse(first, "to reach" in first || "color: blue" in first || "definitions1" in first)
+        assertTrue(first, "<span class=\"tag not-anki asking\" id=\"anki0\">" in first)
+        // Then the other styles, the first result's other definitions, and the other result
+        val rest = page.rest()!!
+        assertTrue(rest, rest.startsWith("addStyles(") && "color: blue" in rest)
+        assertTrue(rest, rest.indexOf("addDefinitions(0,") in 0 until rest.indexOf("to reach"))
+        assertTrue(rest, rest.indexOf("addResults(") in 0 until rest.indexOf("id=\\\"definitions1\\\""))
+        assertEquals(null, page.rest())
+    }
+
+    @Test
+    fun showsResultsInThePageThatStaysLoaded() {
+        val results = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+        val shell = results.shell()
+        assertTrue(shell, "function showResults(" in shell && "<body></body>" in shell)
+        // The body to show, and each dictionary's styles for the page to add unless it has them
+        val show = results.Page(LookupResult(0, 6, listOf(term), emptyList()), null, mapOf("Jitendex" to "span { color: red; }"), cards = false).show()
+        assertTrue(show, show.startsWith("showResults({\"Jitendex\":\".glossary[data-dictionary=\\\"Jitendex\\\"] {\\nspan { color: red; }"))
+        assertTrue(show, "to reach" in show && "<body>" !in show)
+        // Not those the page has already
+        val again = results.Page(LookupResult(0, 6, listOf(term), emptyList()), null, mapOf("Jitendex" to "span { color: red; }"), cards = false, hasStyles = { true }).show()
+        assertTrue(again, again.startsWith("showResults({},"))
+    }
+
+    @Test
     fun scopesEachDictionarysStyles() {
         assertTrue(html, ".glossary[data-dictionary=\"Jitendex\"] {\nspan[data-sc-class=\"tag\"] { color: red; }\n}" in html)
     }

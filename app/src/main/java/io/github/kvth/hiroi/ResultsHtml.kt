@@ -15,7 +15,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** The looked-up words' notes in the chosen Anki deck, by word; [error] if Anki couldn't be asked. */
-class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null)
+class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null) {
+    companion object {
+        /** Anki is asked once the results show: their Anki tags wait, hidden, for the page's ankiChecked() */
+        val ASKING = AnkiStatus(emptyMap())
+    }
+}
 
 /**
  * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana, tags for
@@ -32,117 +37,220 @@ class ResultsHtml(private val colors: Colors) {
      */
     data class Frequencies(val average: Boolean = false, val occurrenceBased: Set<String> = emptySet())
 
+    /** [result] as a whole page; see [Page]. */
     fun document(
         result: LookupResult,
         anki: AnkiStatus?,
         styles: Map<String, String>,
         cards: Boolean,
         frequencies: Frequencies = Frequencies(),
-        /** A dictionary's image by its path, for the definitions that show one */
         media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
-        /** A 🔊 button per result: Hiroi.playAudio(index), long-pressed Hiroi.audioMenu(index) */
         audio: Boolean = false,
-    ): String = buildString {
+    ): String = Page(result, anki, styles, cards, frequencies, media, audio).first()
+
+    /**
+     * An empty results page that stays loaded: [Page.show] shows each result in it, so a lookup
+     * needn't load a page, and each dictionary's styles are only parsed the first time.
+     */
+    fun shell(): String = page("", "")
+
+    private fun page(styles: String, body: String) = buildString {
         append("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\">")
-        append("<style>").append(css())
-        // Each dictionary's styles only apply inside its own definitions (CSS nesting, as Jitendex itself uses).
-        for (dictionary in result.terms.flatMap { it.entries }.map { it.dictionary }.distinct()) {
-            val sheet = styles[dictionary] ?: continue
-            append(".glossary[data-dictionary=\"").append(cssString(dictionary)).append("\"] {\n").append(sheet).append("\n}\n")
-        }
-        append("</style><script>")
-        append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
-        append("function inAnki(i, label) { var t = document.getElementById('anki' + i); if (t) { t.className = 'tag anki'; t.firstChild.textContent = label; } ")
-        append("var o = document.getElementById('open' + i); if (o) o.style.display = ''; }")
-        // A note with the same first field exists: the add button says what it would do, "Open in Anki" how many there are.
-        append("function duplicate(i, label, enabled, open) { var b = document.getElementById('card' + i); ")
-        append("if (b) { b.textContent = label; b.disabled = !enabled; b.className = 'card duplicate'; } ")
-        append("var o = document.getElementById('open' + i); if (o) { o.style.display = ''; o.textContent = open; } }")
-        // The 🔊 button while its audio loads, and when there's none
-        append("function audioState(i, state) { var b = document.getElementById('audio' + i); if (b) b.className = 'audio ' + state; }")
-        // On a touch screen the button takes its touches itself: a tap plays, a long press opens the
-        // audio menu, and the page doesn't start selecting the words next to it.
-        append("document.addEventListener('touchstart', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
-        append("e.preventDefault(); b.timer = setTimeout(function () { b.timer = null; Hiroi.audioMenu(+b.dataset.index); }, 500); }, {passive: false});")
-        append("document.addEventListener('touchend', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
-        append("e.preventDefault(); if (b.timer) { clearTimeout(b.timer); b.timer = null; Hiroi.playAudio(+b.dataset.index); } }, {passive: false});")
-        // A tile opens into its result (and closes when its headword is tapped)
-        append("function openTile(i) { var t = document.getElementById('tile' + i); t.classList.add('open'); t.scrollIntoView({block: 'nearest'}); }")
-        append("document.addEventListener('click', function (e) { var h = e.target.closest && e.target.closest('.tile.open .headword'); ")
-        append("if (h) h.closest('.tile').classList.remove('open'); });")
-        append("</script></head><body>")
-        anki?.error?.let { append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
-        if (result.sections.isEmpty()) {
-            for ((i, term) in result.terms.withIndex()) term(i, term, anki, cards, frequencies, media, audio)
-        } else {
-            // A search in sections (Latin text): each a grid of small tiles, as Akebi shows them, that open into the whole result
-            for ((s, section) in result.sections.withIndex()) {
-                append("<div class=\"section\">").append(Html.escape(section.title)).append("</div><div class=\"tiles\">")
-                for (i in section.first until (result.sections.getOrNull(s + 1)?.first ?: result.terms.size)) {
-                    tile(i, result.terms[i], frequencies, section.words)
-                    term(i, result.terms[i], anki, cards, frequencies, media, audio)
-                    append("</div></div>")
-                }
-                append("</div>")
-            }
-        }
-        for (kanji in result.kanji) kanji(kanji, frequencies)
-        append("</body></html>")
+        append("<style>").append(css()).append(styles).append("</style><script>").append(SCRIPT)
+        append("</script></head><body>").append(body).append("</body></html>")
     }
 
-    private fun StringBuilder.term(
-        index: Int,
-        term: TermGroup,
-        anki: AnkiStatus?,
-        cards: Boolean,
-        frequencies: Frequencies,
-        media: (String, String) -> DictionaryMedia?,
-        audio: Boolean,
+    /**
+     * [result] as a page made in two parts, so that its beginning shows sooner: [first] or
+     * [show], the page with the definitions that fit a budget, then [rest], a script that adds
+     * the others to it.
+     */
+    inner class Page(
+        private val result: LookupResult,
+        private val anki: AnkiStatus?,
+        private val styles: Map<String, String>,
+        private val cards: Boolean,
+        private val frequencies: Frequencies = Frequencies(),
+        /** A dictionary's image by its path, for the definitions that show one */
+        private val media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
+        /** A 🔊 button per result: Hiroi.playAudio(index), long-pressed Hiroi.audioMenu(index) */
+        private val audio: Boolean = false,
+        /** Whether the page that stays loaded ([shell]) has a dictionary's styles already */
+        private val hasStyles: (String) -> Boolean = { false },
     ) {
-        append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
-        // Grouped by term or related terms, a result can have several headwords, as in Yomitan.
-        term.headwords.joinTo(this, "<span class=\"separator\">・</span>") { Furigana.html(Furigana.distribute(it.expression, it.reading)) }
-        append("</span>")
-        if (audio) {
-            append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"Hiroi.playAudio($index)\" ")
-            append("oncontextmenu=\"Hiroi.audioMenu($index); return false;\">🔊</button>")
-        }
-        // Shown when the word has a note (or once one was added), like Yomitan's "view note" button.
-        val hasNote = anki?.notes?.containsKey(term.expression) == true
-        append("<button class=\"card\" id=\"open$index\" onclick=\"Hiroi.openNote($index)\"")
-        if (!hasNote) append(" style=\"display:none\"")
-        append(">Open in Anki</button>")
-        if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"Hiroi.addCard($index)\">＋ Anki</button>")
-        append("</div>")
-        if (term.inflections.isNotEmpty()) {
-            append("<div class=\"inflections\">« ").append(Html.escape(term.inflections.joinToString(" « "))).append("</div>")
+        /** The result made next, and its next definition (0: the result isn't begun) */
+        private var term = 0
+        private var definition = 0
+
+        /** Whether the page has all of the results */
+        private var complete = false
+
+        /** The dictionaries the page has definitions of, and those whose styles it was given */
+        private val used = LinkedHashSet<String>()
+        private val styled = HashSet<String>()
+
+        /** The dictionaries whose styles [first], [show] and [rest] have given the page so far */
+        val styledSoFar: Set<String> get() = styled.toSet()
+
+        /**
+         * The page, with the results' definitions in order until they take about [budget]
+         * characters (at least one); a search in sections (Latin text) all of it.
+         */
+        fun first(budget: Int = Int.MAX_VALUE): String {
+            val body = body(budget)
+            return page(StringBuilder().apply { styles() }.toString(), body)
         }
 
-        val tags = StringBuilder()
-        if (anki != null && anki.error == null) {
-            if (term.expression in anki.notes) tags.tag("anki", "✓ in Anki", id = "anki$index") else tags.tag("not-anki", "not in Anki", id = "anki$index")
+        /** As [first], a script that shows it in the [shell] page instead, in place of what it showed. */
+        fun show(budget: Int = Int.MAX_VALUE): String {
+            val body = body(budget)
+            return "showResults(" + sheets() + "," + JSONObject.quote(body) + ");"
         }
-        tags.frequencyTags(termFrequencies(term), frequencies)
-        val pitches = PitchAccent.positions(term)
-        if (pitches.isNotEmpty()) {
-            val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
-            tags.tag("pitch", dictionary, pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
-        }
-        if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
 
-        append("<ol class=\"definitions\">")
-        for (definition in term.definitions) {
-            // For some of the headwords only, as Yomitan marks it ("見る only")
-            val only = if (term.headwords.size > 1 && definition.headwordIndices.size < term.headwords.size) {
-                definition.headwordIndices.joinToString("、") { headwordLabel(term, it) } + " only"
+        private fun body(budget: Int): String {
+            val body = StringBuilder()
+            anki?.error?.let { body.append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
+            if (result.sections.isEmpty()) {
+                body.results(budget)
             } else {
-                null
+                // Each section a grid of small tiles, as Akebi shows them, that open into the whole result
+                for ((s, section) in result.sections.withIndex()) {
+                    body.append("<div class=\"section\">").append(Html.escape(section.title)).append("</div><div class=\"tiles\">")
+                    for (i in section.first until (result.sections.getOrNull(s + 1)?.first ?: result.terms.size)) {
+                        body.tile(i, result.terms[i], frequencies, section.words)
+                        definition = 0
+                        body.term(i, result.terms[i])
+                        body.append("</div></div>")
+                    }
+                    body.append("</div>")
+                }
+                term = result.terms.size
+                definition = 0
+                body.results(Int.MAX_VALUE)
             }
-            definition(definition.entry, media, only)
+            return body.toString()
         }
-        append("</ol>")
-        kanjiOf(term)
-        append("</div>")
+
+        /** A script that adds the rest of the results to the page [first] or [show] made, and their styles; null if it has them all. */
+        fun rest(): String? {
+            if (complete) return null
+            val content = StringBuilder()
+            if (definition > 0) {
+                // The result the page ends in the middle of: its other definitions, then its kanji
+                val group = result.terms[term]
+                val items = StringBuilder().apply { definitions(group) }
+                val after = StringBuilder().apply { kanjiOf(group) }
+                content.append("addDefinitions(").append(term).append(',').append(JSONObject.quote(items.toString()))
+                    .append(',').append(JSONObject.quote(after.toString())).append(");")
+                term++
+                definition = 0
+            }
+            val more = StringBuilder().apply { results(Int.MAX_VALUE) }
+            if (more.isNotEmpty()) content.append("addResults(").append(JSONObject.quote(more.toString())).append(");")
+            // The styles first, so the definitions never show without them
+            return "addStyles(" + sheets() + ");" + content
+        }
+
+        /** Each dictionary's styles that the page needs and wasn't given, only for its own definitions (CSS nesting, as Jitendex itself uses) */
+        private fun StringBuilder.styles() {
+            for ((_, sheet) in newSheets()) append(sheet)
+        }
+
+        /** [styles] as a script's object of each dictionary's styles; the page keeps those it has, so it only parses them once. */
+        private fun sheets(): String = JSONObject(newSheets().toMap()).toString()
+
+        private fun newSheets(): List<Pair<String, String>> = used.filter { !hasStyles(it) && styled.add(it) }.mapNotNull { dictionary ->
+            styles[dictionary]?.let { dictionary to ".glossary[data-dictionary=\"${cssString(dictionary)}\"] {\n$it\n}\n" }
+        }
+
+        /** The results from [term] on, until their definitions take [budget] characters, then the kanji results. */
+        private fun StringBuilder.results(budget: Int) {
+            val start = length
+            while (term < result.terms.size) {
+                if (definition == 0 && length - start >= budget) return
+                if (!term(term, result.terms[term], start, budget)) return
+                term++
+                definition = 0
+            }
+            for (kanji in result.kanji) kanji(kanji, frequencies)
+            complete = true
+        }
+
+        /**
+         * Result [index] from its [definition] on, until the definitions since [start] take
+         * [budget] characters: false if they do, the result then ending there.
+         */
+        private fun StringBuilder.term(index: Int, term: TermGroup, start: Int = length, budget: Int = Int.MAX_VALUE): Boolean {
+            if (definition == 0) header(index, term)
+            if (!definitions(term, start, budget)) {
+                append("</ol></div>")
+                return false
+            }
+            append("</ol>")
+            kanjiOf(term)
+            append("</div>")
+            return true
+        }
+
+        private fun StringBuilder.header(index: Int, term: TermGroup) {
+            append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
+            // Grouped by term or related terms, a result can have several headwords, as in Yomitan.
+            term.headwords.joinTo(this, "<span class=\"separator\">・</span>") { Furigana.html(Furigana.distribute(it.expression, it.reading)) }
+            append("</span>")
+            if (audio) {
+                append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"Hiroi.playAudio($index)\" ")
+                append("oncontextmenu=\"Hiroi.audioMenu($index); return false;\">🔊</button>")
+            }
+            // Shown when the word has a note (or once one was added), like Yomitan's "view note" button.
+            val hasNote = anki?.notes?.containsKey(term.expression) == true
+            append("<button class=\"card\" id=\"open$index\" onclick=\"Hiroi.openNote($index)\"")
+            if (!hasNote) append(" style=\"display:none\"")
+            append(">Open in Anki</button>")
+            if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"Hiroi.addCard($index)\">＋ Anki</button>")
+            append("</div>")
+            if (term.inflections.isNotEmpty()) {
+                append("<div class=\"inflections\">« ").append(Html.escape(term.inflections.joinToString(" « "))).append("</div>")
+            }
+
+            val tags = StringBuilder()
+            if (anki != null && anki.error == null) {
+                when {
+                    anki === AnkiStatus.ASKING -> tags.tag("not-anki asking", "not in Anki", id = "anki$index")
+                    term.expression in anki.notes -> tags.tag("anki", "✓ in Anki", id = "anki$index")
+                    else -> tags.tag("not-anki", "not in Anki", id = "anki$index")
+                }
+            }
+            tags.frequencyTags(termFrequencies(term), frequencies)
+            val pitches = PitchAccent.positions(term)
+            if (pitches.isNotEmpty()) {
+                val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
+                tags.tag("pitch", dictionary, pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
+            }
+            if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
+            append("<ol class=\"definitions\" id=\"definitions$index\">")
+        }
+
+        /**
+         * [term]'s definitions from [definition] on, until those since [start] take [budget]
+         * characters (after at least one): false if they do.
+         */
+        private fun StringBuilder.definitions(term: TermGroup, start: Int = length, budget: Int = Int.MAX_VALUE): Boolean {
+            val all = term.definitions
+            while (definition < all.size) {
+                if (definition > 0 && length - start >= budget) return false
+                val item = all[definition]
+                // For some of the headwords only, as Yomitan marks it ("見る only")
+                val only = if (term.headwords.size > 1 && item.headwordIndices.size < term.headwords.size) {
+                    item.headwordIndices.joinToString("、") { headwordLabel(term, it) } + " only"
+                } else {
+                    null
+                }
+                definition(item.entry, media, only)
+                used += item.entry.dictionary
+                definition++
+            }
+            return true
+        }
     }
 
     /** The kanji of [term]'s word, folded: each kanji dictionary's meanings, readings and numbers for it */
@@ -268,6 +376,40 @@ class ResultsHtml(private val colors: Colors) {
     }
 
     private companion object {
+        /** The page's functions, for Hiroi to change it once it shows. */
+        val SCRIPT = buildString {
+            append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
+            append("function inAnki(i, label) { var t = document.getElementById('anki' + i); if (t) { t.className = 'tag anki'; t.firstChild.textContent = label; } ")
+            append("var o = document.getElementById('open' + i); if (o) o.style.display = ''; }")
+            // Anki was asked (inAnki() marked the words it has): the other words' tags show, or none and why
+            append("function ankiChecked(error) { document.querySelectorAll('.tag.asking').forEach(function (t) { if (error) t.remove(); else t.classList.remove('asking'); }); ")
+            append("if (error) { var e = document.createElement('div'); e.className = 'error'; e.textContent = error; document.body.insertBefore(e, document.body.firstChild); } }")
+            // A note with the same first field exists: the add button says what it would do, "Open in Anki" how many there are.
+            append("function duplicate(i, label, enabled, open) { var b = document.getElementById('card' + i); ")
+            append("if (b) { b.textContent = label; b.disabled = !enabled; b.className = 'card duplicate'; } ")
+            append("var o = document.getElementById('open' + i); if (o) { o.style.display = ''; o.textContent = open; } }")
+            // A result in the page that stays loaded (Page.show), with the dictionaries' styles it doesn't have yet
+            append("var styled = {};")
+            append("function addStyles(sheets) { for (var name in sheets) { if (styled[name]) continue; styled[name] = true; ")
+            append("var s = document.createElement('style'); s.textContent = sheets[name]; document.head.appendChild(s); } }")
+            append("function showResults(sheets, html) { addStyles(sheets); document.body.innerHTML = html; window.scrollTo(0, 0); }")
+            // The rest of a page made in parts (Page.rest): styles, the other definitions of the result it ended in, the other results
+            append("function addDefinitions(i, items, after) { var d = document.getElementById('definitions' + i); d.insertAdjacentHTML('beforeend', items); d.insertAdjacentHTML('afterend', after); }")
+            append("function addResults(html) { document.body.insertAdjacentHTML('beforeend', html); }")
+            // The 🔊 button while its audio loads, and when there's none
+            append("function audioState(i, state) { var b = document.getElementById('audio' + i); if (b) b.className = 'audio ' + state; }")
+            // On a touch screen the button takes its touches itself: a tap plays, a long press opens the
+            // audio menu, and the page doesn't start selecting the words next to it.
+            append("document.addEventListener('touchstart', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
+            append("e.preventDefault(); b.timer = setTimeout(function () { b.timer = null; Hiroi.audioMenu(+b.dataset.index); }, 500); }, {passive: false});")
+            append("document.addEventListener('touchend', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
+            append("e.preventDefault(); if (b.timer) { clearTimeout(b.timer); b.timer = null; Hiroi.playAudio(+b.dataset.index); } }, {passive: false});")
+            // A tile opens into its result (and closes when its headword is tapped)
+            append("function openTile(i) { var t = document.getElementById('tile' + i); t.classList.add('open'); t.scrollIntoView({block: 'nearest'}); }")
+            append("document.addEventListener('click', function (e) { var h = e.target.closest && e.target.closest('.tile.open .headword'); ")
+            append("if (h) h.closest('.tile').classList.remove('open'); });")
+        }
+
         /** Up to which frequency rank a word's tile is marked as common */
         const val COMMON_RANK = 10_000
 
@@ -326,9 +468,11 @@ class ResultsHtml(private val colors: Colors) {
         .tag.anki .label { background: ${colors.accent}; }
         .tag.not-anki { border: 1px solid ${colors.secondary}80; }
         .tag.not-anki .label { background: none; color: ${colors.secondary}; font-weight: normal; }
+        .tag.asking { display: none; }
         ol.definitions { margin: 6px 0 0; padding-left: 1.5em; }
         ol.definitions > li + li { margin-top: 8px; }
-        .glossary { margin-top: 3px; }
+        /* Definitions out of sight aren't laid out or drawn until they come near (the glossary, not the li, so its number isn't clipped) */
+        .glossary { margin-top: 3px; content-visibility: auto; contain-intrinsic-size: auto 100px; }
         .gloss-image-description { color: ${colors.secondary}; font-size: 0.85em; }
         details.gloss-image > summary { color: ${colors.accent}; }
         .glossary ul, .glossary ol { margin: 2px 0; padding-left: 1.3em; }

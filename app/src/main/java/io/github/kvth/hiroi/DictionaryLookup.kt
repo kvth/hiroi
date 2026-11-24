@@ -28,9 +28,12 @@ import io.github.kvth.hiroi.audio.WordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.LookupResult
+import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Translator
 import io.github.kvth.hiroi.dictionary.Wildcard
 import io.github.kvth.hiroi.translation.Translations
+import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /**
@@ -51,10 +54,18 @@ class DictionaryLookup(
         class Message(val text: String) : Lookup
 
         /**
-         * [text] is the text the lookup ran on (for a card's sentence), [html] the results page,
-         * [notes] each result's Anki notes (by index), growing as cards are added.
+         * [text] is the text the lookup ran on (for a card's sentence), [script] what shows the
+         * results in the page (their beginning: the rest is added once it shows) and the styles
+         * of the dictionaries in [styles], [notes] each result's Anki notes (by index), known
+         * once Anki was asked and growing as cards are added.
          */
-        class Found(val result: LookupResult, val text: String, val html: String, val notes: MutableMap<Int, MutableList<Long>>) : Lookup {
+        class Found(
+            val result: LookupResult,
+            val text: String,
+            val script: String,
+            val styles: Set<String>,
+            val notes: MutableMap<Int, MutableList<Long>>,
+        ) : Lookup {
             /** Each result's existing notes with the same first field (Yomitan's duplicate check), by index. */
             val duplicates = HashMap<Int, List<Long>>()
 
@@ -101,9 +112,14 @@ class DictionaryLookup(
                 pending.clear()
             }
         }
+        // One page for all results, which each lookup's script fills
+        loadDataWithBaseURL(null, html.shell(), "text/html", "utf-8", null)
     }
 
-    /** Whether the shown results page has loaded; scripts for it wait in [pending] until it has. */
+    /** The dictionaries whose styles the results page has, or are on their way to it (in [pending]) */
+    private val pageStyles: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Whether the results page has loaded; scripts for it wait in [pending] until it has. */
     private var loaded = false
     private val pending = mutableListOf<String>()
 
@@ -166,6 +182,7 @@ class DictionaryLookup(
         worker.execute {
             val started = SystemClock.elapsedRealtime()
             var searched = started
+            var page: ResultsHtml.Page? = null
             // Formatting big structured-content glossaries takes a while too, so it happens here as well.
             val outcome = runCatching {
                 when {
@@ -176,18 +193,18 @@ class DictionaryLookup(
                         else -> if (result.terms.isEmpty() && result.kanji.isEmpty()) {
                             Lookup.Message(noMatch())
                         } else {
-                            val cards = AnkiSettings(activity).cardFormat.complete
-                            val anki = ankiStatus(result)
+                            val anki = AnkiSettings(activity)
                             val frequencies = ResultsHtml.Frequencies(
                                 average = DictionarySettings(activity).averageFrequencies,
                                 occurrenceBased = dictionaries.enabledDictionaries().filter { it.frequencyMode == "occurrence-based" }.mapTo(HashSet()) { it.title },
                             )
-                            Lookup.Found(
-                                result, text, html.document(result, anki, styles, cards, frequencies, dictionaries::findMedia, AudioSettings(activity).enabled),
-                                notes = result.terms.indices.associateWithTo(HashMap()) { i ->
-                                    anki?.notes?.get(result.terms[i].expression).orEmpty().toMutableList()
-                                },
-                            )
+                            // Anki is asked once the results show (checkAnki), so they needn't wait for it
+                            val results = html.Page(
+                                result, AnkiStatus.ASKING.takeIf { anki.enabled }, styles, anki.cardFormat.complete, frequencies,
+                                dictionaries::findMedia, AudioSettings(activity).enabled, pageStyles::contains,
+                            ).also { page = it }
+                            val script = results.show(FIRST_PART)
+                            Lookup.Found(result, text, script, results.styledSoFar, notes = HashMap())
                         }
                     }
                 }
@@ -197,6 +214,17 @@ class DictionaryLookup(
             }
             Log.d(TAG, "Lookup $what took ${SystemClock.elapsedRealtime() - started} ms (search ${searched - started} ms)")
             post(outcome)
+            // Then the results that didn't fit the first part, added to the page once it shows
+            if (outcome !is Lookup.Found || generation != this.generation) return@execute
+            val made = SystemClock.elapsedRealtime()
+            val rest = runCatching { page?.rest() }.onFailure { Log.e(TAG, "Making the rest of the results failed", it) }.getOrNull() ?: return@execute
+            val styles = page?.styledSoFar.orEmpty()
+            Log.d(TAG, "The rest of the results took ${SystemClock.elapsedRealtime() - made} ms (${rest.length / 1024} KB)")
+            activity.runOnUiThread {
+                if (shown !== outcome) return@runOnUiThread
+                pageStyles += styles
+                onPage(rest)
+            }
         }
     }
 
@@ -209,9 +237,9 @@ class DictionaryLookup(
     /** Shows [found] in [web]. */
     fun show(found: Lookup.Found) {
         shown = found
-        loaded = false
-        pending.clear()
-        web.loadDataWithBaseURL(null, found.html, "text/html", "utf-8", null)
+        pageStyles += found.styles
+        onPage(found.script)
+        checkAnki(found)
         checkDuplicates(found)
         val audio = AudioSettings(activity)
         if (audio.enabled && audio.autoPlay && found.result.terms.isNotEmpty()) playAudio(0)
@@ -303,6 +331,29 @@ class DictionaryLookup(
     }
 
     /**
+     * Asks Anki which of the results' words have a note in the deck, after the results are
+     * shown (and the rest of them added: the same worker makes it), and tags them.
+     */
+    private fun checkAnki(found: Lookup.Found) {
+        if (!AnkiSettings(activity).enabled) return
+        val terms = found.result.terms
+        worker.execute {
+            val status = ankiStatus(terms) ?: return@execute
+            activity.runOnUiThread {
+                if (activity.isDestroyed || shown !== found) return@runOnUiThread
+                for ((i, term) in terms.withIndex()) {
+                    val ids = status.notes[term.expression].orEmpty()
+                    if (ids.isEmpty()) continue
+                    val notes = found.notes.getOrPut(i) { mutableListOf() }
+                    notes += ids.filter { it !in notes }
+                    onPage("inAnki($i, '${activity.getString(R.string.anki_in_deck)}')")
+                }
+                onPage("ankiChecked(${status.error?.let(JSONObject::quote) ?: "null"})")
+            }
+        }
+    }
+
+    /**
      * Looks for notes each result would duplicate, after the results are shown, and changes their
      * buttons as Yomitan does: "Already in Anki" (prevent), "Overwrite" or "＋ Anki again" (add
      * another), with "Open in Anki" on the existing notes.
@@ -362,11 +413,11 @@ class DictionaryLookup(
     }
 
     /** Asks Anki which of the headwords already have a note, if a deck is set up. */
-    private fun ankiStatus(result: LookupResult): AnkiStatus? {
+    private fun ankiStatus(terms: List<TermGroup>): AnkiStatus? {
         val anki = AnkiSettings(activity)
-        if (!anki.enabled || result.terms.isEmpty()) return null
+        if (!anki.enabled || terms.isEmpty()) return null
         return try {
-            AnkiStatus(anki.client().notesInDeck(anki.deck, anki.field, result.terms.map { it.expression }.distinct()))
+            AnkiStatus(anki.client().notesInDeck(anki.deck, anki.field, terms.map { it.expression }.distinct()))
         } catch (e: Exception) {
             Log.w(TAG, "Anki check failed", e)
             AnkiStatus(emptyMap(), activity.getString(R.string.anki_unreachable, e.message ?: e.javaClass.simpleName))
@@ -499,5 +550,8 @@ class DictionaryLookup(
         const val TAG = "HiroiLookup"
         const val ANKIDROID = "com.ichi2.anki"
         const val CROP_MARGIN_DP = 12
+
+        /** About how many characters of definitions a results page has at first, about what the panel shows; the rest follow */
+        const val FIRST_PART = 10_000
     }
 }
