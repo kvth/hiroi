@@ -136,12 +136,9 @@ class ResultsHtml(private val colors: Colors) {
             if (complete) return null
             val content = StringBuilder()
             if (definition > 0) {
-                // The result the page ends in the middle of: its other definitions, then its kanji
-                val group = result.terms[term]
-                val items = StringBuilder().apply { definitions(group) }
-                val after = StringBuilder().apply { kanjiOf(group) }
-                content.append("addDefinitions(").append(term).append(',').append(JSONObject.quote(items.toString()))
-                    .append(',').append(JSONObject.quote(after.toString())).append(");")
+                // The result the page ends in the middle of: its other definitions
+                val items = StringBuilder().apply { definitions(result.terms[term]) }
+                content.append("addDefinitions(").append(term).append(',').append(JSONObject.quote(items.toString())).append(");")
                 term++
                 definition = 0
             }
@@ -186,9 +183,7 @@ class ResultsHtml(private val colors: Colors) {
                 append("</ol></div>")
                 return false
             }
-            append("</ol>")
-            kanjiOf(term)
-            append("</div>")
+            append("</ol></div>")
             return true
         }
 
@@ -221,12 +216,14 @@ class ResultsHtml(private val colors: Colors) {
                 }
             }
             tags.frequencyTags(termFrequencies(term), frequencies)
+            tags.kanjiTag(index, term)
             val pitches = PitchAccent.positions(term)
             if (pitches.isNotEmpty()) {
                 val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
                 tags.tag("pitch", dictionary, pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
             }
             if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
+            kanjiOf(index, term)
             append("<ol class=\"definitions\" id=\"definitions$index\">")
         }
 
@@ -253,11 +250,20 @@ class ResultsHtml(private val colors: Colors) {
         }
     }
 
-    /** The kanji of [term]'s word, folded: each kanji dictionary's meanings, readings and numbers for it */
-    private fun StringBuilder.kanjiOf(term: TermGroup) {
+    /** A tag among the frequencies naming the kanji of [term]'s word; tapping it opens or closes them ([kanjiOf]). */
+    private fun StringBuilder.kanjiTag(index: Int, term: TermGroup) {
         if (term.kanji.isEmpty()) return
         val characters = term.kanji.map { it.character }.distinct()
-        append("<details class=\"kanji-breakdown\"><summary>Kanji <span lang=\"ja\">").append(Html.escape(characters.joinToString(" "))).append("</span></summary>")
+        append("<span class=\"tag kanji-toggle\" role=\"button\" tabindex=\"0\" aria-expanded=\"false\" aria-controls=\"kanji$index\" ")
+        append("onclick=\"var k = document.getElementById('kanji$index'); k.hidden = !k.hidden; this.setAttribute('aria-expanded', !k.hidden)\">")
+        append("<span class=\"label\">Kanji</span><span class=\"value\" lang=\"ja\">").append(Html.escape(characters.joinToString(" "))).append("</span></span>")
+    }
+
+    /** The kanji of [term]'s word, under its tags until its [kanjiTag] opens them: each kanji dictionary's meanings, readings and numbers for it */
+    private fun StringBuilder.kanjiOf(index: Int, term: TermGroup) {
+        if (term.kanji.isEmpty()) return
+        val characters = term.kanji.map { it.character }.distinct()
+        append("<div class=\"kanji-breakdown\" id=\"kanji$index\" hidden>")
         for (character in characters) {
             append("<div class=\"kanji-card\"><div class=\"kanji-character\" lang=\"ja\">").append(Html.escape(character)).append("</div><div>")
             for (kanji in term.kanji.filter { it.character == character }) {
@@ -276,7 +282,7 @@ class ResultsHtml(private val colors: Colors) {
             }
             append("</div></div>")
         }
-        append("</details>")
+        append("</div>")
     }
 
     /** What a kanji dictionary's stats say that's worth a glance: strokes, grade, JLPT level, frequency, Kanken level */
@@ -394,7 +400,7 @@ class ResultsHtml(private val colors: Colors) {
             append("var s = document.createElement('style'); s.textContent = sheets[name]; document.head.appendChild(s); } }")
             append("function showResults(sheets, html) { addStyles(sheets); document.body.innerHTML = html; window.scrollTo(0, 0); }")
             // The rest of a page made in parts (Page.rest): styles, the other definitions of the result it ended in, the other results
-            append("function addDefinitions(i, items, after) { var d = document.getElementById('definitions' + i); d.insertAdjacentHTML('beforeend', items); d.insertAdjacentHTML('afterend', after); }")
+            append("function addDefinitions(i, items) { document.getElementById('definitions' + i).insertAdjacentHTML('beforeend', items); }")
             append("function addResults(html) { document.body.insertAdjacentHTML('beforeend', html); }")
             // The 🔊 button while its audio loads, and when there's none
             append("function audioState(i, state) { var b = document.getElementById('audio' + i); if (b) b.className = 'audio ' + state; }")
@@ -421,6 +427,8 @@ class ResultsHtml(private val colors: Colors) {
 
     private fun css() = """
         body { margin: 0; color: ${colors.text}; background: transparent; font-family: sans-serif; font-size: 15px; line-height: 1.45; }
+        /* Chrome trims the blank half of 。」 at a line's end but still counts it as overflow, so the page could scroll sideways a bit */
+        body { text-spacing-trim: space-all; }
         .error { color: ${colors.secondary}; font-size: 0.85em; margin-bottom: 8px; }
         .entry + .entry { margin-top: 14px; padding-top: 12px; border-top: 1px solid ${colors.secondary}40; }
         .section { margin: 18px 0 8px; padding-bottom: 3px; border-bottom: 2px solid ${colors.accent}80; color: ${colors.accent}; font-size: 0.85em; font-weight: bold; }
@@ -435,8 +443,10 @@ class ResultsHtml(private val colors: Colors) {
         .tile.open { grid-column: 1 / -1; padding: 8px 0 12px; border-bottom: 1px solid ${colors.secondary}40; }
         .tile.open .tile-head { display: none; }
         .tile.open .tile-full { display: block; }
-        .kanji-breakdown { margin-top: 8px; }
-        .kanji-breakdown > summary { color: ${colors.accent}; font-size: 0.9em; }
+        .kanji-breakdown { margin-top: 4px; }
+        .tag.kanji-toggle .label { background: #2a7f8a; }
+        .tag.kanji-toggle .value::after { content: " ▸"; }
+        .tag.kanji-toggle[aria-expanded="true"] .value::after { content: " ▾"; }
         .kanji-card { display: flex; gap: 10px; margin-top: 6px; padding: 6px 8px; border-radius: 6px; background: ${colors.secondary}14; }
         .kanji-character { font-size: 2.2em; line-height: 1.1; }
         .kanji-dictionary { font-size: 0.9em; }

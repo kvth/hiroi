@@ -64,7 +64,12 @@ class ResultsHtmlTest {
     fun foldsTheKanjiOfTheWord() {
         val withKanji = term.copy(kanji = listOf(KanjiEntry("届", "カイ", "とど.く", "", listOf("deliver", "reach"), "KANJIDIC", stats = """{"strokes":"8","grade":"6","skip":"3-3-5"}""")))
         val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(LookupResult(0, 6, listOf(withKanji), emptyList()), null, emptyMap(), cards = false)
-        assertTrue(page, "<details class=\"kanji-breakdown\"><summary>Kanji <span lang=\"ja\">届</span></summary>" in page)
+        // A tag after the frequencies (before the pitch accent) opens them, right under the tags
+        val tag = page.indexOf("<span class=\"label\">Kanji</span><span class=\"value\" lang=\"ja\">届</span>")
+        assertTrue(page, page.indexOf(">JPDB<") in 0 until tag && tag < page.indexOf(">NHK<"))
+        assertTrue(page, "aria-controls=\"kanji0\"" in page)
+        val cards = page.indexOf("<div class=\"kanji-breakdown\" id=\"kanji0\" hidden>")
+        assertTrue(page, cards > tag && cards < page.indexOf("<ol class=\"definitions\""))
         assertTrue(page, "<span class=\"label\">KANJIDIC</span></span> deliver, reach" in page)
         assertTrue(page, "<span class=\"kanji-label\">On</span> カイ · <span class=\"kanji-label\">Kun</span> とど.く" in page)
         assertTrue(page, "<div class=\"kanji-numbers\">8 strokes · grade 6</div>" in page)
