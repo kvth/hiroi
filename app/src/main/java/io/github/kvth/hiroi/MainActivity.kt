@@ -64,6 +64,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryFacts
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
+import io.github.kvth.hiroi.dictionary.ResultTabs
 import io.github.kvth.hiroi.dictionary.DictionaryUpdates
 import io.github.kvth.hiroi.dictionary.Grouping
 import io.github.kvth.hiroi.dictionary.HiroiCollection
@@ -1237,12 +1238,15 @@ class MainActivity : Activity() {
         PopupMenu(this, anchor).apply {
             menu.add(0, 1, 0, R.string.dictionary_details)
             menu.add(0, 2, 1, R.string.dictionary_rename)
-            menu.add(0, 3, 2, R.string.dictionary_move_to).isEnabled = count > 1
-            menu.add(0, 4, 3, R.string.dictionary_delete)
+            // Only dictionaries with definitions have a tab to show them in
+            if (info.terms > 0) menu.add(0, 5, 2, R.string.dictionary_tab)
+            menu.add(0, 3, 3, R.string.dictionary_move_to).isEnabled = count > 1
+            menu.add(0, 4, 4, R.string.dictionary_delete)
             setOnMenuItemClickListener { item ->
                 when (item.itemId) {
                     1 -> showDictionaryDetails(info)
                     2 -> renameDictionaryAlias(info)
+                    5 -> askTab(info)
                     3 -> askMoveTo(info, count)
                     4 -> confirmDelete(info)
                 }
@@ -1278,6 +1282,34 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .show()
+    }
+
+    /** Asks for the tab to show [info]'s definitions in ([ResultTabs]): Reset puts it in its language's again. */
+    private fun askTab(info: DictionaryInfo) {
+        background.execute {
+            val language = dictionaries.languageTabs(enabledOnly = false)[info.title] ?: ResultTabs.JAPANESE
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                val settings = DictionarySettings(this)
+                val pad = (20 * resources.displayMetrics.density).toInt()
+                val input = EditText(this).apply {
+                    setSingleLine()
+                    setText(settings.tabOverrides[info.title] ?: language)
+                    selectAll()
+                }
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.dictionary_tab_title)
+                    .setMessage(getString(R.string.dictionary_tab_message, settings.name(info.title), language))
+                    .setView(LinearLayout(this).apply {
+                        setPadding(pad, 0, pad, 0)
+                        addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, WRAP_CONTENT))
+                    })
+                    .setPositiveButton(R.string.dictionary_rename_save) { _, _ -> settings.setTab(info.title, input.text.toString(), language) }
+                    .setNeutralButton(R.string.dictionary_rename_reset) { _, _ -> settings.setTab(info.title, null, language) }
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
+            }
+        }
     }
 
     /** Asks for the place (1 to [count]) to move [info] to, as Yomitan's "Move to…". */

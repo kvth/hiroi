@@ -107,6 +107,41 @@ class ResultsHtmlTest {
     }
 
     @Test
+    fun showsTabsOfDictionariesAndKanji() {
+        val other = TermGroup(
+            expression = "届け", reading = "とどけ", source = "届け", inflections = emptyList(),
+            entries = listOf(TermEntry("届け", "とどけ", "", "", 0, """["届けること"]""", 0, "", "大辞林", 3)),
+            meta = emptyList(),
+        )
+        val withKanji = term.copy(kanji = listOf(KanjiEntry("届", "カイ", "とど.く", "", listOf("deliver"), "KANJIDIC")))
+        val tabs = ResultsHtml.Tabs(mapOf("Jitendex" to "EN", "JMdict <b>" to "EN", "大辞林" to "国語"), listOf("EN", "国語"), kanji = true)
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+            .document(LookupResult(0, 6, listOf(withKanji, other), emptyList()), null, emptyMap(), cards = false, tabs = tabs)
+        // All first, each with how many results it has; 漢字 how many kanji
+        val bar = page.substringAfter("<div class=\"tabs\" id=\"tabs\"").substringBefore("</div>")
+        assertTrue(bar, "data-tab=\"\" onclick=\"selectTab(this)\">All <span class=\"count\">2</span>" in bar)
+        assertTrue(bar, ">EN <span class=\"count\">1</span>" in bar && ">国語 <span class=\"count\">1</span>" in bar && ">漢字 <span class=\"count\">1</span>" in bar)
+        assertTrue(bar, bar.indexOf(">EN ") < bar.indexOf(">国語 ") && bar.indexOf(">国語 ") < bar.indexOf(">漢字 "))
+        // Each result says its tabs, each definition its dictionary's
+        assertTrue(page, "<div class=\"entry\" data-tabs=\"EN 漢字\">" in page)
+        assertTrue(page, "<div class=\"entry\" data-tabs=\"国語\">" in page)
+        assertTrue(page, "<li data-tab=\"国語\">" in page && "<li data-tab=\"EN\">" in page)
+    }
+
+    @Test
+    fun greysEmptyTabsAndShowsNoneForOne() {
+        val tabs = ResultsHtml.Tabs(mapOf("Jitendex" to "EN", "JMdict <b>" to "EN", "大辞林" to "国語"), listOf("EN", "国語"), kanji = false)
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+            .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false, tabs = tabs)
+        assertTrue(page, "data-tab=\"国語\" onclick=\"selectTab(this)\" disabled>国語 <span class=\"count\">0</span>" in page)
+        // One tab is no choice: no bar, nothing marked
+        val one = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+            .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false, tabs = ResultsHtml.Tabs(mapOf("Jitendex" to "EN"), listOf("EN"), kanji = false))
+        val body = one.substringAfter("<body>")
+        assertFalse(body, "id=\"tabs\"" in body || "data-tab" in body)
+    }
+
+    @Test
     fun numbersDefinitionsWithTheirDictionary() {
         assertTrue(html, "<span class=\"tag label\"><span class=\"label\">★</span></span><span class=\"tag dictionary\"><span class=\"label\">Jitendex</span></span>" in html)
         assertTrue(html, "<ul><li>to reach</li><li>to arrive</li></ul>" in html)

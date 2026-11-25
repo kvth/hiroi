@@ -38,6 +38,9 @@
     <string name="dictionary_details">Details…</string>
     <string name="dictionary_rename">Rename…</string>
     <string name="dictionary_move_to">Move to…</string>
+    <string name="dictionary_tab">Tab…</string>
+    <string name="dictionary_tab_title">Tab</string>
+    <string name="dictionary_tab_message">The tab of %1$s: choosing it above the results shows only the definitions of the dictionaries in it. A short name; by its language, it\'s in %2$s.</string>
     <string name="dictionary_delete">Delete</string>
     <string name="dictionary_delete_confirm">Delete the dictionary %s?</string>
     <string name="dictionary_title_line">Title: %s</string>

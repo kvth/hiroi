@@ -416,6 +416,10 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
     /** Whether its terms can be found by the words of their definitions ([findTermsByMeaning]) */
     fun hasMeanings(): Boolean = meanings != null
 
+    /** The language its definitions are in, as its index.json says (targetLanguage), if it does */
+    fun targetLanguage(): String? =
+        facts(info).index?.let { runCatching { JSONObject(it).optString("targetLanguage") }.getOrNull() }?.takeIf { it.isNotBlank() }
+
     /** How many terms' definitions have [word] ([Meanings.words]), for telling common spellings from mistyped ones */
     fun meaningWordCount(word: String): Int {
         val cursor = meanings?.cursor() ?: return 0

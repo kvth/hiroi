@@ -106,6 +106,7 @@ class DictionaryLookup(
             css(themeColor(android.R.attr.textColorPrimary)),
             css(themeColor(android.R.attr.textColorSecondary)),
             css(themeColor(android.R.attr.colorAccent)),
+            css(themeColor(android.R.attr.colorBackground)),
         ),
     ) { DictionarySettings(activity).aliases }
 
@@ -217,7 +218,7 @@ class DictionaryLookup(
                             // Anki is asked once the results show (checkAnki), so they needn't wait for it
                             val results = html.Page(
                                 result, AnkiStatus.ASKING.takeIf { anki.enabled }, styles, anki.cardFormat.complete, frequencies,
-                                dictionaries::findMedia, AudioSettings(activity).enabled, pageStyles::contains,
+                                dictionaries::findMedia, AudioSettings(activity).enabled, pageStyles::contains, tabs(),
                             ).also { page = it }
                             val script = results.show(FIRST_PART)
                             Lookup.Found(result, text, script, results.styledSoFar, notes = HashMap())
@@ -243,6 +244,16 @@ class DictionaryLookup(
             }
         }
     }
+
+    /** The tabs results show in: each term dictionary's, in the dictionaries' order, and 漢字 if a kanji dictionary is on */
+    private fun tabs(): ResultsHtml.Tabs {
+        val byDictionary = DictionarySettings(activity).tabs(dictionaries)
+        val enabled = dictionaries.enabledDictionaries()
+        return ResultsHtml.Tabs(byDictionary, enabled.mapNotNull { byDictionary[it.title] }.distinct(), enabled.any { it.kanji > 0 })
+    }
+
+    /** Shows the tab chosen last, or All if the results shown have none in it (keeping it for the next ones) */
+    private fun useLastTab() = onPage("useTab(${JSONObject.quote(DictionarySettings(activity).lastTab)})")
 
     /** Drops the lookup in progress, and the shown results' buttons. */
     fun cancel() {
@@ -287,6 +298,7 @@ class DictionaryLookup(
         generation++
         shown = parent
         onPage("popResults()")
+        useLastTab()
         showRest(parent)
         // Anki's answers that came while they weren't shown
         checkAnki(parent)
@@ -301,6 +313,7 @@ class DictionaryLookup(
         shown = found
         pageStyles += found.styles
         onPage(found.script)
+        useLastTab()
         if (back != null) onPage("backBar(${JSONObject.quote(back)})")
         checkAnki(found)
         checkDuplicates(found)
@@ -513,6 +526,12 @@ class DictionaryLookup(
         @JavascriptInterface
         fun lookUpIn(text: String, offset: Int) {
             activity.runOnUiThread { this@DictionaryLookup.lookUpIn(text, offset) }
+        }
+
+        /** A tab was chosen: the next results show in it too */
+        @JavascriptInterface
+        fun selectTab(tab: String) {
+            activity.runOnUiThread { DictionarySettings(activity).lastTab = tab }
         }
 
         @JavascriptInterface

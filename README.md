@@ -64,6 +64,14 @@ Results look like Yomitan's popup:
 
 The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.
 
+**Tabs** above the results show them in parts, once there's more than one:
+- **All**, as usual, then one tab per language of the dictionaries' definitions: **国語** for Japanese–Japanese dictionaries, **EN**, **DE** and so on for the others. A dictionary that doesn't say its language goes by its definitions: Japanese ones in 国語, ones in Latin letters in EN.
+- A tab shows the same results in the same order, with only its dictionaries' definitions. Results without any are left out. Each tab says how many results it has; an empty one is greyed.
+- **漢字** shows each word with its kanji (meanings, readings, strokes) instead of its definitions, if a kanji dictionary is on.
+- The tab you choose stays for the next lookups, and for words looked up in definitions. If a word has nothing in it, its results show in All, and the next word with something in it shows in your tab again.
+- **⋮ → Tab…** on a dictionary puts it in another tab, with any short name (e.g. 大辞林 and 明鏡 in 国語, a name dictionary in 名前).
+- ＋ Anki works the same in every tab: cards get the definitions of all dictionaries, as in Yomitan.
+
 **Words in definitions** can be looked up too, as Yomitan's nested popups do, which helps most with Japanese–Japanese dictionaries:
 - Tap a word in a definition, an example sentence or a kanji's meanings. Its results show in place of the ones it's from, with a **‹ word** bar at the top to go back. Android's Back does the same, keeping where you'd scrolled.
 - Links to other words (Jitendex's cross-references) look up the word they go to.

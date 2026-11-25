@@ -8,6 +8,7 @@ import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Meanings
+import io.github.kvth.hiroi.dictionary.ResultTabs
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
@@ -40,8 +41,17 @@ class ResultsHtml(
     /** What dictionary [title] is called on the page */
     private fun name(title: String) = names[title] ?: title
 
-    /** CSS colours from the app theme, so the results match the panel. */
-    data class Colors(val text: String, val secondary: String, val accent: String)
+    /** CSS colours from the app theme, so the results match the panel; [background] behind the tabs, which stay at the top. */
+    data class Colors(val text: String, val secondary: String, val accent: String, val background: String = "transparent")
+
+    /**
+     * The tabs ([ResultTabs]) to show the results in: each term dictionary's, by title
+     * ([byDictionary]), in [order]; and 漢字 if a kanji dictionary is on ([kanji]).
+     */
+    data class Tabs(val byDictionary: Map<String, String>, val order: List<String>, val kanji: Boolean) {
+        /** Whether there's more than one, so choosing one shows less */
+        val shown: Boolean get() = order.size + (if (kanji) 1 else 0) > 1
+    }
 
     /**
      * [average]: one "Average" tag with the harmonic mean instead of a tag per frequency list,
@@ -58,7 +68,8 @@ class ResultsHtml(
         frequencies: Frequencies = Frequencies(),
         media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
         audio: Boolean = false,
-    ): String = Page(result, anki, styles, cards, frequencies, media, audio).first()
+        tabs: Tabs? = null,
+    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs).first()
 
     /**
      * An empty results page that stays loaded: [Page.show] shows each result in it, so a lookup
@@ -89,7 +100,21 @@ class ResultsHtml(
         private val audio: Boolean = false,
         /** Whether the page that stays loaded ([shell]) has a dictionary's styles already */
         private val hasStyles: (String) -> Boolean = { false },
+        /** The tabs to choose from, if there's more than one ([Tabs.shown]) */
+        tabs: Tabs? = null,
     ) {
+        private val tabs = tabs?.takeIf { it.shown }
+
+        /** A dictionary's tab */
+        private fun tabOf(dictionary: String) = tabs?.byDictionary?.get(dictionary)
+
+        /** The kanji of the results' words */
+        private val wordKanji = result.terms.flatMapTo(LinkedHashSet()) { term -> term.kanji.map { it.character } }
+
+        /** The tabs [term] is in: those of its definitions' dictionaries, and 漢字 if its word has kanji */
+        private fun tabsOf(term: TermGroup): List<String> =
+            term.definitions.mapNotNull { tabOf(it.entry.dictionary) }.distinct() + listOfNotNull(ResultTabs.KANJI.takeIf { term.kanji.isNotEmpty() })
+
         init {
             names = aliases()
         }
@@ -125,6 +150,7 @@ class ResultsHtml(
 
         private fun body(budget: Int): String {
             val body = StringBuilder()
+            body.tabBar()
             anki?.error?.let { body.append("<div class=\"error\">").append(Html.escape(it)).append("</div>") }
             if (result.sections.isEmpty()) {
                 body.results(budget)
@@ -147,6 +173,27 @@ class ResultsHtml(
             return body.toString()
         }
 
+        /**
+         * The tabs, each with how many results it has (漢字: how many kanji), the empty ones
+         * greyed; the page shows All until [show]'s script chooses one.
+         */
+        private fun StringBuilder.tabBar() {
+            val tabs = tabs ?: return
+            val counts = LinkedHashMap<String, Int>()
+            for (tab in tabs.order) counts[tab] = result.terms.count { term -> term.definitions.any { tabOf(it.entry.dictionary) == tab } }
+            if (tabs.kanji) counts[ResultTabs.KANJI] = (wordKanji + result.kanji.map { it.character }).size
+            append("<div class=\"tabs\" id=\"tabs\" data-selected=\"\" role=\"tablist\">")
+            tab("", "All", result.terms.size + result.kanji.count { it.character !in wordKanji })
+            for ((tab, count) in counts) tab(tab, tab, count)
+            append("</div>")
+        }
+
+        private fun StringBuilder.tab(tab: String, label: String, count: Int) {
+            append("<button class=\"tab\" role=\"tab\" data-tab=\"").append(Html.escape(tab)).append("\" onclick=\"selectTab(this)\"")
+            if (count == 0) append(" disabled")
+            append('>').append(Html.escape(label)).append(" <span class=\"count\">").append(count).append("</span></button>")
+        }
+
         /** A script that adds the rest of the results to the page [first] or [show] made, and their styles; null if it has them all. */
         fun rest(): String? {
             if (complete) return null
@@ -160,8 +207,8 @@ class ResultsHtml(
             }
             val more = StringBuilder().apply { results(Int.MAX_VALUE) }
             if (more.isNotEmpty()) content.append("addResults(").append(JSONObject.quote(more.toString())).append(");")
-            // The styles first, so the definitions never show without them
-            return "addStyles(" + sheets() + ");" + content
+            // The styles first, so the definitions never show without them; what's added shown as the chosen tab says
+            return "addStyles(" + sheets() + ");" + content + "applyTab();"
         }
 
         /** Each dictionary's styles that the page needs and wasn't given, only for its own definitions (CSS nesting, as Jitendex itself uses) */
@@ -185,7 +232,8 @@ class ResultsHtml(
                 term++
                 definition = 0
             }
-            for (kanji in result.kanji) kanji(kanji, frequencies)
+            // The kanji of the text: in 漢字 too, unless a word's kanji there show it already
+            for (kanji in result.kanji) kanji(kanji, frequencies, if (tabs?.kanji == true && kanji.character !in wordKanji) ResultTabs.KANJI else "")
             complete = true
         }
 
@@ -204,7 +252,9 @@ class ResultsHtml(
         }
 
         private fun StringBuilder.header(index: Int, term: TermGroup) {
-            append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
+            append("<div class=\"entry\"")
+            if (tabs != null) append(" data-tabs=\"").append(Html.escape(tabsOf(term).joinToString(" "))).append('"')
+            append("><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
             // Grouped by term or related terms, a result can have several headwords, as in Yomitan.
             // Each one breaks inside only if it doesn't fit a line of its own, so a narrow panel moves the buttons instead.
             term.headwords.joinTo(this, "<span class=\"separator\">・</span>") {
@@ -259,7 +309,7 @@ class ResultsHtml(
                 } else {
                     null
                 }
-                definition(item.entry, media, only)
+                definition(item.entry, media, only, tabOf(item.entry.dictionary))
                 used += item.entry.dictionary
                 definition++
             }
@@ -364,8 +414,11 @@ class ResultsHtml(
         }
     }
 
-    private fun StringBuilder.definition(entry: TermEntry, media: (String, String) -> DictionaryMedia?, only: String? = null) {
-        append("<li><div class=\"definition-tags\">")
+    /** A definition of [entry]; [tab]: its dictionary's, if the page has tabs */
+    private fun StringBuilder.definition(entry: TermEntry, media: (String, String) -> DictionaryMedia?, only: String? = null, tab: String? = null) {
+        append("<li")
+        if (tab != null) append(" data-tab=\"").append(Html.escape(tab)).append('"')
+        append("><div class=\"definition-tags\">")
         if (only != null) tag("only", only)
         for (tag in entry.definitionTags.split(' ').filter { it.isNotBlank() }) tag("label", tag)
         tag("dictionary", name(entry.dictionary))
@@ -393,8 +446,11 @@ class ResultsHtml(
         for ((dictionary, values) in byDictionary) tag("frequency", name(dictionary), Html.escape(values.map { it.display }.distinct().joinToString(", ")))
     }
 
-    private fun StringBuilder.kanji(kanji: KanjiEntry, frequencies: Frequencies) {
-        append("<div class=\"entry kanji\"><div class=\"header\"><span class=\"character\" lang=\"ja\">")
+    /** A kanji of the text; [tabs]: the tabs it shows in besides All, if the page has tabs */
+    private fun StringBuilder.kanji(kanji: KanjiEntry, frequencies: Frequencies, tabs: String? = null) {
+        append("<div class=\"entry kanji\"")
+        if (tabs != null) append(" data-tabs=\"").append(Html.escape(tabs)).append('"')
+        append("><div class=\"header\"><span class=\"character\" lang=\"ja\">")
         append(Html.escape(kanji.character)).append("</span></div><div class=\"tags\">")
         tag("dictionary", name(kanji.dictionary))
         frequencyTags(kanji.frequencies, frequencies)
@@ -457,6 +513,37 @@ class ResultsHtml(
             });
         """.trimIndent().replace("\n", " ")
 
+        /**
+         * Tabs ([Tabs]): the one chosen shows the results it has, with only its definitions (漢字:
+         * the words' kanji instead of their definitions), as the bar's data-selected says. Choosing
+         * one is kept for the next results; useTab() chooses it, or All if the page has none in it.
+         */
+        val TABS = """
+            function applyTab() {
+              var bar = document.getElementById('tabs'), tab = bar ? bar.dataset.selected : '';
+              document.body.classList.toggle('kanji-tab', tab === '${ResultTabs.KANJI}');
+              if (bar) bar.querySelectorAll('.tab').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === tab); });
+              document.querySelectorAll('.entry[data-tabs]').forEach(function (e) {
+                e.hidden = tab !== '' && e.dataset.tabs.split(' ').indexOf(tab) < 0;
+                var tile = e.closest('.tile'); if (tile) tile.hidden = e.hidden;
+              });
+              document.querySelectorAll('ol.definitions > li[data-tab]').forEach(function (li) {
+                li.hidden = tab !== '' && tab !== '${ResultTabs.KANJI}' && li.dataset.tab !== tab;
+              });
+            }
+            function useTab(tab) {
+              var bar = document.getElementById('tabs'); if (!bar) return;
+              var b = Array.prototype.find.call(bar.querySelectorAll('.tab'), function (b) { return b.dataset.tab === tab && !b.disabled; });
+              bar.dataset.selected = b ? tab : '';
+              applyTab();
+            }
+            function selectTab(b) {
+              if (b.disabled) return;
+              document.getElementById('tabs').dataset.selected = b.dataset.tab;
+              applyTab(); window.scrollTo(0, 0); Hiroi.selectTab(b.dataset.tab);
+            }
+        """.trimIndent().replace("\n", " ")
+
         /** The page's functions, for Hiroi to change it once it shows. */
         val SCRIPT = buildString {
             append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
@@ -502,6 +589,7 @@ class ResultsHtml(
             append("function backBar(label) { var b = document.createElement('div'); b.className = 'back'; b.setAttribute('role', 'button'); ")
             append("b.textContent = '‹ ' + label; b.onclick = function () { Hiroi.back(); }; document.body.insertBefore(b, document.body.firstChild); }")
             append(NESTED_LOOKUP)
+            append(TABS)
         }
 
 
@@ -519,7 +607,16 @@ class ResultsHtml(
         /* Chrome trims the blank half of 。」 at a line's end but still counts it as overflow, so the page could scroll sideways a bit */
         body { text-spacing-trim: space-all; }
         .error { color: ${colors.secondary}; font-size: 0.85em; margin-bottom: 8px; }
-        .entry + .entry { margin-top: 14px; padding-top: 12px; border-top: 1px solid ${colors.secondary}40; }
+        /* Between the results a tab shows: hidden ones in between don't count */
+        .entry:not([hidden]) ~ .entry:not([hidden]) { margin-top: 14px; padding-top: 12px; border-top: 1px solid ${colors.secondary}40; }
+        .tabs { position: sticky; top: 0; z-index: 1; display: flex; gap: 4px; overflow-x: auto; margin: 0 0 8px; padding: 4px 0; background: ${colors.background}; }
+        .tab { flex: none; padding: 3px 10px; border: none; border-radius: 14px; background: none; color: ${colors.secondary}; font: inherit; font-size: 0.9em; }
+        .tab[aria-selected="true"] { background: ${colors.accent}1f; color: ${colors.accent}; font-weight: bold; }
+        .tab:disabled { opacity: 0.4; }
+        .tab .count { font-size: 0.8em; font-weight: normal; opacity: 0.75; }
+        /* 漢字: each word with its kanji, open, instead of its definitions */
+        .kanji-tab ol.definitions, .kanji-tab .inflections, .kanji-tab .inflection-infos, .kanji-tab .tag.kanji-toggle { display: none; }
+        .kanji-tab .kanji-breakdown { display: block; }
         .section { margin: 18px 0 8px; padding-bottom: 3px; border-bottom: 2px solid ${colors.accent}80; color: ${colors.accent}; font-size: 0.85em; font-weight: bold; }
         .section:first-child { margin-top: 0; }
         .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5em, 1fr)); gap: 4px; }

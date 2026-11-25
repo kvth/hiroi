@@ -80,6 +80,30 @@ class DictionarySettings(context: Context) {
         aliases = if (name.isEmpty() || name == title) aliases - title else aliases + (title to name)
     }
 
+    /** The tabs dictionaries were put in instead of their language's ([ResultTabs]), by title */
+    var tabOverrides: Map<String, String>
+        get() = prefs.getString("tabs", null)?.let { json ->
+            runCatching { JSONObject(json).let { o -> o.keys().asSequence().associateWith { o.getString(it) } } }.getOrNull()
+        }.orEmpty()
+        set(value) = prefs.edit().putString("tabs", JSONObject(value).toString()).apply()
+
+    /** Puts dictionary [title] in tab [tab]; its language's tab ([default]), blank or null puts it back there. */
+    fun setTab(title: String, tab: String?, default: String) {
+        val name = ResultTabs.clean(tab)
+        tabOverrides = if (name == null || name == default) tabOverrides - title else tabOverrides + (title to name)
+    }
+
+    /** Each term dictionary's tab, by title: the one it was put in, or its language's ([DictionaryDb.languageTabs]) */
+    fun tabs(db: DictionaryDb): Map<String, String> {
+        val languages = db.languageTabs()
+        return languages + tabOverrides.filterKeys { it in languages }
+    }
+
+    /** The tab results were shown in last ("" for all of them), for the next results that have it */
+    var lastTab: String
+        get() = prefs.getString("last_tab", null).orEmpty()
+        set(value) = prefs.edit().putString("last_tab", value).apply()
+
     /** Settings that name dictionary [old] name [new] instead (an update can change its title). */
     fun rename(old: String, new: String) {
         if (old == new) return
@@ -89,6 +113,7 @@ class DictionarySettings(context: Context) {
         if (old in partsOfSpeechFilterOff) partsOfSpeechFilterOff = partsOfSpeechFilterOff - old + new
         if (old in deinflectionsOff) deinflectionsOff = deinflectionsOff - old + new
         aliases[old]?.let { aliases = aliases - old + (new to it) }
+        tabOverrides[old]?.let { tabOverrides = tabOverrides - old + (new to it) }
     }
 
     /**

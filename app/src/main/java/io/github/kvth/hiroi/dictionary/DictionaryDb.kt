@@ -338,6 +338,17 @@ class DictionaryDb private constructor(context: Context) :
     override fun existingForms(forms: Collection<String>): Set<String> =
         each(searchable().filter { it.info.terms > 0 }) { _, f -> forms.filter(f::hasForm) }.toSet()
 
+    /** Each dictionary's tab by its language ([ResultTabs.forLanguage]), by file: it doesn't change */
+    private val languageTabCache = ConcurrentHashMap<String, String>()
+
+    /** Each term dictionary's tab by the language of its definitions ([ResultTabs.forLanguage]), by title: those turned on, or all */
+    fun languageTabs(enabledOnly: Boolean = true): Map<String, String> =
+        (if (enabledOnly) searchable() else entries()).filter { it.info.terms > 0 }.associate { e ->
+            e.info.title to languageTabCache.getOrPut(e.file) {
+                runCatching { file(e).let { ResultTabs.forLanguage(it.targetLanguage(), it.hasMeanings()) } }.getOrDefault(ResultTabs.JAPANESE)
+            }
+        }
+
     /** Whether dictionary [id] can be searched by meaning */
     fun meaningSearchAvailableFor(id: Long): Boolean = entries().firstOrNull { it.info.id == id }?.let { it.info.terms > 0 && file(it).hasMeanings() } ?: false
 
