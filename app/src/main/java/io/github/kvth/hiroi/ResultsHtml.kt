@@ -417,6 +417,46 @@ class ResultsHtml(
     }
 
     private companion object {
+        /**
+         * A tap in a definition or a kanji's meanings looks up the word starting at the character
+         * tapped, in the text of the whole definition (without furigana or hidden parts, a line
+         * break between blocks); a tap on a link to another word looks that up. Not while text is selected, nor
+         * on buttons, images or the inflections.
+         */
+        val NESTED_LOOKUP = """
+            document.addEventListener('click', function (e) {
+              var t = e.target;
+              if (!t.closest || !window.getSelection().isCollapsed) return;
+              var g = t.closest('.glossary, .kanji .definitions, .kanji-card');
+              if (!g || t.closest('button, summary, img, .inflection, .tag')) return;
+              var link = t.closest('[data-query]');
+              if (link) { Hiroi.lookUpIn(link.dataset.query, 0); return; }
+              var r = document.caretRangeFromPoint(e.clientX, e.clientY);
+              if (!r || r.startContainer.nodeType !== 3 || !g.contains(r.startContainer)) return;
+              var node = r.startContainer, at = r.startOffset;
+              function hit(o) {
+                if (o < 0 || o >= node.length) return false;
+                var q = document.createRange(); q.setStart(node, o); q.setEnd(node, o + 1);
+                var b = q.getBoundingClientRect();
+                return e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+              }
+              if (!hit(at)) { if (hit(at - 1)) at--; else return; }
+              var text = '', offset = -1;
+              (function walk(n) {
+                if (n.nodeType === 3) { if (n === node) offset = text.length + at; text += n.nodeValue; return; }
+                if (n.nodeType !== 1 || n.tagName === 'RT' || n.tagName === 'RP') return;
+                if (n.tagName === 'BR') { text += '\n'; return; }
+                var display = n === g ? 'block' : getComputedStyle(n).display;
+                if (display === 'none') return;
+                var block = n !== g && !/^(inline|ruby|contents)/.test(display);
+                if (block) text += '\n';
+                for (var c = n.firstChild; c; c = c.nextSibling) walk(c);
+                if (block) text += '\n';
+              })(g);
+              if (offset >= 0) Hiroi.lookUpIn(text, offset);
+            });
+        """.trimIndent().replace("\n", " ")
+
         /** The page's functions, for Hiroi to change it once it shows. */
         val SCRIPT = buildString {
             append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
@@ -454,7 +494,16 @@ class ResultsHtml(
             append("function openTile(i) { var t = document.getElementById('tile' + i); t.classList.add('open'); t.scrollIntoView({block: 'nearest'}); }")
             append("document.addEventListener('click', function (e) { var h = e.target.closest && e.target.closest('.tile.open .headword'); ")
             append("if (h) h.closest('.tile').classList.remove('open'); });")
+            // Results looked up from a definition (Yomitan's nested popups) go in place of these, which wait on a stack to come back
+            append("var stack = [];")
+            append("function pushResults() { stack.push({html: document.body.innerHTML, y: window.scrollY}); }")
+            append("function popResults() { var s = stack.pop(); if (!s) return; document.body.innerHTML = s.html; window.scrollTo(0, s.y); }")
+            append("function clearStack() { stack = []; }")
+            append("function backBar(label) { var b = document.createElement('div'); b.className = 'back'; b.setAttribute('role', 'button'); ")
+            append("b.textContent = '‹ ' + label; b.onclick = function () { Hiroi.back(); }; document.body.insertBefore(b, document.body.firstChild); }")
+            append(NESTED_LOOKUP)
         }
+
 
         /** Up to which frequency rank a word's tile is marked as common */
         const val COMMON_RANK = 10_000
@@ -535,6 +584,8 @@ class ResultsHtml(
         details.gloss-image > summary { color: ${colors.accent}; }
         .glossary ul, .glossary ol { margin: 2px 0; padding-left: 1.3em; }
         .kanji .character { font-size: 3em; line-height: 1.1; }
+        .back { display: inline-block; margin-bottom: 10px; padding: 3px 12px; border-radius: 14px; background: ${colors.accent}1f; color: ${colors.accent}; font-size: 0.9em; }
+        .link { color: ${colors.accent}; text-decoration: underline; text-underline-offset: 2px; }
         .kanji table { margin-top: 6px; border-collapse: collapse; }
         .kanji th { padding-right: 10px; color: ${colors.secondary}; font-weight: normal; text-align: left; }
     """.trimIndent()

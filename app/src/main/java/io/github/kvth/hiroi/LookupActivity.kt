@@ -131,6 +131,12 @@ class LookupActivity : Activity() {
         super.onStop()
     }
 
+    /** Back from results looked up in a definition to those they're from, else as usual */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!(::lookup.isInitialized && lookup.back())) @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
     override fun onDestroy() {
         lookup.close()
         translation.close()

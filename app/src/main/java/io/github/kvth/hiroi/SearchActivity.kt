@@ -193,6 +193,12 @@ class SearchActivity : Activity() {
         takeText(intent)
     }
 
+    /** Back from results looked up in a definition to those they're from, else as usual */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (!(::lookup.isInitialized && lookup.back())) @Suppress("DEPRECATION") super.onBackPressed()
+    }
+
     override fun onDestroy() {
         main.removeCallbacks(searchSoon)
         marker.shutdownNow()

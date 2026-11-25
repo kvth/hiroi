@@ -64,6 +64,12 @@ Results look like Yomitan's popup:
 
 The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.
 
+**Words in definitions** can be looked up too, as Yomitan's nested popups do, which helps most with Japanese–Japanese dictionaries:
+- Tap a word in a definition, an example sentence or a kanji's meanings. Its results show in place of the ones it's from, with a **‹ word** bar at the top to go back. Android's Back does the same, keeping where you'd scrolled.
+- Links to other words (Jitendex's cross-references) look up the word they go to.
+- This goes as deep as you like, and ＋ Anki works on any of them (the card's sentence is from the definition).
+- Long-pressing still selects text in a definition.
+
 A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `app/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
 
 Text written another way than the dictionary has it is found too, as [JL](https://github.com/rampaa/JL) and Yomitan find it:

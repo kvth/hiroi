@@ -72,6 +72,15 @@ class DictionaryLookup(
 
             /** The recording chosen in a result's audio menu, by index: what its card's {audio} gets. */
             val audio = HashMap<Int, AudioInfo>()
+
+            /**
+             * The script with the rest of the results (made after the first part shows), its
+             * dictionaries' styles, and whether the page has it: not if a lookup from a
+             * definition showed in its place first, until [back] brings these results back.
+             */
+            var rest: String? = null
+            var restStyles: Set<String> = emptySet()
+            var restShown = false
         }
     }
 
@@ -87,6 +96,9 @@ class DictionaryLookup(
     private val styles by lazy { dictionaries.styles() } // read on the lookup thread
     private var generation = 0
     private var shown: Lookup.Found? = null
+
+    /** The results that lookups from their definitions showed in place of, the last most recently ([lookUpIn]) */
+    private val stack = ArrayList<Lookup.Found>()
 
     // Theme colours are resolved here; the HTML itself is made on the lookup thread.
     private val html = ResultsHtml(
@@ -174,8 +186,11 @@ class DictionaryLookup(
         text: String,
         onResult: (Lookup) -> Unit,
         noMatch: () -> String = { activity.getString(R.string.no_match) },
+        /** Looked up from a definition of the results shown, which stay on [stack] */
+        nested: Boolean = false,
         search: (post: (Lookup) -> Unit) -> LookupResult?,
     ) {
+        if (!nested) clearStack()
         val generation = ++generation
         fun post(outcome: Lookup) = activity.runOnUiThread {
             if (generation == this.generation && !activity.isDestroyed) onResult(outcome)
@@ -222,9 +237,9 @@ class DictionaryLookup(
             val styles = page?.styledSoFar.orEmpty()
             Log.d(TAG, "The rest of the results took ${SystemClock.elapsedRealtime() - made} ms (${rest.length / 1024} KB)")
             activity.runOnUiThread {
-                if (shown !== outcome) return@runOnUiThread
-                pageStyles += styles
-                onPage(rest)
+                outcome.rest = rest
+                outcome.restStyles = styles
+                if (shown === outcome) showRest(outcome)
             }
         }
     }
@@ -233,13 +248,60 @@ class DictionaryLookup(
     fun cancel() {
         generation++
         shown = null
+        clearStack()
     }
 
-    /** Shows [found] in [web]. */
-    fun show(found: Lookup.Found) {
+    /** The rest of [found]'s results, into the page, once */
+    private fun showRest(found: Lookup.Found) {
+        val rest = found.rest ?: return
+        if (found.restShown) return
+        found.restShown = true
+        pageStyles += found.restStyles
+        onPage(rest)
+    }
+
+    private fun clearStack() {
+        if (stack.isEmpty()) return
+        stack.clear()
+        onPage("clearStack()")
+    }
+
+    /**
+     * Looks up the word at [offset] in [text], a definition of the results shown (or the word a
+     * link in one goes to), as Yomitan's nested popups do: its results show in their place, with
+     * a bar back to them. Nothing happens if it finds nothing.
+     */
+    private fun lookUpIn(text: String, offset: Int) {
+        val parent = shown ?: return
+        find("in a definition at $offset", text, { outcome ->
+            if (outcome !is Lookup.Found || shown !== parent) return@find
+            stack += parent
+            onPage("pushResults()")
+            show(outcome, back = parent.result.terms.firstOrNull()?.expression ?: parent.text)
+        }, nested = true) { translator.lookUp(text, offset) }
+    }
+
+    /** Back to the results a lookup from their definitions showed in place of ([lookUpIn]); false if there are none. */
+    fun back(): Boolean {
+        val parent = stack.removeLastOrNull() ?: return false
+        generation++
+        shown = parent
+        onPage("popResults()")
+        showRest(parent)
+        // Anki's answers that came while they weren't shown
+        checkAnki(parent)
+        checkDuplicates(parent)
+        return true
+    }
+
+    /** Shows [found] in [web]; [back]: the word of the results it's looked up from, for the bar back to them. */
+    fun show(found: Lookup.Found) = show(found, null)
+
+    private fun show(found: Lookup.Found, back: String?) {
         shown = found
         pageStyles += found.styles
         onPage(found.script)
+        if (back != null) onPage("backBar(${JSONObject.quote(back)})")
         checkAnki(found)
         checkDuplicates(found)
         val audio = AudioSettings(activity)
@@ -446,6 +508,16 @@ class DictionaryLookup(
         @JavascriptInterface
         fun audioMenu(index: Int) {
             activity.runOnUiThread { this@DictionaryLookup.audioMenu(index) }
+        }
+
+        @JavascriptInterface
+        fun lookUpIn(text: String, offset: Int) {
+            activity.runOnUiThread { this@DictionaryLookup.lookUpIn(text, offset) }
+        }
+
+        @JavascriptInterface
+        fun back() {
+            activity.runOnUiThread { this@DictionaryLookup.back() }
         }
     }
 

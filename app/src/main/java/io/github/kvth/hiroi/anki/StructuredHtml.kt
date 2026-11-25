@@ -3,6 +3,7 @@ package io.github.kvth.hiroi.anki
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLDecoder
 import java.util.Base64
 
 /**
@@ -94,6 +95,8 @@ object StructuredHtml {
                         val name = if (tag == "a") "span" else tag // dictionary-internal links lead nowhere in Anki
                         out.append('<').append(name)
                         attributes(node, out)
+                        // A link to another word (Yomitan's "?query=…"): tapping it in the results looks that up
+                        if (tag == "a") linkQuery(node.optString("href"))?.let { out.append(" class=\"link\" data-query=\"").append(Html.escape(it)).append('"') }
                         out.append('>')
                         node(node.opt("content"), out, media)
                         out.append("</").append(name).append('>')
@@ -102,6 +105,13 @@ object StructuredHtml {
                 }
             }
         }
+    }
+
+    /** The word a dictionary's link [href] searches for: Yomitan's `?query=食べる&wildcards=off` */
+    fun linkQuery(href: String): String? {
+        if (!href.startsWith("?")) return null
+        val value = href.drop(1).split('&').firstOrNull { it.startsWith("query=") }?.removePrefix("query=") ?: return null
+        return runCatching { URLDecoder.decode(value, "UTF-8") }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
     private fun isLabel(node: Any?) = (node as? JSONObject)?.optJSONObject("data")?.optString("class") == "tag"
