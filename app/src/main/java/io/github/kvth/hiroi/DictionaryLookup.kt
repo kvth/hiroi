@@ -15,6 +15,7 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import io.github.kvth.hiroi.anki.AnkiDroidApi
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardCreator
 import io.github.kvth.hiroi.anki.CardData
@@ -480,7 +481,11 @@ class DictionaryLookup(
                         // Fields whose templates failed show {marker-render-error}, as in Yomitan; say which.
                         if (added.errors.isNotEmpty()) toast(activity.getString(R.string.anki_template_errors, added.errors.joinToString("\n")))
                         // The stylesheets kept for the note type changed: it needs them to show the card as before.
-                        if (added.stylesChanged) toast(activity.getString(R.string.dedup_changed_toast))
+                        when {
+                            added.noteTypeError != null -> toast(activity.getString(R.string.dedup_update_failed_toast, added.noteTypeError))
+                            added.noteTypeUpdated -> toast(activity.getString(R.string.dedup_updated_toast, format.model))
+                            added.stylesChanged && !settings.updateNoteTypeCss -> toast(activity.getString(R.string.dedup_changed_toast))
+                        }
                         button(if (overwrite != null) R.string.anki_overwritten else R.string.anki_added, false)
                         web.evaluateJavascript("inAnki($index, '${activity.getString(R.string.anki_in_deck)}')", null)
                     },
@@ -508,10 +513,8 @@ class DictionaryLookup(
         if (ids.isEmpty()) return
         val query = "nid:" + ids.joinToString(",")
         val settings = AnkiSettings(activity)
-        val local = Uri.parse(settings.url).host in setOf("127.0.0.1", "localhost")
-        val ankiDroid = Intent(Intent.ACTION_VIEW, Uri.parse("anki://x-callback-url/browser?search=" + Uri.encode(query)))
-            .setPackage(ANKIDROID)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val local = settings.ankiDroid || Uri.parse(settings.url).host in setOf("127.0.0.1", "localhost")
+        val ankiDroid = AnkiDroidApi.browseIntent(query).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (local && ankiDroid.resolveActivity(activity.packageManager) != null) {
             activity.startActivity(ankiDroid)
             return
@@ -552,7 +555,6 @@ class DictionaryLookup(
 
     private companion object {
         const val TAG = "HiroiLookup"
-        const val ANKIDROID = "com.ichi2.anki"
         const val CROP_MARGIN_DP = 12
 
         /** About how many characters of definitions a results page has at first, about what the panel shows; the rest follow */

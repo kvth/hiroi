@@ -26,7 +26,7 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import io.github.kvth.hiroi.R
-import io.github.kvth.hiroi.anki.AnkiConnect
+import io.github.kvth.hiroi.anki.AnkiBackend
 import io.github.kvth.hiroi.anki.AnkiSettings
 import java.time.LocalDate
 import java.util.concurrent.Executors
@@ -104,7 +104,7 @@ class MarksActivity : Activity() {
         content.addView(button(R.string.marks_use_deck) {
             askAnki({ it.deckNames() }) { decks ->
                 AlertDialog.Builder(this).setTitle(R.string.anki_choose_deck)
-                    .setItems(decks.toTypedArray()) { _, which -> baseQuery.setText(AnkiConnect.deckQuery(decks[which])) }
+                    .setItems(decks.toTypedArray()) { _, which -> baseQuery.setText(AnkiBackend.deckQuery(decks[which])) }
                     .show()
             }
         }, wrap())
@@ -583,7 +583,7 @@ class MarksActivity : Activity() {
 
     // ---- Helpers ------------------------------------------------------------------
 
-    private fun <T> askAnki(call: (AnkiConnect) -> T, onResult: (T) -> Unit) {
+    private fun <T> askAnki(call: (AnkiBackend) -> T, onResult: (T) -> Unit) {
         showMessage(getString(R.string.anki_asking))
         val client = anki.client(60_000)
         background.execute {

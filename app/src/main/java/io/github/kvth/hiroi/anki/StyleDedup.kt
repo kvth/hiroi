@@ -51,6 +51,31 @@ object StyleDedup {
         append(SHEETS_END)
     }
 
+    /**
+     * The note type's Styling [css] with [sheets] in its section: added to the sheets already
+     * there (the add-on's, or those of cards made elsewhere), a dictionary's replacing its old
+     * one; a new section goes at the end. The rest of the Styling stays as it is.
+     */
+    fun withSheets(css: String, sheets: Map<String, String>): String {
+        if (sheets.isEmpty()) return css
+        val begin = css.indexOf(SHEETS_BEGIN)
+        val end = if (begin < 0) -1 else css.indexOf(SHEETS_END, begin)
+        if (end < 0) return if (css.isBlank()) section(sheets) else css.trimEnd() + "\n\n" + section(sheets)
+        val body = css.substring(begin + SHEETS_BEGIN.length, end)
+        val markers = SHEET_MARKER.findAll(body).toList()
+        // Anything before the first sheet's marker, kept at the start of the section
+        val before = body.substring(0, markers.firstOrNull()?.range?.first ?: body.length).trim()
+        val merged = LinkedHashMap<String, String>()
+        markers.forEachIndexed { i, m ->
+            merged[m.groupValues[1]] = body.substring(m.range.last + 1, markers.getOrNull(i + 1)?.range?.first ?: body.length).trim('\n')
+        }
+        merged.putAll(sheets)
+        val section = section(merged).let { if (before.isEmpty()) it else it.replaceFirst(SHEETS_BEGIN + "\n", SHEETS_BEGIN + "\n" + before + "\n") }
+        return css.substring(0, begin) + section + css.substring(end + SHEETS_END.length)
+    }
+
+    private val SHEET_MARKER = Regex("""/\* yomitan-sheet: (.*?) \*/\n?""")
+
     /** A stylesheet split into the rules limited to a dictionary (to move, as one sheet) and the rest. */
     fun splitSheet(css: String): Pair<String, List<String>> {
         val scoped = mutableListOf<String>()

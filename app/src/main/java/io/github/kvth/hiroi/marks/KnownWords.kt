@@ -123,7 +123,7 @@ object KnownWords {
         load(context)
         val settings = MarkSettings(context)
         val anki = AnkiSettings(context)
-        val config = MarkSync.Config(settings.baseQuery, settings.rules, settings.fields, settings.fieldScript, anki.url, settings.notesBatch)
+        val config = MarkSync.Config(settings.baseQuery, settings.rules, settings.fields, settings.fieldScript, anki.source, settings.notesBatch)
         val cache = runCatching { cacheFile(context).takeIf { it.exists() }?.readText()?.let { MarkSync.NoteCache.fromJson(JSONObject(it)) } }.getOrNull()
         val result = FieldScript(context).use { script ->
             MarkSync(anki.client(SYNC_TIMEOUT_MS), script::run).run(config, cache)

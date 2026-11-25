@@ -47,8 +47,8 @@ class AnkiConnectTest {
 
     @Test
     fun escapesSearchSyntax() {
-        assertEquals("""a\*b\_c\"d\\e""", AnkiConnect.escape("""a*b_c"d\e"""))
-        assertEquals("日本語", AnkiConnect.fieldText(" 日本[にほん] 語[ご]"))
+        assertEquals("""a\*b\_c\"d\\e""", AnkiBackend.escape("""a*b_c"d\e"""))
+        assertEquals("日本語", AnkiBackend.fieldText(" 日本[にほん] 語[ご]"))
     }
 
     @Test
@@ -62,5 +62,28 @@ class AnkiConnectTest {
     fun reportsAnkiConnectErrors() {
         val anki = AnkiConnect(null) { """{"result": null, "error": "valid api key must be provided"}""" }
         assertThrows(AnkiException::class.java) { anki.deckNames() }
+    }
+
+    @Test
+    fun storesMediaAsBase64AndChangesTheStyling() {
+        val anki = AnkiConnect(null) { body ->
+            val request = JSONObject(body).also { requests += it }
+            val result: Any = when (request.getString("action")) {
+                "storeMediaFile" -> "a_1.mp3"
+                "modelStyling" -> JSONObject().put("css", ".card { }")
+                "updateModelStyling" -> JSONObject.NULL
+                else -> error("unexpected action")
+            }
+            JSONObject().put("result", result).put("error", JSONObject.NULL).toString()
+        }
+        assertEquals("a_1.mp3", anki.storeMediaFile("a.mp3", byteArrayOf(1, 2, 3)))
+        assertEquals("AQID", requests.last().getJSONObject("params").getString("data"))
+        assertEquals(".card { }", anki.modelStyling("Vocab"))
+        assertEquals("Vocab", requests.last().getJSONObject("params").getString("modelName"))
+        anki.updateModelStyling("Vocab", ".card { color: red; }")
+        assertEquals(
+            mapOf("name" to "Vocab", "css" to ".card { color: red; }"),
+            requests.last().getJSONObject("params").getJSONObject("model").toMap(),
+        )
     }
 }

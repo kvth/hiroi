@@ -8,12 +8,18 @@ import io.github.kvth.hiroi.japanese.Deinflector
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class CardCreatorTest {
     private val requests = mutableListOf<JSONObject>()
+
+    /** The note type's Styling, and the error AnkiConnect gives for it (AnkiConnect Android's) */
+    private var styling = ".card { }"
+    private var stylingError: String? = null
 
     /** Anki with one note, 食べる (id 7), whose fields are Word, Meaning and Notes. */
     private val anki = AnkiConnect(null) { body ->
@@ -36,6 +42,9 @@ class CardCreatorTest {
             )
             "updateNoteFields" -> JSONObject.NULL
             "addNote" -> 42
+            "modelStyling" -> stylingError?.let { return@AnkiConnect JSONObject().put("result", JSONObject.NULL).put("error", it).toString() }
+                ?: JSONObject().put("css", styling)
+            "updateModelStyling" -> JSONObject.NULL.also { styling = params.getJSONObject("model").getString("css") }
             else -> error("unexpected action")
         }
         JSONObject().put("result", result).put("error", JSONObject.NULL).toString()
@@ -203,5 +212,36 @@ class CardCreatorTest {
         // Without a sorting dictionary or a region: empty
         val bare = hiroiMarkers(fields, CardData(term, "", 0, 0)).first
         assertEquals(listOf("", ""), listOf(bare["Rank"], bare["Picture"]))
+    }
+
+    @Test
+    fun putsTheDictionaryStylesIntoTheNoteTypeIfOn() {
+        val sheet = """[data-dictionary="J"] b { color: red; }"""
+        val styled = format.copy(fields = linkedMapOf("Word" to "{expression}", "Meaning" to "<style>$sheet</style>m", "Notes" to ""))
+        val styles = NoteTypeStyles(File.createTempFile("styles", ".json").apply { delete() })
+        fun creator(update: Boolean) = CardCreator(styled, anki, renderer(styled), styles = styles, updateNoteType = update)
+
+        // Off: the sheet is kept for the note type, which isn't touched
+        val kept = creator(false).add(card("届く"), null)
+        assertTrue(kept.stylesChanged)
+        assertFalse(kept.noteTypeUpdated)
+        assertTrue(requests.none { it.getString("action").endsWith("Styling") })
+
+        // On: the note type gets what it lacks, added to its Styling, and only once
+        val added = creator(true).add(card("届く"), null)
+        assertEquals(42, added.noteId)
+        assertTrue(added.noteTypeUpdated)
+        assertEquals(StyleDedup.withSheets(".card { }", mapOf("J" to sheet)), styling)
+        assertEquals("Vocab", requests.last().getJSONObject("params").getJSONObject("model").getString("name"))
+        requests.clear()
+        assertFalse(creator(true).add(card("届く"), null).noteTypeUpdated)
+        assertTrue(requests.none { it.getString("action").endsWith("Styling") })
+
+        // Where Anki can't change it, the card is added all the same, with why
+        stylingError = "unsupported action"
+        val failed = CardCreator(styled, anki, renderer(styled), styles = NoteTypeStyles(File.createTempFile("styles", ".json").apply { delete() }), updateNoteType = true)
+            .add(card("届く"), null)
+        assertEquals(42, failed.noteId)
+        assertEquals("unsupported action", failed.noteTypeError)
     }
 }

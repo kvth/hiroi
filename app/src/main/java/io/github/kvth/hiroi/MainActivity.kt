@@ -8,6 +8,7 @@ import android.content.ComponentName
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -48,7 +49,8 @@ import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
-import io.github.kvth.hiroi.anki.AnkiConnect
+import io.github.kvth.hiroi.anki.AnkiBackend
+import io.github.kvth.hiroi.anki.AnkiDroidApi
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardFormat
 import io.github.kvth.hiroi.anki.NoteTypeStyles
@@ -375,6 +377,15 @@ class MainActivity : Activity() {
     }
 
     private fun setUpAnki() {
+        findViewById<Button>(R.id.anki_backend).setOnClickListener {
+            pickOne(R.string.anki_backend_title, AnkiSettings.BACKENDS, ::backendLabel, anki.backend) {
+                anki.backend = it
+                showAnkiBackend()
+                if (anki.ankiDroid && AnkiDroidApi.installed(this) && !AnkiDroidApi.hasPermission(this)) askAnkiDroidPermission()
+            }
+        }
+        findViewById<Button>(R.id.anki_permission).setOnClickListener { askAnkiDroidPermission() }
+        showAnkiBackend()
         findViewById<EditText>(R.id.anki_url).apply {
             setText(anki.url)
             onChange { anki.url = it }
@@ -404,6 +415,39 @@ class MainActivity : Activity() {
         setUpCards()
         findViewById<Button>(R.id.marks_open).setOnClickListener { startActivity(Intent(this, MarksActivity::class.java)) }
         showAnkiChoices()
+    }
+
+    private fun backendLabel(backend: String) =
+        getString(if (backend == "ankidroid") R.string.anki_backend_ankidroid else R.string.anki_backend_ankiconnect)
+
+    /** The backend, with AnkiConnect's address and key, or whether Hiroi may use AnkiDroid. */
+    private fun showAnkiBackend() {
+        val ankiDroid = anki.ankiDroid
+        findViewById<Button>(R.id.anki_backend).text = getString(R.string.anki_backend, backendLabel(anki.backend))
+        val allowed = AnkiDroidApi.hasPermission(this)
+        val installed = AnkiDroidApi.installed(this)
+        findViewById<TextView>(R.id.anki_backend_hint).text = if (!ankiDroid) {
+            getString(R.string.anki_backend_ankiconnect_hint)
+        } else {
+            getString(R.string.anki_backend_ankidroid_hint) + "\n" + getString(
+                when {
+                    !installed -> R.string.ankidroid_missing
+                    !allowed -> R.string.ankidroid_permission_missing
+                    else -> R.string.ankidroid_ready
+                },
+            )
+        }
+        findViewById<Button>(R.id.anki_permission).visibility = if (ankiDroid && installed && !allowed) View.VISIBLE else View.GONE
+        for (id in listOf(R.id.anki_url, R.id.anki_key)) findViewById<View>(id).visibility = if (ankiDroid) View.GONE else View.VISIBLE
+    }
+
+    private fun askAnkiDroidPermission() = requestPermissions(arrayOf(AnkiDroidApi.PERMISSION), REQUEST_ANKIDROID)
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_ANKIDROID) return
+        showAnkiBackend()
+        if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) showAnkiStatus(getString(R.string.ankidroid_permission_denied))
     }
 
     private fun setUpCards() {
@@ -460,7 +504,15 @@ class MainActivity : Activity() {
                 showNoteTypeStyles()
             }
         }
+        findViewById<CheckBox>(R.id.cards_update_note_type).apply {
+            isChecked = anki.updateNoteTypeCss
+            setOnCheckedChangeListener { _, checked ->
+                anki.updateNoteTypeCss = checked
+                showNoteTypeStyles()
+            }
+        }
         findViewById<Button>(R.id.cards_note_type_css).setOnClickListener { exportNoteTypeStyles() }
+        findViewById<Button>(R.id.cards_update_note_type_now).setOnClickListener { updateNoteTypeStyles() }
         showNoteTypeStyles()
         findViewById<CheckBox>(R.id.cards_screenshot_crop).apply {
             isChecked = anki.screenshotCrop
@@ -657,16 +709,47 @@ class MainActivity : Activity() {
         showAnkiChoices()
     }
 
-    /** Whether the stylesheets kept for the note type changed since they were copied. */
+    /**
+     * Whether the stylesheets kept for the note type changed since they were copied, or, with
+     * Hiroi updating it, since Hiroi last put them there.
+     */
     private fun showNoteTypeStyles() {
         val styles = NoteTypeStyles(this)
-        findViewById<TextView>(R.id.cards_note_type_css_status).setText(
-            when {
-                styles.sheets.isEmpty() -> R.string.dedup_status_empty
-                styles.changedSinceCopied -> R.string.dedup_status_changed
-                else -> R.string.dedup_status_ok
-            },
-        )
+        val model = anki.cardFormat.model
+        val updating = anki.dedupStyles && anki.updateNoteTypeCss
+        findViewById<CheckBox>(R.id.cards_update_note_type).isEnabled = anki.dedupStyles
+        findViewById<Button>(R.id.cards_update_note_type_now).isEnabled = styles.sheets.isNotEmpty() && model.isNotEmpty()
+        findViewById<TextView>(R.id.cards_note_type_css_status).text = when {
+            styles.sheets.isEmpty() -> getString(R.string.dedup_status_empty)
+            updating && model.isNotEmpty() ->
+                getString(if (styles.needsApplying(model)) R.string.dedup_status_pending else R.string.dedup_status_applied, model)
+            styles.changedSinceCopied -> getString(R.string.dedup_status_changed)
+            else -> getString(R.string.dedup_status_ok)
+        }
+    }
+
+    /** Puts the stylesheets into the card format's note type now; how it went shows below the button. */
+    private fun updateNoteTypeStyles() {
+        val status = findViewById<TextView>(R.id.cards_note_type_css_status)
+        val model = anki.cardFormat.model
+        if (model.isEmpty()) {
+            status.setText(R.string.dedup_update_no_model)
+            return
+        }
+        val styles = NoteTypeStyles(this)
+        val client = anki.client()
+        status.setText(R.string.anki_asking)
+        background.execute {
+            val result = runCatching { styles.apply(client, model) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                showNoteTypeStyles()
+                result.fold(
+                    { changed -> if (changed != null) status.text = getString(if (changed) R.string.dedup_update_done else R.string.dedup_update_unchanged, model) },
+                    { status.text = getString(R.string.anki_unreachable, it.message ?: it.javaClass.simpleName) },
+                )
+            }
+        }
     }
 
     /** Shows the note type's section, to copy or share it. */
@@ -741,7 +824,7 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun <T> askAnki(call: (AnkiConnect) -> T, onResult: (T) -> Unit) {
+    private fun <T> askAnki(call: (AnkiBackend) -> T, onResult: (T) -> Unit) {
         showAnkiStatus(getString(R.string.anki_asking))
         val client = anki.client()
         background.execute {
@@ -1026,6 +1109,7 @@ class MainActivity : Activity() {
         super.onResume()
         setStatus(R.id.accessibility_status, accessibilityServiceEnabled())
         setStatus(R.id.assistant_status, getSystemService(RoleManager::class.java).isRoleHeld(RoleManager.ROLE_ASSISTANT))
+        showAnkiBackend()
         showNoteTypeStyles()
         showDictionaries()
         if (page == null) showHome()
@@ -1690,6 +1774,7 @@ class MainActivity : Activity() {
         const val REQUEST_IMPORT_COLLECTION = 4
         const val REQUEST_EXPORT_SETTINGS = 5
         const val REQUEST_IMPORT_SETTINGS = 6
+        const val REQUEST_ANKIDROID = 7
 
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py

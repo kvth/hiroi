@@ -4,7 +4,18 @@ import android.content.Context
 
 /** Where to find Anki and which deck/field holds the words. Lookups check Anki once both are chosen. */
 class AnkiSettings(context: Context) {
+    private val context = context.applicationContext
     private val prefs = context.getSharedPreferences("anki", Context.MODE_PRIVATE)
+
+    /** How Hiroi reaches Anki: "ankiconnect" ([url]) or "ankidroid" (AnkiDroid on this phone, directly). */
+    var backend: String
+        get() = prefs.getString("backend", null)?.takeIf { it in BACKENDS } ?: "ankiconnect"
+        set(value) = prefs.edit().putString("backend", value).apply()
+
+    val ankiDroid get() = backend == "ankidroid"
+
+    /** Which Anki the marks' cached notes came from: they're read again for another. */
+    val source get() = if (ankiDroid) "ankidroid" else url
 
     var url: String
         get() = prefs.getString("url", null)?.takeIf { it.isNotBlank() } ?: DEFAULT_URL
@@ -72,12 +83,23 @@ class AnkiSettings(context: Context) {
         get() = prefs.getBoolean("dedup_styles", false)
         set(value) = prefs.edit().putBoolean("dedup_styles", value).apply()
 
-        fun client(timeoutMs: Int = 3000) = AnkiConnect(url, apiKey.ifEmpty { null }, timeoutMs)
+    /**
+     * With [dedupStyles], Hiroi puts the stylesheets into the card format's note type's Styling
+     * itself whenever they change. Desktop Anki and AnkiDroid (directly) can; AnkiConnect Android can't.
+     */
+    var updateNoteTypeCss: Boolean
+        get() = prefs.getBoolean("update_note_type_css", false)
+        set(value) = prefs.edit().putBoolean("update_note_type_css", value).apply()
+
+    /** [timeoutMs]: for AnkiConnect; AnkiDroid's own API has none. */
+    fun client(timeoutMs: Int = 3000): AnkiBackend =
+        if (ankiDroid) AnkiDroidApi(context) else AnkiConnect(url, apiKey.ifEmpty { null }, timeoutMs)
 
     companion object {
         /** AnkiConnect Android on the same phone; desktop Anki's AnkiConnect uses the same port */
         const val DEFAULT_URL = "http://127.0.0.1:8765"
 
         val SCREENSHOT_FORMATS = listOf("png", "jpeg")
+        val BACKENDS = listOf("ankiconnect", "ankidroid")
     }
 }

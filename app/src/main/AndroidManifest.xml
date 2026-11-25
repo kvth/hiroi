@@ -4,6 +4,9 @@
     <!-- AnkiConnect: AnkiConnect Android on 127.0.0.1, or desktop Anki on the local network -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- AnkiDroid's API for other apps, to use AnkiDroid on the phone directly (Anki settings) -->
+    <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
+
     <!-- To pick apps the marks are off for -->
     <queries>
         <intent>
@@ -12,7 +15,7 @@
         </intent>
     </queries>
 
-    <!-- To open notes in AnkiDroid's card browser -->
+    <!-- To open notes in AnkiDroid's card browser, and to use its API -->
     <queries>
         <package android:name="com.ichi2.anki" />
     </queries>
@@ -47,6 +50,13 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.Hiroi"
         android:usesCleartextTraffic="true">
+
+        <!-- Lends AnkiDroid the media of new cards (word audio, screenshots), one file at a time -->
+        <provider
+            android:name=".anki.AnkiMediaProvider"
+            android:authorities="${applicationId}.ankimedia"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <activity
             android:name=".MainActivity"

@@ -6,7 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import io.github.kvth.hiroi.anki.AnkiConnect
+import io.github.kvth.hiroi.anki.AnkiBackend
 import io.github.kvth.hiroi.anki.AnkiException
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,7 +25,7 @@ class FieldScript(context: Context) : AutoCloseable {
     private val main = Handler(Looper.getMainLooper())
     private var web: WebView? = null
 
-    fun run(code: String, notes: List<AnkiConnect.Note>): List<ScriptResult> {
+    fun run(code: String, notes: List<AnkiBackend.Note>): List<ScriptResult> {
         check(Looper.myLooper() != Looper.getMainLooper()) { "FieldScript.run blocks; call it off the main thread" }
         val script = "(function () {\n\"use strict\";\n$RUNNER\nreturn run(${JSONObject.quote(code)}, ${notesJson(notes)});\n})()"
         val answer = AtomicReference<String?>()
@@ -109,7 +109,7 @@ function run(code, notes) {
 }"""
 
         /** The notes as the script sees them: { noteId, modelName, tags, fields: { name: html } }. */
-        fun notesJson(notes: List<AnkiConnect.Note>) = JSONArray(notes.map { note ->
+        fun notesJson(notes: List<AnkiBackend.Note>) = JSONArray(notes.map { note ->
             JSONObject()
                 .put("noteId", note.id)
                 .put("modelName", note.modelName)

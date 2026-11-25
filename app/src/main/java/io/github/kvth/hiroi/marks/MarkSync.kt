@@ -1,6 +1,6 @@
 package io.github.kvth.hiroi.marks
 
-import io.github.kvth.hiroi.anki.AnkiConnect
+import io.github.kvth.hiroi.anki.AnkiBackend
 import io.github.kvth.hiroi.anki.AnkiException
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,16 +26,17 @@ data class SyncInfo(val notes: Int, val words: Int, val read: Int, val time: Lon
  * notes are read, plus everything once a day.
  */
 class MarkSync(
-    private val client: AnkiConnect,
+    private val client: AnkiBackend,
     /** Runs the field script on a batch of notes; one result per note. */
-    private val runScript: (code: String, notes: List<AnkiConnect.Note>) -> List<ScriptResult>,
+    private val runScript: (code: String, notes: List<AnkiBackend.Note>) -> List<ScriptResult>,
 ) {
     data class Config(
         val baseQuery: String,
         val rules: List<MarkRule>,
         val fields: List<String>,
         val fieldScript: String,
-        val ankiUrl: String,
+        /** Which Anki the notes come from ([io.github.kvth.hiroi.anki.AnkiSettings.source]) */
+        val ankiSource: String,
         val notesBatch: Int = 100,
     )
 
@@ -72,9 +73,9 @@ class MarkSync(
         }
         val ids = rulesByNote.keys.toList()
 
-        // A changed field list, field script or Anki address invalidates every cached note.
+        // A changed field list, field script or Anki invalidates every cached note.
         val script = config.fieldScript.trim()
-        val source = JSONArray().put(config.ankiUrl.trim()).put(JSONArray(config.fields.sorted())).apply { if (script.isNotEmpty()) put(script) }.toString()
+        val source = JSONArray().put(config.ankiSource.trim()).put(JSONArray(config.fields.sorted())).apply { if (script.isNotEmpty()) put(script) }.toString()
         val mods = client.notesModTime(ids)
         val fresh = cache != null && cache.source == source && (mods != null || now - cache.fullAt < FULL_REREAD_MS)
         val cached = if (fresh) cache!!.notes else emptyMap()
@@ -129,7 +130,7 @@ class MarkSync(
         private const val FULL_REREAD_MS = 24 * 60 * 60 * 1000L
 
         /** A note's words: its chosen fields (or, having none of them, its first field) plus the field script's. */
-        fun noteWords(note: AnkiConnect.Note, fields: List<String>, scriptWords: List<String> = emptyList()): List<String> {
+        fun noteWords(note: AnkiBackend.Note, fields: List<String>, scriptWords: List<String> = emptyList()): List<String> {
             var values = fields.mapNotNull { note.fields[it] }
             if (values.isEmpty()) values = listOfNotNull(note.fields.values.firstOrNull())
             return (values + scriptWords).flatMap(NoteWords::extractWords).distinct()

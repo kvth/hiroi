@@ -1,5 +1,6 @@
 package io.github.kvth.hiroi.marks
 
+import io.github.kvth.hiroi.anki.AnkiBackend
 import io.github.kvth.hiroi.anki.AnkiConnect
 import io.github.kvth.hiroi.anki.AnkiException
 import org.json.JSONArray
@@ -63,7 +64,7 @@ class MarkSyncTest {
     )
     private val config = MarkSync.Config("\"deck:Japanese\"", rules, listOf("Word"), "", "http://127.0.0.1:8765")
 
-    private fun sync(config: MarkSync.Config = this.config, cache: MarkSync.NoteCache? = null, now: Long = 1000, script: (String, List<AnkiConnect.Note>) -> List<ScriptResult> = { _, _ -> error("no script") }) =
+    private fun sync(config: MarkSync.Config = this.config, cache: MarkSync.NoteCache? = null, now: Long = 1000, script: (String, List<AnkiBackend.Note>) -> List<ScriptResult> = { _, _ -> error("no script") }) =
         MarkSync(client, script).run(config, cache, now)
 
     @Test
@@ -142,7 +143,7 @@ class MarkSyncTest {
 
     @Test
     fun usesTheFirstFieldWhenNoneIsChosen() {
-        val note = AnkiConnect.Note(1, linkedMapOf("Expression" to "犬", "Meaning" to "dog"))
+        val note = AnkiBackend.Note(1, linkedMapOf("Expression" to "犬", "Meaning" to "dog"))
         assertEquals(listOf("犬"), MarkSync.noteWords(note, emptyList()))
         assertEquals(listOf("犬"), MarkSync.noteWords(note, listOf("Missing")))
     }

@@ -2,7 +2,6 @@ package io.github.kvth.hiroi.anki
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.util.Base64
 import io.github.kvth.hiroi.audio.AudioInfo
 import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.AudioSource
@@ -171,7 +170,7 @@ private fun frequencySortRank(data: CardData): Int? {
  */
 class CardCreator(
     private val format: CardFormat,
-    private val anki: AnkiConnect,
+    private val anki: AnkiBackend,
     private val renderer: NoteRenderer,
     private val wordAudio: Boolean = true,
     private val clipboard: () -> String? = { null },
@@ -185,6 +184,8 @@ class CardCreator(
     private val screenshotQuality: Int = 92,
     /** Where the dictionaries' stylesheets go when they're taken out of the cards; null keeps them in ([StyleDedup]) */
     private val styles: NoteTypeStyles? = null,
+    /** Also put [styles] into the note type's Styling when it lacks the latest ([NoteTypeStyles.apply]) */
+    private val updateNoteType: Boolean = false,
 ) {
     constructor(context: Context, settings: AnkiSettings, clipboard: () -> String? = { null }) :
         this(
@@ -192,13 +193,22 @@ class CardCreator(
             DictionaryDb.get(context)::findMedia, AudioSettings(context).sources,
             screenshotFormat = settings.screenshotFormat, screenshotQuality = settings.screenshotQuality,
             styles = NoteTypeStyles(context).takeIf { settings.dedupStyles },
+            updateNoteType = settings.updateNoteTypeCss,
         )
 
     /**
      * An added or overwritten note, and the templates that failed on it; [stylesChanged]: its
      * dictionary stylesheets went to [NoteTypeStyles] and changed them (the note type needs them).
+     * With the note type updated by Hiroi: [noteTypeUpdated] if its Styling changed, or
+     * [noteTypeError] if that failed (the note is there all the same).
      */
-    class Result(val noteId: Long, val errors: List<String>, val stylesChanged: Boolean = false)
+    class Result(
+        val noteId: Long,
+        val errors: List<String>,
+        val stylesChanged: Boolean = false,
+        val noteTypeUpdated: Boolean = false,
+        val noteTypeError: String? = null,
+    )
 
     /**
      * Adds the note; throws [DuplicateNoteException] if duplicates are prevented. [region] is the
@@ -208,7 +218,7 @@ class CardCreator(
         if (format.preventDuplicates && !anki.canAddNote(duplicateCheckNote(data.term))) throw DuplicateNoteException()
         val note = render(data, screenshot, region)
         val (fields, stylesChanged) = withoutStyles(note.fields)
-        return Result(anki.addNote(note(format, fields)), note.errors, stylesChanged)
+        return withNoteType(Result(anki.addNote(note(format, fields)), note.errors, stylesChanged))
     }
 
     /**
@@ -224,7 +234,18 @@ class CardCreator(
             .mapValues { (name, value) -> CardFormat.overwrite(format.overwriteMode(name), existing.getValue(name), value) }
             .filter { (name, value) -> value != existing[name] }
         if (fields.isNotEmpty()) anki.updateNoteFields(id, fields)
-        return Result(id, note.errors, stylesChanged)
+        return withNoteType(Result(id, note.errors, stylesChanged))
+    }
+
+    /** [result], after putting the stylesheets into the note type if it's on and lacks them. */
+    private fun withNoteType(result: Result): Result {
+        val styles = styles ?: return result
+        if (!updateNoteType || !styles.needsApplying(format.model)) return result
+        return try {
+            Result(result.noteId, result.errors, result.stylesChanged, noteTypeUpdated = styles.apply(anki, format.model) == true)
+        } catch (e: Exception) {
+            Result(result.noteId, result.errors, result.stylesChanged, noteTypeError = e.message ?: e.javaClass.simpleName)
+        }
     }
 
     /**
@@ -246,11 +267,11 @@ class CardCreator(
     /** Notes whose first field is [value], in the duplicate scope. */
     private fun duplicateQuery(field: String, value: String): String = buildString {
         when (format.duplicateScope) {
-            "deck" -> append(AnkiConnect.deckQuery(format.deck)).append(' ')
-            "deck-root" -> append(AnkiConnect.deckQuery(rootDeck(format.deck))).append(' ')
+            "deck" -> append(AnkiBackend.deckQuery(format.deck)).append(' ')
+            "deck-root" -> append(AnkiBackend.deckQuery(rootDeck(format.deck))).append(' ')
         }
-        if (!format.checkAllModels) append("\"note:").append(AnkiConnect.escape(format.model)).append("\" ")
-        append('"').append(AnkiConnect.escape(field)).append(':').append(AnkiConnect.escape(value)).append('"')
+        if (!format.checkAllModels) append("\"note:").append(AnkiBackend.escape(format.model)).append("\" ")
+        append('"').append(AnkiBackend.escape(field)).append(':').append(AnkiBackend.escape(value)).append('"')
     }
 
     /** [fields] without the dictionaries' stylesheets, which go to [styles], if that's on; and whether they changed it. */
@@ -268,7 +289,7 @@ class CardCreator(
     private fun render(data: CardData, screenshot: Bitmap?, region: Bitmap?): RenderedNote {
         if (region != null && data.screenshotRegion == null && format.fields.values.any { AnkiTemplates.SCREENSHOT_REGION in it }) {
             val (bytes, extension) = image(region)
-            data.screenshotRegion = anki.storeMediaFile("hiroi_screenshot_region_${System.currentTimeMillis()}.$extension", bytes.base64())
+            data.screenshotRegion = anki.storeMediaFile("hiroi_screenshot_region_${System.currentTimeMillis()}.$extension", bytes)
         }
         val first = renderer.render(data, null, null)
         if (first.requirements.length() == 0) return first
@@ -293,12 +314,12 @@ class CardCreator(
                     val found = picked ?: audio.first(audioSources, data.term.expression, data.term.reading, speech = false)
                     found?.bytes?.let { bytes ->
                         val extension = found.info.url?.substringBefore('?')?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in AUDIO_EXTENSIONS } ?: "mp3"
-                        media.put("audio", anki.storeMediaFile("hiroi_audio_${data.term.expression}_${data.term.reading}.$extension", bytes.base64()))
+                        media.put("audio", anki.storeMediaFile("hiroi_audio_${data.term.expression}_${data.term.reading}.$extension", bytes))
                     }
                 }
                 "screenshot" -> if (screenshot != null) {
                     val (bytes, extension) = image(screenshot)
-                    media.put("screenshot", anki.storeMediaFile("hiroi_screenshot_${System.currentTimeMillis()}.$extension", bytes.base64()))
+                    media.put("screenshot", anki.storeMediaFile("hiroi_screenshot_${System.currentTimeMillis()}.$extension", bytes))
                 }
                 "clipboardText" -> clipboard()?.let { media.put("clipboardText", it) }
                 "popupSelectionText" -> media.put("selectionText", data.selection)
@@ -309,7 +330,7 @@ class CardCreator(
                     val path = requirement.optString("path")
                     val image = dictionaryMedia(dictionary, path) ?: continue
                     val extension = path.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
-                    val name = anki.storeMediaFile("hiroi_dictionary_media_${images.length() + 1}_${System.currentTimeMillis()}$extension", image.read().base64())
+                    val name = anki.storeMediaFile("hiroi_dictionary_media_${images.length() + 1}_${System.currentTimeMillis()}$extension", image.read())
                     images.put(JSONObject().put("dictionary", dictionary).put("path", path).put("fileName", name))
                 }
             }
@@ -317,29 +338,20 @@ class CardCreator(
         return media.put("parsedText", parsed).put("dictionaryMedia", images)
     }
 
-    /** addNote's note; its options give AnkiConnect the duplicate scope as Yomitan does (deck-root: the top deck with its subdecks). */
-    private fun note(format: CardFormat, fields: Map<String, String>): JSONObject = JSONObject()
-        .put("deckName", format.deck)
-        .put("modelName", format.model)
-        .put("fields", JSONObject().also { json -> fields.forEach { (name, value) -> json.put(name, value) } })
-        .put("tags", JSONArray(format.tags))
-        .put(
-            "options",
-            JSONObject()
-                .put("allowDuplicate", !format.preventDuplicates)
-                .put("duplicateScope", if (format.duplicateScope == "collection") "collection" else "deck")
-                .put(
-                    "duplicateScopeOptions",
-                    JSONObject()
-                        .put("deckName", if (format.duplicateScope == "deck-root") rootDeck(format.deck) else format.deck)
-                        .put("checkChildren", format.duplicateScope == "deck-root")
-                        .put("checkAllModels", format.checkAllModels),
-                ),
-        )
+    /** The note to add; its options give the duplicate scope as Yomitan does (deck-root: the top deck with its subdecks). */
+    private fun note(format: CardFormat, fields: Map<String, String>) = AnkiBackend.NewNote(
+        deck = format.deck,
+        model = format.model,
+        fields = fields,
+        tags = format.tags,
+        allowDuplicate = !format.preventDuplicates,
+        duplicateScope = if (format.duplicateScope == "collection") "collection" else "deck",
+        scopeDeck = if (format.duplicateScope == "deck-root") rootDeck(format.deck) else format.deck,
+        checkChildren = format.duplicateScope == "deck-root",
+        checkAllModels = format.checkAllModels,
+    )
 
     private fun rootDeck(deck: String) = deck.substringBefore("::")
-
-    private fun ByteArray.base64() = Base64.encodeToString(this, Base64.NO_WRAP)
 
     /** A screenshot as the settings say to store it (PNG, or JPEG of their quality), and its file extension */
     private fun image(bitmap: Bitmap): Pair<ByteArray, String> {

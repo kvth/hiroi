@@ -2,7 +2,7 @@ package io.github.kvth.hiroi.marks
 
 import android.content.Context
 import android.content.SharedPreferences
-import io.github.kvth.hiroi.anki.AnkiConnect
+import io.github.kvth.hiroi.anki.AnkiBackend
 import io.github.kvth.hiroi.anki.AnkiSettings
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,7 +44,7 @@ class MarkSettings(context: Context) {
 
     /** Usually the deck; until it's set, the deck chosen for lookups. */
     var baseQuery: String
-        get() = prefs.getString("base_query", null) ?: anki.deck.takeIf { it.isNotEmpty() }?.let(AnkiConnect::deckQuery).orEmpty()
+        get() = prefs.getString("base_query", null) ?: anki.deck.takeIf { it.isNotEmpty() }?.let(AnkiBackend::deckQuery).orEmpty()
         set(value) = prefs.edit().putString("base_query", value).apply()
 
     var rules: List<MarkRule>

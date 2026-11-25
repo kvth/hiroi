@@ -65,4 +65,29 @@ class StyleDedupTest {
             section,
         )
     }
+
+    @Test
+    fun sheetsGoIntoTheNoteTypesStyling() {
+        // No section yet: one at the end, the Styling before it as it was
+        val card = ".card { font-size: 20px; }"
+        val first = StyleDedup.withSheets(card, linkedMapOf("A" to sheetA))
+        assertEquals(card + "\n\n" + StyleDedup.section(linkedMapOf("A" to sheetA)), first)
+        assertEquals(StyleDedup.section(linkedMapOf("A" to sheetA)), StyleDedup.withSheets("", linkedMapOf("A" to sheetA)))
+        // With a section: sheets added to it, a dictionary's replaced, what follows it kept
+        val newA = sheetA.replace("red", "blue")
+        val updated = StyleDedup.withSheets("$first\n.after { }", linkedMapOf("B" to sheetB, "A" to newA))
+        assertEquals(card + "\n\n" + StyleDedup.section(linkedMapOf("A" to newA, "B" to sheetB)) + "\n.after { }", updated)
+        // Nothing changes when it has them all, or without sheets
+        assertEquals(updated, StyleDedup.withSheets(updated, linkedMapOf("B" to sheetB)))
+        assertEquals(card, StyleDedup.withSheets(card, emptyMap()))
+    }
+
+    @Test
+    fun whatTheSectionHasBeforeItsSheetsStays() {
+        val css = "${StyleDedup.SHEETS_BEGIN}\n.extra { }\n/* yomitan-sheet: A */\n$sheetA\n${StyleDedup.SHEETS_END}"
+        assertEquals(
+            "${StyleDedup.SHEETS_BEGIN}\n.extra { }\n/* yomitan-sheet: A */\n$sheetA\n/* yomitan-sheet: B */\n$sheetB\n${StyleDedup.SHEETS_END}",
+            StyleDedup.withSheets(css, linkedMapOf("B" to sheetB)),
+        )
+    }
 }
