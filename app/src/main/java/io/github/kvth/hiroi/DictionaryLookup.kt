@@ -81,7 +81,7 @@ class DictionaryLookup(
             dictionaries,
             { DictionarySettings(activity).frequencySort(dictionaries) },
             { DictionarySettings(activity).grouping() },
-        ) { DictionarySettings(activity).partsOfSpeechFilterOff }
+        ) { DictionarySettings(activity).options() }
     }
     private val styles by lazy { dictionaries.styles() } // read on the lookup thread
     private var generation = 0
@@ -94,7 +94,7 @@ class DictionaryLookup(
             css(themeColor(android.R.attr.textColorSecondary)),
             css(themeColor(android.R.attr.colorAccent)),
         ),
-    )
+    ) { DictionarySettings(activity).aliases }
 
     @SuppressLint("SetJavaScriptEnabled")
     val web: WebView = WebView(activity).apply {
@@ -402,6 +402,7 @@ class DictionaryLookup(
             selection = selection(),
             audio = found.audio[index],
             translate = { sentence -> Translations(activity).translate(sentence).text },
+            frequencySort = DictionarySettings(activity).frequencySort(dictionaries),
         )
     }
 
@@ -461,11 +462,14 @@ class DictionaryLookup(
         val overwrite = found.duplicates[index]?.firstOrNull()?.takeIf { format.checkForDuplicates && format.duplicateBehavior == "overwrite" }
         button(if (overwrite != null) R.string.anki_overwriting else R.string.anki_adding, false)
         val data = cardData(found, index)
-        val screenshot = screenshot()?.let { full -> if (settings.screenshotCrop) crop(full, screenshotArea()) else full }
+        val full = screenshot()
+        // {screenshot-region} is always just the box or region; {screenshot} only if the settings say so
+        val region = full?.let { crop(it, screenshotArea()) }
+        val screenshot = if (settings.screenshotCrop) region else full
         worker.execute {
             val result = runCatching {
                 val creator = CardCreator(activity, settings, ::clipboardText)
-                if (overwrite != null) creator.overwrite(overwrite, data, screenshot) else creator.add(data, screenshot)
+                if (overwrite != null) creator.overwrite(overwrite, data, screenshot, region) else creator.add(data, screenshot, region)
             }
             activity.runOnUiThread {
                 if (activity.isDestroyed || shown !== found) return@runOnUiThread

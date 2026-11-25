@@ -168,6 +168,58 @@ object Yomitan {
         return out
     }
 
+    // ---- Forms of other words --------------------------------------------------
+
+    /**
+     * A glossary item `[term, [rules]]` (Yomitan's deinflection definitions): this entry is a form
+     * of [term] ([rules]: how, as "past" or "alternative kanji"), not a definition of its own.
+     */
+    data class FormOf(val term: String, val rules: List<String>)
+
+    /** A glossary's definitions ([rest], null if it has none) and the forms of other words among them ([forms]) */
+    class Forms(val rest: String?, val forms: List<FormOf>)
+
+    /** [glossary] split as [Forms]; [rest] is [glossary] itself when it lists no forms. */
+    fun forms(glossary: String): Forms {
+        if (!hasForms(glossary)) return Forms(glossary, emptyList())
+        val items = JSONArray(glossary)
+        val rest = JSONArray()
+        val forms = ArrayList<FormOf>()
+        for (i in 0 until items.length()) {
+            val item = items.get(i)
+            if (item !is JSONArray) {
+                rest.put(item)
+                continue
+            }
+            val term = item.optString(0)
+            val rules = item.optJSONArray(1)
+            if (term.isNotEmpty()) forms += FormOf(term, if (rules == null) emptyList() else List(rules.length()) { rules.optString(it) }.filter { it.isNotEmpty() })
+        }
+        return Forms(if (rest.length() == 0) null else rest.toString(), forms)
+    }
+
+    /** Whether [glossary] has an item that's an array (a form of another word), without reading the rest of it */
+    fun hasForms(glossary: String): Boolean {
+        var depth = 0
+        var inString = false
+        var i = 0
+        while (i < glossary.length) {
+            val c = glossary[i]
+            if (inString) {
+                if (c == '\\') i++ else if (c == '"') inString = false
+            } else when (c) {
+                '"' -> inString = true
+                '[', '{' -> {
+                    if (c == '[' && depth == 1) return true
+                    depth++
+                }
+                ']', '}' -> depth--
+            }
+            i++
+        }
+        return false
+    }
+
     // ---- Display ------------------------------------------------------------
 
     /** The definitions of a glossary as plain text, one string per item (an item may span several lines). */

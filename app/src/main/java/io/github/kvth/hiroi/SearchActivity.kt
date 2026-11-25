@@ -30,6 +30,7 @@ import io.github.kvth.hiroi.dictionary.Meanings
 import io.github.kvth.hiroi.dictionary.Wildcard
 import io.github.kvth.hiroi.japanese.Japanese
 import io.github.kvth.hiroi.japanese.Romaji
+import io.github.kvth.hiroi.japanese.TextVariants
 import io.github.kvth.hiroi.marks.KnownWords
 import io.github.kvth.hiroi.marks.MarkSettings
 import io.github.kvth.hiroi.marks.MarkStyle
@@ -246,16 +247,24 @@ class SearchActivity : Activity() {
                 lookup.cancel()
                 show(Shown.Message, getString(R.string.search_not_japanese))
             }
-            else -> lookUpAt(first)
+            else -> {
+                // From the Latin letters right before it (Tシャツ, ＣＤを), or from it if they're no word with it
+                var start = first
+                while (start > 0 && TextVariants.isLatin(text[start - 1])) start--
+                lookUpAt(start, fallback = first)
+            }
         }
         translation.refresh()
         markQuery(text)
     }
 
-    private fun lookUpAt(offset: Int) {
+    /** Looks up the word at [offset], or at [fallback] if there's none there */
+    private fun lookUpAt(offset: Int, fallback: Int = offset) {
         val text = queryView.text.toString()
         show(Shown.Message, getString(R.string.looking_up))
-        lookup.lookUp(text, offset) { showOutcome(text, it, 0) }
+        lookup.lookUp(text, offset) {
+            if (it !is DictionaryLookup.Lookup.Found && fallback != offset) lookUpAt(fallback) else showOutcome(text, it, 0)
+        }
     }
 
     /**

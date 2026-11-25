@@ -29,13 +29,31 @@ class ResultsHtmlTest {
 
     @Test
     fun showsTheWordLikeYomitan() {
-        assertTrue(html, "<ruby>届<rt>とど</rt></ruby>く" in html)
+        assertTrue(html, "<span class=\"headword\" lang=\"ja\"><span class=\"word\"><ruby>届<rt>とど</rt></ruby>く</span></span>" in html)
         assertTrue(html, ">negative</span> « <span" in html) // the inflections, each tappable (explainsTheInflectionsOnATap)
         assertTrue(html, "<span class=\"tag anki\" id=\"anki0\"><span class=\"label\">✓ in Anki</span></span>" in html)
         assertTrue(html, "<span class=\"tag frequency\"><span class=\"label\">JPDB</span><span class=\"value\">2412</span></span>" in html)
         assertTrue(html, "class=\"tag pitch\"><span class=\"label\">NHK</span>" in html)
         assertTrue(html, "onclick=\"Hiroi.addCard(0)\"" in html)
         assertTrue("an existing note can be opened", "<button class=\"card\" id=\"open0\" onclick=\"Hiroi.openNote(0)\">Open in Anki</button>" in html)
+    }
+
+    @Test
+    fun namesDictionariesByTheNamesTheyWereGiven() {
+        val named = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")) { mapOf("JMdict <b>" to "JMdict", "JPDB" to "Frequency") }
+            .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false)
+        assertTrue(named, "<span class=\"tag dictionary\"><span class=\"label\">JMdict</span></span>" in named)
+        assertTrue(named, "<span class=\"label\">Frequency</span><span class=\"value\">2412</span>" in named)
+        // Its styles still go by its title
+        assertTrue(named, "data-dictionary=\"JMdict &lt;b&gt;\"" in named)
+    }
+
+    @Test
+    fun keepsTheButtonsTogetherBesideOrUnderTheWord() {
+        // In a narrow panel the buttons wrap under the word as one group, rather than squeezing it into a column
+        val actions = html.substringAfter("<div class=\"actions\">").substringBefore("</div>")
+        assertTrue(actions, "id=\"open0\"" in actions && "id=\"card0\"" in actions)
+        assertFalse(html, "<div class=\"actions\">" in html.substringBefore("<span class=\"headword\""))
     }
 
     @Test

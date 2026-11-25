@@ -1,8 +1,12 @@
 package io.github.kvth.hiroi.dictionary
 
+import io.github.kvth.hiroi.japanese.Deinflection
 import io.github.kvth.hiroi.japanese.Deinflector
+import io.github.kvth.hiroi.japanese.Fuseji
 import io.github.kvth.hiroi.japanese.Japanese
+import io.github.kvth.hiroi.japanese.Mazegaki
 import io.github.kvth.hiroi.japanese.Romaji
+import io.github.kvth.hiroi.japanese.TextVariants
 
 interface DictionaryStore {
     /** Entries whose expression or reading is one of [forms]; their glossaries may be left out ([withGlossaries]). */
@@ -16,6 +20,12 @@ interface DictionaryStore {
     fun withGlossaries(entries: List<TermEntry>): List<TermEntry> = entries
 
     fun findTermMeta(expressions: Collection<String>): List<TermMeta>
+
+    /**
+     * The dictionaries turned on that have forms of other words among their terms
+     * ([Yomitan.FormOf]): only their entries' glossaries are read to tell those apart.
+     */
+    fun dictionariesWithForms(): Set<String> = emptySet()
 
     fun findKanji(character: String): List<KanjiEntry>
 
@@ -36,6 +46,14 @@ interface DictionaryStore {
      * with [affix], or ends with it if [suffix]; the shortest first.
      */
     fun findTermsByAffix(affix: String, suffix: Boolean, limit: Int): List<TermEntry> = emptyList()
+
+    /**
+     * The keys (expressions and readings) of the dictionaries turned on that start with [affix],
+     * or end with it if [suffix], and that [accepts], up to [limit] of each. A suffix search only searches
+     * dictionaries that are ready for one ([findTermsByAffix] makes them so): it's for lookups,
+     * which mustn't wait for that.
+     */
+    fun findKeys(affix: String, suffix: Boolean, limit: Int, accepts: (String) -> Boolean): List<String> = emptyList()
 
     /**
      * Up to [limit] entries of the dictionaries turned on whose definitions have the words of
@@ -96,8 +114,8 @@ data class FrequencySort(val dictionary: String, val ascending: Boolean)
  * ([expression], [reading]); grouped otherwise ([Grouping]), they can have several [headwords],
  * the first being [expression] and [reading]. [source] is the scanned text they matched;
  * [inflections] the transforms from the headword to [source] (empty if it matched as written);
- * [deinflected] the form that was looked up (the headword, or its reading), and [processed]
- * whether [source] was read as hiragana for that.
+ * [deinflected] the form that was looked up (the headword, or its reading), and [transformed]
+ * [source] as it was read for that ([TextVariants]: as hiragana, iteration marks spelled out…).
  */
 data class TermGroup(
     val expression: String,
@@ -107,7 +125,7 @@ data class TermGroup(
     val entries: List<TermEntry>,
     val meta: List<TermMeta>,
     val deinflected: String = expression,
-    val processed: Boolean = false,
+    val transformed: String = source,
     val headwords: List<Headword> = listOf(Headword(expression, reading)),
     /** The kanji of [expression], each as the kanji dictionaries have it, in their order */
     val kanji: List<KanjiEntry> = emptyList(),
@@ -149,30 +167,49 @@ class Translator(
     private val store: DictionaryStore,
     private val frequencySort: () -> FrequencySort? = { null },
     private val grouping: () -> Grouping = { Grouping() },
-    /** Dictionaries with Yomitan's "Part of speech filtering" off */
-    private val partsOfSpeechFilterOff: () -> Set<String> = { emptySet() },
+    /** The switches per dictionary: "Part of speech filtering" and "Use deinflections" */
+    private val options: () -> DictionaryOptions = { DictionaryOptions() },
 ) {
 
-    /** [processed]: read as hiragana rather than as written (Yomitan's text processing). */
-    /** [fit]: how well a search by meaning fits it, lower fitting better (0 for others) */
-    private class Candidate(val form: String, val source: String, val conditions: Int, val inflections: List<String>, val processed: Boolean, val fit: Int = 0)
+    /**
+     * [transformed]: [source] as it was read to find [form] ([TextVariants]), with [steps] changes;
+     * [fit]: how well a search by meaning fits it, lower fitting better (0 for others); [fits]:
+     * whether an entry of [form] is one it finds (all, if null).
+     */
+    private class Candidate(
+        val form: String,
+        val source: String,
+        val conditions: Int,
+        val inflections: List<String>,
+        val transformed: String = source,
+        val steps: Int = 0,
+        val fit: Int = 0,
+        val fits: ((TermEntry) -> Boolean)? = null,
+    )
 
     /** [definitions]: read the results' glossaries (not needed for furigana, say). */
     fun lookUp(text: String, start: Int, definitions: Boolean = true): LookupResult? {
-        if (start !in text.indices || !Japanese.isJapanese(text[start])) return null
+        if (start !in text.indices || !TextVariants.scans(text[start]) && !Fuseji.isFuseji(text[start])) return null
+        // From a Latin letter or digit (Ｔシャツ, ＣＤ, １日) or a censored character (○ね), as Yomitan's
+        // popup: only with Japanese text near, and only a word
+        val latin = TextVariants.isLatin(text[start]) || Fuseji.isFuseji(text[start])
+        if (latin && text.substring(start, minOf(text.length, start + MAX_LENGTH)).none(Japanese::isJapanese)) return null
         var end = start
-        while (end < text.length && end - start < MAX_LENGTH && Japanese.isJapanese(text[end])) end++
+        while (end < text.length && end - start < MAX_LENGTH && (TextVariants.scans(text[end]) || Fuseji.isFuseji(text[end]))) end++
 
-        // Longest source first; within one, as written before deinflected, fewer steps first.
+        // Longest source first; within one, as written before its variants, deinflected after both.
         val candidates = mutableListOf<Candidate>()
         for (length in end - start downTo 1) {
             val source = text.substring(start, start + length)
-            for (variant in listOf(source, Japanese.toHiragana(source)).distinct()) {
-                Deinflector.deinflect(variant).mapTo(candidates) { Candidate(it.text, source, it.conditions, it.inflections, variant != source) }
+            for (variant in TextVariants.of(source)) {
+                Deinflector.deinflect(variant.text).mapTo(candidates) { Candidate(it.text, source, it.conditions, it.inflections, variant.text, variant.steps) }
             }
         }
 
-        val terms = match(candidates, definitions)
+        candidates += censored(text.substring(start, end))
+
+        val terms = match(candidates, definitions) { longest -> mixed(text.substring(start, end), longest) }
+        if (latin && terms.isEmpty()) return null
 
         val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
             val character = text[start].toString()
@@ -183,24 +220,145 @@ class Translator(
         return LookupResult(start, start + length, terms, kanji)
     }
 
-    /** The results for [candidates], the best first: the entries of their forms that their conjugation fits */
-    private fun match(candidates: List<Candidate>, definitions: Boolean = true): List<TermGroup> {
+    /**
+     * The results for [candidates], the best first: the entries of their forms that their
+     * conjugation fits. An entry that's a form of another word ([Yomitan.FormOf]: 痛く of 痛い,
+     * "adverbial") finds that word, its rules added to the inflections, as Yomitan's
+     * "Use deinflections"; after all the others, as Yomitan has them.
+     */
+    private fun match(candidates: List<Candidate>, definitions: Boolean = true, more: ((longest: Int) -> List<Candidate>)? = null): List<TermGroup> {
+        val options = options()
+        val matched = LinkedHashMap<TermEntry, Candidate>()
+        val viaForms = ArrayList<Candidate>()
+        match(candidates, options, matched, viaForms)
+        // More candidates, if the longest text these matched calls for them
+        val extra = more?.invoke(matched.values.maxOfOrNull { it.source.length } ?: 0).orEmpty()
+        if (extra.isNotEmpty()) match(extra, options, matched, viaForms)
+        if (viaForms.isNotEmpty()) match(viaForms, options, matched, null)
+        return results(matched, (candidates + extra + viaForms).withIndex().associate { (i, c) -> c to i }, definitions)
+    }
+
+    /**
+     * Candidates for the words [text] starts with that have censored characters in it ([Fuseji]):
+     * the dictionaries' keys it (or a dictionary form of it) can be with them as any character,
+     * searched for by the text before them, or after them if they come first (only if suffix
+     * search is ready). After the others of the same length ([Candidate.steps]).
+     */
+    private fun censored(text: String): List<Candidate> {
+        if (text.none(Fuseji::isFuseji)) return emptyList()
+        class Pattern(val source: String, val form: Deinflection, val variant: String)
+        val patterns = ArrayList<Pattern>()
+        for (length in text.length downTo 2) {
+            val source = text.substring(0, length)
+            for (variant in listOf(source, Japanese.toHiragana(source)).distinct()) {
+                for (form in Deinflector.deinflect(variant)) if (Fuseji.isCensored(form.text)) patterns += Pattern(source, form, variant)
+            }
+        }
+        val out = ArrayList<Candidate>()
+        for ((affix, group) in patterns.groupBy { p ->
+            val prefix = p.form.text.takeWhile { !Fuseji.isFuseji(it) }
+            if (prefix.isNotEmpty()) prefix to false else p.form.text.takeLastWhile { !Fuseji.isFuseji(it) } to true
+        }) {
+            val keys = store.findKeys(affix.first, affix.second, MAX_KEYS) { key -> group.any { Fuseji.matches(it.form.text, key) } }
+            for (p in group) for (key in keys) {
+                if (Fuseji.matches(p.form.text, key)) out += Candidate(key, p.source, p.form.conditions, p.form.inflections, p.variant, CHANGED_SPELLING)
+            }
+        }
+        return out
+    }
+
+    /**
+     * Candidates for the words [text] starts with that it writes with some kanji in kana
+     * ([Mazegaki]: 改ざん, ぼう大), if the [longest] text other candidates matched doesn't go past its
+     * first run of kanji or of kana (two or more): the spellings starting with its kanji, or the
+     * readings starting with its kana, whose entries it fits. After the others of the same length.
+     */
+    private fun mixed(text: String, longest: Int): List<Candidate> {
+        if (text.isEmpty()) return emptyList()
+        val kanaFirst = Mazegaki.isKana(text[0])
+        val lead = text.takeWhile { Mazegaki.isKana(it) == kanaFirst && (kanaFirst || Japanese.isKanji(it)) }
+        if (longest > lead.length || lead.length == text.length || kanaFirst && lead.length < 2) return emptyList()
+        // A particle after a kanji is no kana for another (本を, 日に): the lookup found the word
+        if (!kanaFirst && text[lead.length] in PARTICLES) return emptyList()
+        class Form(val source: String, val form: Deinflection)
+        val forms = ArrayList<Form>()
+        for (length in text.length downTo lead.length + 1) {
+            val source = text.substring(0, length)
+            for (form in Deinflector.deinflect(source)) {
+                val f = form.text
+                if (f.startsWith(lead) && f.any(Japanese::isKanji) && f.any(Mazegaki::isKana)) forms += Form(source, form)
+            }
+        }
+        if (forms.isEmpty()) return emptyList()
+        // A spelling has a kanji for each of the text's kana it doesn't have, so it's shorter; a reading longer
+        fun fits(key: String, form: String) = if (kanaFirst) {
+            key.length > form.length && key.length <= form.length + MAX_READING * form.count(Japanese::isKanji)
+        } else {
+            key.length < form.length && key.any(Japanese::isKanji)
+        }
+        val keys = store.findKeys(if (kanaFirst) Japanese.toHiragana(lead) else lead, false, MAX_KEYS) { key -> forms.any { fits(key, it.form.text) } }
+        return forms.flatMap { f ->
+            keys.filter { fits(it, f.form.text) }.map { key ->
+                Candidate(key, f.source, f.form.conditions, f.form.inflections, f.form.text, CHANGED_SPELLING, fits = { Mazegaki.matches(f.form.text, it.expression, it.reading) })
+            }
+        }
+    }
+
+    /**
+     * Puts each entry of [candidates]' forms that the candidate's conjugation fits into [matched],
+     * with the first (best) candidate that found it (any, if its dictionary takes any part of
+     * speech). Entries that are forms of other words go in with their other definitions only, if
+     * they have any; the words they're forms of go to [viaForms] as candidates (unless null).
+     */
+    private fun match(candidates: List<Candidate>, options: DictionaryOptions, matched: MutableMap<TermEntry, Candidate>, viaForms: MutableList<Candidate>?) {
         val byForm = HashMap<String, MutableList<TermEntry>>()
-        for (entry in store.findTerms(candidates.mapTo(LinkedHashSet()) { it.form })) {
+        val found = store.findTerms(candidates.mapTo(LinkedHashSet()) { it.form })
+        val forms = forms(found)
+        for (entry in found) {
             byForm.getOrPut(entry.expression) { mutableListOf() } += entry
             if (entry.reading != entry.expression) byForm.getOrPut(entry.reading) { mutableListOf() } += entry
         }
-
-        // Each entry with the first (best) candidate that found it
-        // (unless its dictionary takes any part of speech)
-        val anyPartOfSpeech = partsOfSpeechFilterOff()
-        val matched = LinkedHashMap<TermEntry, Candidate>()
         for (candidate in candidates) {
             for (entry in byForm[candidate.form].orEmpty()) {
-                if (entry.dictionary in anyPartOfSpeech || Deinflector.accepts(candidate.conditions, entry.rules)) matched.putIfAbsent(entry, candidate)
+                if (candidate.fits?.invoke(entry) == false) continue
+                if (entry.dictionary !in options.partsOfSpeechFilterOff && !Deinflector.accepts(candidate.conditions, entry.rules)) continue
+                val split = forms[entry]
+                if (split == null) {
+                    matched.putIfAbsent(entry, candidate)
+                    continue
+                }
+                split.rest?.let { matched.putIfAbsent(entry.copy(glossary = it), candidate) }
+                if (viaForms == null || entry.dictionary in options.deinflectionsOff) continue
+                for (form in split.forms) viaForms += Candidate(form.term, candidate.source, 0, candidate.inflections + form.rules, candidate.transformed, candidate.steps)
             }
         }
-        return results(matched, candidates.withIndex().associate { (i, c) -> c to i }, definitions)
+    }
+
+    /**
+     * Of [entries], those of dictionaries with forms of other words ([DictionaryStore.dictionariesWithForms]),
+     * their glossaries read and split ([Yomitan.forms]).
+     */
+    private fun forms(entries: Collection<TermEntry>): Map<TermEntry, Yomitan.Forms> {
+        val dictionaries = store.dictionariesWithForms()
+        if (dictionaries.isEmpty()) return emptyMap()
+        val some = entries.filter { it.dictionary in dictionaries }.distinct()
+        if (some.isEmpty()) return emptyMap()
+        return some.zip(store.withGlossaries(some)).associate { (entry, full) -> entry to Yomitan.forms(full.glossary) }
+    }
+
+    /**
+     * [matched] without the forms of other words: an entry that's only such forms is left out,
+     * one with other definitions too keeps those. (Lookups ([match]) have done this already.)
+     */
+    private fun withoutForms(matched: Map<TermEntry, Candidate>): Map<TermEntry, Candidate> {
+        val forms = forms(matched.keys.filter { it.glossary.isEmpty() })
+        if (forms.isEmpty()) return matched
+        val out = LinkedHashMap<TermEntry, Candidate>()
+        for ((entry, candidate) in matched) {
+            val split = forms[entry]
+            if (split == null) out[entry] = candidate else split.rest?.let { out.putIfAbsent(entry.copy(glossary = it), candidate) }
+        }
+        return out
     }
 
     /** A section of [lookUpLatin]'s result, and the words its definitions were searched for if they were */
@@ -291,7 +449,7 @@ class Translator(
     /** The words [forms] are, or conjugations of, sorted as other results; [source] is what was searched */
     private fun lookUpForms(forms: List<String>, source: String): List<TermGroup> {
         if (forms.isEmpty()) return emptyList()
-        return match(forms.flatMap { form -> Deinflector.deinflect(form).map { Candidate(it.text, source, it.conditions, it.inflections, false) } })
+        return match(forms.flatMap { form -> Deinflector.deinflect(form).map { Candidate(it.text, source, it.conditions, it.inflections) } })
     }
 
     /**
@@ -304,7 +462,7 @@ class Translator(
         val candidates = LinkedHashMap<String, Candidate>()
         for (entry in store.findTermsByAffix(affix, suffix, MAX_WILDCARD_ENTRIES)) {
             val form = if (matches(entry.expression)) entry.expression else entry.reading
-            matched[entry] = candidates.getOrPut(form) { Candidate(form, affix, 0, emptyList(), false) }
+            matched[entry] = candidates.getOrPut(form) { Candidate(form, affix, 0, emptyList()) }
         }
         val terms = results(matched, candidates.values.withIndex().associate { (i, c) -> c to i })
         return LookupResult(0, affix.length, terms, emptyList())
@@ -318,7 +476,7 @@ class Translator(
     fun lookUpMeaning(query: String): LookupResult {
         val matched = LinkedHashMap<TermEntry, Candidate>()
         for ((entry, fit) in store.findTermsByMeaning(query, MAX_MEANING_ENTRIES)) {
-            matched[entry] = Candidate(entry.expression, query, 0, emptyList(), false, fit)
+            matched[entry] = Candidate(entry.expression, query, 0, emptyList(), fit = fit)
         }
         val rank = matched.values.sortedBy { it.fit }.withIndex().associate { (i, c) -> c to i }
         return LookupResult(0, query.length, results(matched, rank), emptyList())
@@ -328,7 +486,8 @@ class Translator(
      * The results for the [matched] entries, each with the candidate that found it; [rank]: the
      * candidates' order, best first. [definitions]: with their glossaries.
      */
-    private fun results(matched: Map<TermEntry, Candidate>, rank: Map<Candidate, Int>, definitions: Boolean = true): List<TermGroup> {
+    private fun results(found: Map<TermEntry, Candidate>, rank: Map<Candidate, Int>, definitions: Boolean = true): List<TermGroup> {
+        val matched = withoutForms(found)
         val groups = group(matched.keys, grouping())
         val expressions = groups.flatMapTo(HashSet()) { entries -> entries.map { it.expression } }
         val meta = if (expressions.isEmpty()) emptyList() else store.findTermMeta(expressions)
@@ -350,17 +509,21 @@ class Translator(
                 entries = entries.sortedWith(compareBy<TermEntry> { it.priority }.thenByDescending { it.score }),
                 meta = meta.filter { it.expression in names }.sortedBy { it.priority },
                 deinflected = candidate.form,
-                processed = candidate.processed,
+                transformed = candidate.transformed,
                 headwords = headwords,
             )
             // Found by meaning, any spelling is as good (食べる and 喰べる)
             val exact = candidate.fit > 0 || candidate.form == first.expression
-            Sortable(term, candidate.processed, exact, frequencyOrder(term, sort), agreed(entries, matched, candidate.fit))
+            Sortable(term, candidate.steps, exact, frequencyOrder(term, sort), agreed(entries, matched, candidate.fit))
         }.sortedWith(ORDER)
         val shown = sorted.map { it.term }.take(MAX_RESULTS)
         if (!definitions) return shown
         val entries = shown.flatMapTo(LinkedHashSet()) { it.entries }.toList()
-        val full = entries.zip(store.withGlossaries(entries)).toMap()
+        // Related entries (grouped by sequence) can be forms of other words too: only their other definitions show.
+        val withForms = store.dictionariesWithForms()
+        val full = entries.zip(store.withGlossaries(entries)).associate { (entry, read) ->
+            entry to (if (read.dictionary in withForms) Yomitan.forms(read.glossary).rest?.let { read.copy(glossary = it) } else read)
+        }
         val kanji = HashMap<Char, List<KanjiEntry>>()
         fun kanjiOf(word: String) = word.filter(Japanese::isKanji).toSet().flatMap { c ->
             kanji.getOrPut(c) {
@@ -368,7 +531,10 @@ class Translator(
                 store.findKanji(c.toString()).map { it.copy(frequencies = frequencies) }
             }
         }
-        return shown.map { term -> term.copy(entries = term.entries.map(full::getValue), kanji = kanjiOf(term.expression)) }
+        return shown.mapNotNull { term ->
+            val read = term.entries.mapNotNull { full[it] }
+            if (read.isEmpty()) null else term.copy(entries = read, kanji = kanjiOf(term.expression))
+        }
     }
 
     /**
@@ -440,7 +606,7 @@ class Translator(
     }
 
     /** A result with what it's sorted by besides itself; [exact]: the headword is spelled as it was matched. */
-    private class Sortable(val term: TermGroup, val processed: Boolean, val exact: Boolean, val frequencyOrder: Long, val fit: Int = 0)
+    private class Sortable(val term: TermGroup, val steps: Int, val exact: Boolean, val frequencyOrder: Long, val fit: Int = 0)
 
     /**
      * The term's place by the sorting frequency dictionary, as Yomitan computes it: its lowest
@@ -464,6 +630,18 @@ class Translator(
         /** The entries a wildcard search sorts its results from, the shortest that match */
         const val MAX_WILDCARD_ENTRIES = 500
 
+        /** The keys searched for a censored or mixed spelling's words, in each dictionary */
+        const val MAX_KEYS = 200
+
+        /** Particles and the copula, which after a kanji aren't a mixed spelling's kana (本を, 車だ, 変な) */
+        const val PARTICLES = "をはがにでともへやかのだなねよ"
+
+        /** How many kana a kanji of a mixed spelling may read, at most */
+        const val MAX_READING = 5
+
+        /** A censored or mixed spelling's steps: after the text as written and the usual variants of the same length */
+        const val CHANGED_SPELLING = 4
+
         /** The entries a search by meaning sorts its results from, those fitting best */
         const val MAX_MEANING_ENTRIES = 300
 
@@ -486,7 +664,7 @@ class Translator(
 
         /** Yomitan's order (translator.js, _sortTermDictionaryEntries). */
         val ORDER: Comparator<Sortable> = compareByDescending<Sortable> { it.term.source.length }
-            .thenBy { it.processed }
+            .thenBy { it.steps }
             .thenBy { it.term.inflections.size }
             .thenByDescending { it.exact }
             .thenBy { it.fit }

@@ -6,7 +6,6 @@ import io.github.kvth.hiroi.dictionary.TagInfo
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
 import io.github.kvth.hiroi.japanese.Deinflector
-import io.github.kvth.hiroi.japanese.Japanese
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -15,8 +14,15 @@ import org.json.JSONObject
  * and the note context (types/ext/anki-templates-internal.d.ts), built the way Yomitan's
  * translator builds them, so its AnkiNoteBuilder fills fields exactly as in Yomitan.
  */
-class YomitanNoteData(private val store: DictionaryStore, private val dictionaries: List<DictionaryInfo>) {
+class YomitanNoteData(
+    private val store: DictionaryStore,
+    private val dictionaries: List<DictionaryInfo>,
+    /** The names dictionaries were given (Rename…) by title: Yomitan's dictionaryAlias, which {dictionary-alias} and the glossaries' labels show */
+    private val aliases: Map<String, String> = emptyMap(),
+) {
     private val index = dictionaries.withIndex().associate { (i, info) -> info.title to i }
+
+    private fun alias(title: String) = aliases[title] ?: title
     private val modes = dictionaries.associate { it.title to it.frequencyMode }
 
     /** The dictionaries as hiroi-anki.js wants them: for {single-glossary-*} markers and glossary styles. */
@@ -37,7 +43,7 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
             val source = if (headword.primary) {
                 JSONObject()
                     .put("originalText", term.source)
-                    .put("transformedText", if (term.processed) Japanese.toHiragana(term.source) else term.source)
+                    .put("transformedText", term.transformed)
                     .put("deinflectedText", term.deinflected)
                     .put("matchType", "exact")
                     .put("matchSource", if (term.deinflected == headword.expression) "term" else "reading")
@@ -65,7 +71,7 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
                 .put("headwordIndices", JSONArray(headwordIndices))
                 .put("dictionary", entry.dictionary)
                 .put("dictionaryIndex", index[entry.dictionary] ?: 0)
-                .put("dictionaryAlias", entry.dictionary)
+                .put("dictionaryAlias", alias(entry.dictionary))
                 .put("id", i)
                 .put("score", entry.score)
                 .put("frequencyOrder", 0)
@@ -85,7 +91,7 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
             .put("score", term.entries.maxOfOrNull { it.score } ?: 0)
             .put("frequencyOrder", 0)
             .put("dictionaryIndex", term.entries.minOfOrNull { index[it.dictionary] ?: 0 } ?: 0)
-            .put("dictionaryAlias", term.entries.firstOrNull()?.dictionary.orEmpty())
+            .put("dictionaryAlias", term.entries.firstOrNull()?.dictionary?.let(::alias).orEmpty())
             .put("sourceTermExactMatchCount", term.headwords.count { it.primary && term.deinflected == it.expression })
             .put("matchPrimaryReading", false)
             .put("maxOriginalTextLength", term.source.length)
@@ -118,7 +124,7 @@ class YomitanNoteData(private val store: DictionaryStore, private val dictionari
         .put("headwordIndex", headwordIndex)
         .put("dictionary", meta.dictionary)
         .put("dictionaryIndex", index[meta.dictionary] ?: 0)
-        .put("dictionaryAlias", meta.dictionary)
+        .put("dictionaryAlias", alias(meta.dictionary))
 
     /** The meta rows for each headword (its term), with the headword's index and reading. */
     private fun perHeadword(term: TermGroup, modes: Set<String>): List<Triple<TermMeta, Int, String>> = term.headwords.withIndex().flatMap { (i, headword) ->

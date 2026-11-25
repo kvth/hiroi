@@ -28,7 +28,18 @@ class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null) 
  * inflection, Anki, frequency and pitch, then the numbered definitions with their dictionary,
  * styled by the dictionary's own styles.css. "＋ Anki" buttons call Hiroi.addCard(index).
  */
-class ResultsHtml(private val colors: Colors) {
+class ResultsHtml(
+    private val colors: Colors,
+    /** The names dictionaries were given (their aliases, Yomitan's "Rename…") by title, read for each page */
+    private val aliases: () -> Map<String, String> = { emptyMap() },
+) {
+    /** The names of the page being made ([Page]) */
+    @Volatile
+    private var names: Map<String, String> = emptyMap()
+
+    /** What dictionary [title] is called on the page */
+    private fun name(title: String) = names[title] ?: title
+
     /** CSS colours from the app theme, so the results match the panel. */
     data class Colors(val text: String, val secondary: String, val accent: String)
 
@@ -79,6 +90,10 @@ class ResultsHtml(private val colors: Colors) {
         /** Whether the page that stays loaded ([shell]) has a dictionary's styles already */
         private val hasStyles: (String) -> Boolean = { false },
     ) {
+        init {
+            names = aliases()
+        }
+
         /** The result made next, and its next definition (0: the result isn't begun) */
         private var term = 0
         private var definition = 0
@@ -191,8 +206,11 @@ class ResultsHtml(private val colors: Colors) {
         private fun StringBuilder.header(index: Int, term: TermGroup) {
             append("<div class=\"entry\"><div class=\"header\"><span class=\"headword\" lang=\"ja\">")
             // Grouped by term or related terms, a result can have several headwords, as in Yomitan.
-            term.headwords.joinTo(this, "<span class=\"separator\">・</span>") { Furigana.html(Furigana.distribute(it.expression, it.reading)) }
-            append("</span>")
+            // Each one breaks inside only if it doesn't fit a line of its own, so a narrow panel moves the buttons instead.
+            term.headwords.joinTo(this, "<span class=\"separator\">・</span>") {
+                "<span class=\"word\">" + Furigana.html(Furigana.distribute(it.expression, it.reading)) + "</span>"
+            }
+            append("</span><div class=\"actions\">")
             if (audio) {
                 append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"Hiroi.playAudio($index)\" ")
                 append("oncontextmenu=\"Hiroi.audioMenu($index); return false;\">🔊</button>")
@@ -203,7 +221,7 @@ class ResultsHtml(private val colors: Colors) {
             if (!hasNote) append(" style=\"display:none\"")
             append(">Open in Anki</button>")
             if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"Hiroi.addCard($index)\">＋ Anki</button>")
-            append("</div>")
+            append("</div></div>")
             if (term.inflections.isNotEmpty()) inflections(index, term.inflections)
 
             val tags = StringBuilder()
@@ -219,7 +237,7 @@ class ResultsHtml(private val colors: Colors) {
             val pitches = PitchAccent.positions(term)
             if (pitches.isNotEmpty()) {
                 val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
-                tags.tag("pitch", dictionary, pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
+                tags.tag("pitch", name(dictionary), pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
             }
             if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
             kanjiOf(index, term)
@@ -285,7 +303,7 @@ class ResultsHtml(private val colors: Colors) {
             append("<div class=\"kanji-card\"><div class=\"kanji-character\" lang=\"ja\">").append(Html.escape(character)).append("</div><div>")
             for (kanji in term.kanji.filter { it.character == character }) {
                 append("<div class=\"kanji-dictionary\">")
-                tag("dictionary", kanji.dictionary)
+                tag("dictionary", name(kanji.dictionary))
                 if (kanji.meanings.isNotEmpty()) append(" ").append(Html.escape(kanji.meanings.joinToString(", ")))
                 append("</div>")
                 val readings = listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi).filter { it.second.isNotBlank() }
@@ -294,7 +312,7 @@ class ResultsHtml(private val colors: Colors) {
                     readings.joinTo(this, " · ") { (label, r) -> "<span class=\"kanji-label\">$label</span> " + Html.escape(r.replace(" ", "、")) }
                     append("</div>")
                 }
-                val numbers = kanjiNumbers(kanji) + kanji.frequencies.map { (dictionary, f) -> "${Html.escape(dictionary)} ${Html.escape(f.display)}" }
+                val numbers = kanjiNumbers(kanji) + kanji.frequencies.map { (dictionary, f) -> "${Html.escape(name(dictionary))} ${Html.escape(f.display)}" }
                 if (numbers.isNotEmpty()) append("<div class=\"kanji-numbers\">").append(numbers.joinToString(" · ")).append("</div>")
             }
             append("</div></div>")
@@ -350,7 +368,7 @@ class ResultsHtml(private val colors: Colors) {
         append("<li><div class=\"definition-tags\">")
         if (only != null) tag("only", only)
         for (tag in entry.definitionTags.split(' ').filter { it.isNotBlank() }) tag("label", tag)
-        tag("dictionary", entry.dictionary)
+        tag("dictionary", name(entry.dictionary))
         append("</div><div class=\"glossary\" lang=\"en\" data-dictionary=\"").append(Html.escape(entry.dictionary)).append("\">")
         val items = JSONArray(entry.glossary).let { array -> (0 until array.length()).map { StructuredHtml.item(array.get(it)) { path -> media(entry.dictionary, path) } } }
             .filter { it.isNotEmpty() }
@@ -372,13 +390,13 @@ class ResultsHtml(private val colors: Colors) {
                 return
             }
         }
-        for ((dictionary, values) in byDictionary) tag("frequency", dictionary, Html.escape(values.map { it.display }.distinct().joinToString(", ")))
+        for ((dictionary, values) in byDictionary) tag("frequency", name(dictionary), Html.escape(values.map { it.display }.distinct().joinToString(", ")))
     }
 
     private fun StringBuilder.kanji(kanji: KanjiEntry, frequencies: Frequencies) {
         append("<div class=\"entry kanji\"><div class=\"header\"><span class=\"character\" lang=\"ja\">")
         append(Html.escape(kanji.character)).append("</span></div><div class=\"tags\">")
-        tag("dictionary", kanji.dictionary)
+        tag("dictionary", name(kanji.dictionary))
         frequencyTags(kanji.frequencies, frequencies)
         append("</div><table>")
         for ((label, readings) in listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi)) {
@@ -475,8 +493,11 @@ class ResultsHtml(private val colors: Colors) {
         .kanji-dictionary + .kanji-readings, .kanji-numbers + .kanji-dictionary { margin-top: 2px; }
         .kanji-readings, .kanji-numbers { color: ${colors.secondary}; font-size: 0.8em; }
         .kanji-label { font-weight: bold; }
-        .header { display: flex; align-items: flex-end; gap: 8px; }
-        .headword { flex: 1; font-size: 2em; line-height: 1.25; }
+        /* The buttons go under the word, kept together on the right, when they don't fit beside it */
+        .header { display: flex; flex-wrap: wrap; align-items: flex-end; column-gap: 8px; }
+        .headword { flex: 1 1 auto; font-size: 2em; line-height: 1.25; }
+        .headword .word { display: inline-block; }
+        .actions { display: flex; align-items: flex-end; gap: 8px; margin-left: auto; }
         .headword .separator { color: ${colors.secondary}; }
         .tag.only .label { background: none; color: ${colors.text}; border: 1px solid ${colors.secondary}80; border-radius: 4px; font-weight: normal; }
         .headword rt, .glossary rt { color: ${colors.secondary}; }

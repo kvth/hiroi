@@ -41,6 +41,7 @@ import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -58,6 +59,7 @@ import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.AudioSource
 import io.github.kvth.hiroi.audio.AudioSources
 import io.github.kvth.hiroi.dictionary.DictionaryDb
+import io.github.kvth.hiroi.dictionary.DictionaryFacts
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.DictionaryUpdates
@@ -1100,8 +1102,8 @@ class MainActivity : Activity() {
                 TextView(this).apply {
                     text = describe(info) + (updates[info.id]?.let { "\n" + getString(R.string.update_available_line, it.revision) } ?: "")
                     alpha = if (info.enabled) 1f else 0.5f
-                    // Its settings, as Yomitan's per dictionary
-                    setOnClickListener { showDictionarySettings(info) }
+                    // Its details and settings, as Yomitan's per dictionary
+                    setOnClickListener { showDictionaryDetails(info) }
                 },
                 LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f),
             )
@@ -1118,10 +1120,14 @@ class MainActivity : Activity() {
                     },
                 )
             }
+            // Yomitan's menu per dictionary
             row.addView(
                 Button(this, null, android.R.attr.borderlessButtonStyle).apply {
-                    setText(R.string.remove)
-                    setOnClickListener { confirmDelete(info) }
+                    text = "⋮"
+                    minWidth = 0
+                    minimumWidth = 0
+                    contentDescription = getString(R.string.dictionary_more, DictionarySettings(this@MainActivity).name(info.title))
+                    setOnClickListener { showDictionaryMenu(this, info, installed.size) }
                 },
             )
             list.addView(row)
@@ -1142,9 +1148,86 @@ class MainActivity : Activity() {
         }
     }
 
+    /** As Yomitan's dictionary menu: details, rename, move to a place, delete. */
+    private fun showDictionaryMenu(anchor: View, info: DictionaryInfo, count: Int) {
+        PopupMenu(this, anchor).apply {
+            menu.add(0, 1, 0, R.string.dictionary_details)
+            menu.add(0, 2, 1, R.string.dictionary_rename)
+            menu.add(0, 3, 2, R.string.dictionary_move_to).isEnabled = count > 1
+            menu.add(0, 4, 3, R.string.dictionary_delete)
+            setOnMenuItemClickListener { item ->
+                when (item.itemId) {
+                    1 -> showDictionaryDetails(info)
+                    2 -> renameDictionaryAlias(info)
+                    3 -> askMoveTo(info, count)
+                    4 -> confirmDelete(info)
+                }
+                true
+            }
+        }.show()
+    }
+
+    /** Asks for the name to show for [info] (Yomitan's alias): Reset names it by its title again. */
+    private fun renameDictionaryAlias(info: DictionaryInfo) {
+        val settings = DictionarySettings(this)
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val input = EditText(this).apply {
+            setSingleLine()
+            setText(settings.name(info.title))
+            selectAll()
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dictionary_rename_title)
+            .setMessage(getString(R.string.dictionary_rename_message, info.title))
+            .setView(LinearLayout(this).apply {
+                setPadding(pad, 0, pad, 0)
+                addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, WRAP_CONTENT))
+            })
+            .setPositiveButton(R.string.dictionary_rename_save) { _, _ ->
+                // As Yomitan, a blank name changes nothing
+                if (input.text.isNotBlank()) settings.setAlias(info.title, input.text.toString())
+                showDictionaries()
+            }
+            .setNeutralButton(R.string.dictionary_rename_reset) { _, _ ->
+                settings.setAlias(info.title, null)
+                showDictionaries()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /** Asks for the place (1 to [count]) to move [info] to, as Yomitan's "Move to…". */
+    private fun askMoveTo(info: DictionaryInfo, count: Int) {
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val place = dictionaries.dictionaries().indexOfFirst { it.id == info.id } + 1
+        val input = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(place.toString())
+            selectAll()
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.dictionary_move_title)
+            .setMessage(getString(R.string.dictionary_move_message, DictionarySettings(this).name(info.title), count))
+            .setView(LinearLayout(this).apply {
+                setPadding(pad, 0, pad, 0)
+                addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, WRAP_CONTENT))
+            })
+            .setPositiveButton(R.string.dictionary_move) { _, _ ->
+                val to = input.text.toString().toIntOrNull() ?: return@setPositiveButton
+                background.execute {
+                    dictionaries.moveTo(info.id, to.coerceIn(1, count) - 1)
+                    runOnUiThread { if (!isDestroyed) showDictionaries() }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun describe(info: DictionaryInfo): String = buildString {
-        append(info.title)
+        val name = DictionarySettings(this@MainActivity).name(info.title)
+        append(name)
         if (info.revision.isNotEmpty()) append(" (").append(info.revision).append(')')
+        if (name != info.title) append('\n').append(getString(R.string.dictionary_title_line, info.title))
         val counts = listOfNotNull(
             info.terms.takeIf { it > 0 }?.let { getString(R.string.count_terms, it) },
             info.meta.takeIf { it > 0 }?.let { getString(R.string.count_meta, it) },
@@ -1471,34 +1554,70 @@ class MainActivity : Activity() {
         if (fields != format.fields) anki.cardFormat = format.copy(fields = fields)
     }
 
-    /** A dictionary's own settings, as Yomitan's: part of speech filtering, and its updates. */
-    private fun showDictionarySettings(info: DictionaryInfo) {
+    /**
+     * A dictionary's details, as Yomitan's: its switches (prefix wildcards, part of speech
+     * filtering, deinflections), what its index.json and file say about it, and its updates.
+     */
+    private fun showDictionaryDetails(info: DictionaryInfo) {
+        background.execute {
+            val facts = dictionaries.facts(info.id)
+            val summary = dictionaries.summary(info.id)
+            runOnUiThread { if (!isDestroyed) showDictionaryDetails(info, facts, summary) }
+        }
+    }
+
+    private fun showDictionaryDetails(info: DictionaryInfo, facts: DictionaryFacts?, summary: String?) {
         val settings = DictionarySettings(this)
         val pad = (20 * resources.displayMetrics.density).toInt()
-        val source = DictionaryUpdates.source(dictionaries.summary(info.id))
+        val source = DictionaryUpdates.source(summary)
+        val index = summary?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
+        fun hint(text: String) = TextView(this).apply {
+            this.text = text
+            alpha = 0.7f
+            setPadding(0, 0, 0, pad / 2)
+        }
+        fun switch(label: Int, on: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit = {}) = CheckBox(this).apply {
+            setText(label)
+            isChecked = on
+            isEnabled = enabled
+            setOnCheckedChangeListener { _, checked -> onChange(checked) }
+        }
         val form = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad / 2, pad, 0)
-            addView(TextView(this@MainActivity).apply { text = describe(info) })
             addView(TextView(this@MainActivity).apply {
-                setPadding(0, pad / 2, 0, 0)
+                setPadding(0, 0, 0, pad / 2)
                 text = source?.let { getString(R.string.dictionary_settings_updates, android.net.Uri.parse(it.indexUrl).host) }
                     ?: getString(R.string.dictionary_settings_no_updates)
             })
+            // Every dictionary has them in Hiroi, so it's not a switch
+            addView(switch(R.string.dictionary_prefix_wildcards, on = true, enabled = false))
+            addView(hint(getString(R.string.dictionary_prefix_wildcards_hint)))
             if (info.terms > 0) {
-                addView(CheckBox(this@MainActivity).apply {
-                    setText(R.string.dictionary_parts_of_speech)
-                    isChecked = info.title !in settings.partsOfSpeechFilterOff
-                    setOnCheckedChangeListener { _, on ->
-                        settings.partsOfSpeechFilterOff = if (on) settings.partsOfSpeechFilterOff - info.title else settings.partsOfSpeechFilterOff + info.title
-                    }
+                addView(switch(R.string.dictionary_parts_of_speech, info.title !in settings.partsOfSpeechFilterOff) { on ->
+                    settings.partsOfSpeechFilterOff = if (on) settings.partsOfSpeechFilterOff - info.title else settings.partsOfSpeechFilterOff + info.title
                 })
-                addView(TextView(this@MainActivity).apply { setText(R.string.dictionary_parts_of_speech_hint) })
+                addView(hint(getString(R.string.dictionary_parts_of_speech_hint)))
+                addView(switch(R.string.dictionary_deinflections, info.title !in settings.deinflectionsOff) { on ->
+                    settings.deinflectionsOff = if (on) settings.deinflectionsOff - info.title else settings.deinflectionsOff + info.title
+                })
+                val forms = when (val n = info.forms) {
+                    null -> getString(R.string.dictionary_deinflections_unknown)
+                    0 -> getString(R.string.dictionary_deinflections_none)
+                    else -> getString(R.string.dictionary_deinflections_count, n)
+                }
+                addView(hint(getString(R.string.dictionary_deinflections_hint) + " " + forms))
             }
+            addView(View(this@MainActivity).apply { setBackgroundColor(0x33888888) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 1).apply { setMargins(0, pad / 4, 0, pad / 2) })
+            addView(TextView(this@MainActivity).apply {
+                setTextIsSelectable(true)
+                autoLinkMask = android.text.util.Linkify.WEB_URLS
+                text = dictionaryDetails(info, facts, index).joinToString("\n") { (label, value) -> getString(R.string.dictionary_detail, getString(label), value) }
+            })
         }
         val update = updates[info.id]
         AlertDialog.Builder(this)
-            .setTitle(info.title)
+            .setTitle(listOf(settings.name(info.title), info.revision).filter { it.isNotEmpty() }.joinToString(" "))
             .setView(ScrollView(this).apply { addView(form) })
             .apply {
                 when {
@@ -1510,10 +1629,37 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** The rows of Yomitan's dictionary details that [info] has, label and value: those of its index.json, then its counts. */
+    private fun dictionaryDetails(info: DictionaryInfo, facts: DictionaryFacts?, index: org.json.JSONObject?): List<Pair<Int, String>> {
+        val rows = ArrayList<Pair<Int, String>>()
+        for ((label, key) in listOf(
+            R.string.detail_author to "author", R.string.detail_url to "url", R.string.detail_description to "description",
+            R.string.detail_attribution to "attribution", R.string.detail_source_language to "sourceLanguage", R.string.detail_target_language to "targetLanguage",
+        )) {
+            index?.optString(key)?.takeIf { it.isNotBlank() }?.let { rows += label to it }
+        }
+        val kanjiMeta = facts?.kanjiMeta
+        for ((label, count) in listOf(
+            R.string.detail_terms to info.terms,
+            R.string.detail_term_meta to (if (kanjiMeta != null) info.meta - kanjiMeta else info.meta),
+            R.string.detail_kanji to info.kanji,
+            R.string.detail_kanji_meta to (kanjiMeta ?: 0),
+            R.string.detail_tags to (facts?.tags ?: 0),
+            R.string.detail_media to info.images,
+        )) {
+            if (count > 0) rows += label to count.toString()
+        }
+        info.frequencyMode?.let { rows += R.string.detail_frequency_mode to it }
+        // Hiroi lists a dictionary once its import finished, and can search any with a wildcard first
+        rows += R.string.detail_prefix_wildcards to "true"
+        rows += R.string.detail_import_success to "true"
+        return rows
+    }
+
     private fun confirmDelete(info: DictionaryInfo) {
         AlertDialog.Builder(this)
-            .setMessage(getString(R.string.remove_confirm, info.title))
-            .setPositiveButton(R.string.remove) { _, _ ->
+            .setMessage(getString(R.string.dictionary_delete_confirm, DictionarySettings(this).name(info.title)))
+            .setPositiveButton(R.string.dictionary_delete) { _, _ ->
                 background.execute {
                     dictionaries.delete(info.id)
                     runOnUiThread { if (!isDestroyed) showDictionaries() }

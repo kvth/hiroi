@@ -145,7 +145,7 @@ class TemplatesActivity : Activity() {
             val output = runCatching {
                 val db = DictionaryDb.get(this)
                 val settings = DictionarySettings(this)
-                val translator = Translator(db, { settings.frequencySort(db) }, { settings.grouping() }) { settings.partsOfSpeechFilterOff }
+                val translator = Translator(db, { settings.frequencySort(db) }, { settings.grouping() }) { settings.options() }
                 val start = text.indexOfFirst(Japanese::isJapanese)
                 val term = (if (start < 0) null else translator.lookUp(text, start))?.terms?.firstOrNull()
                     ?: return@runCatching getString(R.string.templates_test_no_word)
@@ -154,6 +154,7 @@ class TemplatesActivity : Activity() {
                     parse = { sentence ->
                         Furigana.forText(sentence) { t, i -> translator.lookUp(t, i, definitions = false)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) } }
                     },
+                    frequencySort = settings.frequencySort(db),
                 )
                 val format = CardFormat(deck = "Test", model = "Test", fields = mapOf("Test" to fieldValue))
                 val note = YomitanRenderer(this, anki, format, templates).render(data, null, null)

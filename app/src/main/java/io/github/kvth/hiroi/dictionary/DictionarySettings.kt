@@ -1,6 +1,13 @@
 package io.github.kvth.hiroi.dictionary
 
 import android.content.Context
+import org.json.JSONObject
+
+/**
+ * Lookups' switches per dictionary, as Yomitan's: [partsOfSpeechFilterOff] has "Part of speech
+ * filtering" off, [deinflectionsOff] "Use deinflections".
+ */
+data class DictionaryOptions(val partsOfSpeechFilterOff: Set<String> = emptySet(), val deinflectionsOff: Set<String> = emptySet())
 
 /** How lookups use the dictionaries: the frequency dictionary results are sorted by, as Yomitan's "Result sorting". */
 class DictionarySettings(context: Context) {
@@ -46,6 +53,33 @@ class DictionarySettings(context: Context) {
         get() = prefs.getStringSet("parts_of_speech_filter_off", null)?.toSet().orEmpty()
         set(value) = prefs.edit().putStringSet("parts_of_speech_filter_off", value).apply()
 
+    /**
+     * The dictionaries with Yomitan's "Use deinflections" off: the forms of other words they list
+     * ([Yomitan.FormOf]) don't find those words. On for all by default.
+     */
+    var deinflectionsOff: Set<String>
+        get() = prefs.getStringSet("deinflections_off", null)?.toSet().orEmpty()
+        set(value) = prefs.edit().putStringSet("deinflections_off", value).apply()
+
+    /** The switches lookups take per dictionary */
+    fun options() = DictionaryOptions(partsOfSpeechFilterOff, deinflectionsOff)
+
+    /** The names dictionaries were given (Yomitan's "Rename…", its alias), by title */
+    var aliases: Map<String, String>
+        get() = prefs.getString("aliases", null)?.let { json ->
+            runCatching { JSONObject(json).let { o -> o.keys().asSequence().associateWith { o.getString(it) } } }.getOrNull()
+        }.orEmpty()
+        set(value) = prefs.edit().putString("aliases", JSONObject(value).toString()).apply()
+
+    /** What dictionary [title] is called where it's shown: the name it was given, or its title */
+    fun name(title: String): String = aliases[title] ?: title
+
+    /** Names dictionary [title] [alias]; its own title, blank or null names it by its title again. */
+    fun setAlias(title: String, alias: String?) {
+        val name = alias?.trim().orEmpty()
+        aliases = if (name.isEmpty() || name == title) aliases - title else aliases + (title to name)
+    }
+
     /** Settings that name dictionary [old] name [new] instead (an update can change its title). */
     fun rename(old: String, new: String) {
         if (old == new) return
@@ -53,6 +87,8 @@ class DictionarySettings(context: Context) {
         if (mainDictionary == old) mainDictionary = new
         if (old in secondaryDictionaries) secondaryDictionaries = secondaryDictionaries - old + new
         if (old in partsOfSpeechFilterOff) partsOfSpeechFilterOff = partsOfSpeechFilterOff - old + new
+        if (old in deinflectionsOff) deinflectionsOff = deinflectionsOff - old + new
+        aliases[old]?.let { aliases = aliases - old + (new to it) }
     }
 
     /**

@@ -1,6 +1,10 @@
 package io.github.kvth.hiroi.anki
 
+import io.github.kvth.hiroi.dictionary.FrequencySort
+import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
+import io.github.kvth.hiroi.dictionary.TermMeta
+import io.github.kvth.hiroi.japanese.Deinflector
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -162,5 +166,42 @@ class CardCreatorTest {
         val (empty, reason) = hiroiMarkers(mapOf("Back" to "[{sentence-translation}]"), failing)
         assertEquals("[]", empty["Back"])
         assertEquals("sentence-translation: offline", reason)
+    }
+
+    @Test
+    fun fillsHiroisOwnMarkers() {
+        val term = TermGroup(
+            "食べる", "たべる", "食べた", listOf("-た", "no such step"), emptyList(),
+            listOf(TermMeta("食べる", "freq", "[300]", "JPDB"), TermMeta("食べる", "freq", "[900]", "JPDB"), TermMeta("食べる", "freq", "[5]", "Other")),
+            kanji = listOf(
+                KanjiEntry("食", "", "", "", emptyList(), "Empty"),
+                KanjiEntry("食", "ショク ジキ", "く.う た.べる", "", listOf("eat", "food"), "KANJIDIC"),
+                KanjiEntry("食", "ショク", "", "", listOf("食べる"), "Kanken"),
+            ),
+        )
+        val data = CardData(term, "昨日、{ラーメン}を\n食べた。", 5, 8, frequencySort = FrequencySort("JPDB", ascending = true))
+        data.screenshotRegion = "hiroi_screenshot_region_1.png"
+        val fields = mapOf(
+            "Kanji" to "{kanji-meanings}|{kanji-readings}",
+            "Conjugation" to "{conjugation-description}",
+            "Context" to "{text-block}",
+            "Rank" to "{frequency-sort-rank}",
+            "Picture" to "{screenshot-region}",
+            "Word" to "{expression}",
+        )
+        val (filled, error) = hiroiMarkers(fields, data)
+        assertNull(error)
+        // The first kanji dictionary that has something for the kanji
+        assertEquals("食: eat, food|食: On ショク、ジキ · Kun く.う、た.べる", filled["Kanji"])
+        assertEquals("-た: " + Deinflector.description("-た")!!.replace("\n", " ") + "<br>no such step", filled["Conjugation"])
+        assertEquals("昨日、&#123;ラーメン}を<br>食べた。", filled["Context"])
+        // Ranks: the lowest of the sorting dictionary's; occurrence counts: the highest
+        assertEquals("300", filled["Rank"])
+        assertEquals("900", hiroiMarkers(fields, CardData(term, "", 0, 0, frequencySort = FrequencySort("JPDB", ascending = false))).first["Rank"])
+        assertEquals("""<img src="hiroi_screenshot_region_1.png">""", filled["Picture"])
+        assertEquals("{expression}", filled["Word"])
+        // Without a sorting dictionary or a region: empty
+        val bare = hiroiMarkers(fields, CardData(term, "", 0, 0)).first
+        assertEquals(listOf("", ""), listOf(bare["Rank"], bare["Picture"]))
     }
 }

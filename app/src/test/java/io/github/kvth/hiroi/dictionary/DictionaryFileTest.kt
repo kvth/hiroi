@@ -100,7 +100,7 @@ class DictionaryFileTest {
             assertEquals(listOf("""["to eat"]""", """["cat"]""", """["sleeper"]"""), all.map { d.glossaries(listOf(it.id))[it.id] })
             assertEquals(listOf("寝子"), d.findTermsBySequence(listOf(3, 9), "Test", 1).map { it.expression })
             val f = d.facts()
-            assertEquals(facts.copy(terms = 3), f)
+            assertEquals(facts.copy(terms = 3, forms = 0, kanjiMeta = 0, tags = 0), f)
         }
     }
 
@@ -150,6 +150,21 @@ class DictionaryFileTest {
     }
 
     @Test
+    fun countsTheFormsOfOtherWords() {
+        val file = write({
+            terms(
+                listOf(
+                    term("痛い", "いたい", """["painful"]"""),
+                    term("痛く", "痛く", """[["痛い", ["adverbial"]]]"""),
+                    // Arrays inside a definition aren't forms
+                    term("猫", "ねこ", """[{"type":"structured-content","content":["cat", ["kitty"]]}]"""),
+                ),
+            )
+        })
+        DictionaryFile.open(file).use { d -> assertEquals(1, d.facts().forms) }
+    }
+
+    @Test
     fun metaKanjiTagsAndImages() {
         val png = byteArrayOf(1, 2, 3, 4)
         val file = write({
@@ -172,7 +187,7 @@ class DictionaryFileTest {
             assertEquals(listOf("image/png", 10, 20), listOf(image.mediaType, image.width, image.height))
             assertArrayEquals(png, image.read())
             assertNull(d.findMedia("img/b.png"))
-            assertEquals(facts.copy(meta = 4, kanji = 1, frequencies = 3, images = 1), d.facts())
+            assertEquals(facts.copy(meta = 4, kanji = 1, frequencies = 3, images = 1, forms = 0, kanjiMeta = 1, tags = 2), d.facts())
             assertEquals(emptyList<TermEntry>(), d.findTerms(listOf("猫"), "T", 0))
         }
     }

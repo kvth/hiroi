@@ -10,7 +10,11 @@ import io.github.kvth.hiroi.audio.WordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.DictionarySettings
+import io.github.kvth.hiroi.dictionary.FrequencySort
+import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
+import io.github.kvth.hiroi.dictionary.Yomitan
+import io.github.kvth.hiroi.japanese.Deinflector
 import java.io.ByteArrayOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,7 +38,12 @@ class CardData(
     val audio: AudioInfo? = null,
     /** Translates a text, for {sentence-translation}; throws with the reason when it can't */
     val translate: (String) -> String = { throw IllegalStateException("No translation here") },
+    /** The frequency dictionary results are sorted by, for {frequency-sort-rank} */
+    val frequencySort: FrequencySort? = null,
 ) {
+    /** The screenshot of the box or region as stored in Anki, for {screenshot-region}; set by [CardCreator] */
+    var screenshotRegion: String? = null
+
     /** The sentence's translation, made once for the card (both passes need it) */
     val sentenceTranslation: Result<String> by lazy {
         val (start, end) = YomitanNoteData.sentence(text, this.start, this.end)
@@ -68,7 +77,7 @@ class YomitanRenderer(
     private val templates: String? = settings.fieldTemplates,
 ) : NoteRenderer {
     private val db = DictionaryDb.get(context)
-    private val noteData by lazy { YomitanNoteData(db, db.enabledDictionaries()) }
+    private val noteData by lazy { YomitanNoteData(db, db.enabledDictionaries(), DictionarySettings(context).aliases) }
     private val dictionaries by lazy { noteData.dictionariesJson(db.styles()) }
 
     override fun render(data: CardData, requirements: JSONArray?, media: JSONObject?): RenderedNote {
@@ -101,16 +110,57 @@ class YomitanRenderer(
 }
 
 /**
- * Fills Hiroi's own markers in [fields] before Yomitan's templates fill theirs: for now
- * {sentence-translation}, translated only if a field has it. Also says why it's empty, if it is.
+ * Fills Hiroi's own markers ([AnkiTemplates.HIROI_MARKERS]) in [fields] before Yomitan's templates
+ * fill theirs, each only if a field has it (the sentence is translated only then). Also says why
+ * {sentence-translation} is empty, if it is.
  */
 fun hiroiMarkers(fields: Map<String, String>, data: CardData): Pair<Map<String, String>, String?> {
-    if (fields.values.none { AnkiTemplates.SENTENCE_TRANSLATION in it }) return fields to null
-    val translation = data.sentenceTranslation
-    // As HTML, and with no { left that Yomitan would take for a marker
-    val html = translation.getOrNull()?.let { Html.escape(it).replace("\n", "<br>").replace("{", "&#123;") }.orEmpty()
-    val error = translation.exceptionOrNull()?.let { "sentence-translation: ${it.message ?: it.javaClass.simpleName}" }
-    return fields.mapValues { (_, value) -> value.replace(AnkiTemplates.SENTENCE_TRANSLATION, html) } to error
+    val used = AnkiTemplates.HIROI_MARKERS.filter { marker -> fields.values.any { "{$marker}" in it } }
+    if (used.isEmpty()) return fields to null
+    var error: String? = null
+    val values = used.associate { marker ->
+        "{$marker}" to when (marker) {
+            "sentence-translation" -> {
+                val translation = data.sentenceTranslation
+                error = translation.exceptionOrNull()?.let { "sentence-translation: ${it.message ?: it.javaClass.simpleName}" }
+                translation.getOrNull()?.let(::markerHtml).orEmpty()
+            }
+            "kanji-meanings" -> kanjiLines(data.term) { kanji ->
+                kanji.meanings.takeIf { it.isNotEmpty() }?.joinToString(", ")
+            }
+            "kanji-readings" -> kanjiLines(data.term) { kanji ->
+                listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi).filter { it.second.isNotBlank() }
+                    .takeIf { it.isNotEmpty() }?.joinToString(" · ") { (label, readings) -> "$label " + readings.trim().replace(" ", "、") }
+            }
+            "conjugation-description" -> data.term.inflections.joinToString("<br>") { name ->
+                markerHtml(Deinflector.description(name)?.let { "$name: " + it.replace("\n", " ") } ?: name)
+            }
+            "text-block" -> markerHtml(data.text.trim())
+            "frequency-sort-rank" -> frequencySortRank(data)?.toString().orEmpty()
+            "screenshot-region" -> data.screenshotRegion?.let { "<img src=\"${Html.escape(it)}\">" }.orEmpty()
+            else -> ""
+        }
+    }
+    return fields.mapValues { (_, value) -> values.entries.fold(value) { v, (marker, html) -> v.replace(marker, html) } } to error
+}
+
+/** [text] as HTML, and with no { left that Yomitan would take for a marker */
+private fun markerHtml(text: String) = Html.escape(text).replace("\n", "<br>").replace("{", "&#123;")
+
+/**
+ * A line per kanji of [term]'s word ("食: eat, food"), from the first kanji dictionary (in their
+ * order) that [line] has something for; kanji none has anything for are left out.
+ */
+private fun kanjiLines(term: TermGroup, line: (KanjiEntry) -> String?): String =
+    term.kanji.groupBy { it.character }.mapNotNull { (character, entries) ->
+        entries.firstNotNullOfOrNull(line)?.let { markerHtml("$character: $it") }
+    }.joinToString("<br>")
+
+/** The word's rank from the frequency dictionary results are sorted by: its lowest for ranks, its highest for occurrence counts */
+private fun frequencySortRank(data: CardData): Int? {
+    val sort = data.frequencySort ?: return null
+    val values = data.term.meta.filter { it.dictionary == sort.dictionary }.mapNotNull { Yomitan.frequency(it, data.term.reading)?.value }
+    return if (sort.ascending) values.minOrNull() else values.maxOrNull()
 }
 
 /**
@@ -150,10 +200,13 @@ class CardCreator(
      */
     class Result(val noteId: Long, val errors: List<String>, val stylesChanged: Boolean = false)
 
-    /** Adds the note; throws [DuplicateNoteException] if duplicates are prevented. */
-    fun add(data: CardData, screenshot: Bitmap?): Result {
+    /**
+     * Adds the note; throws [DuplicateNoteException] if duplicates are prevented. [region] is the
+     * screenshot of just the box or region, for {screenshot-region}.
+     */
+    fun add(data: CardData, screenshot: Bitmap?, region: Bitmap? = null): Result {
         if (format.preventDuplicates && !anki.canAddNote(duplicateCheckNote(data.term))) throw DuplicateNoteException()
-        val note = render(data, screenshot)
+        val note = render(data, screenshot, region)
         val (fields, stylesChanged) = withoutStyles(note.fields)
         return Result(anki.addNote(note(format, fields)), note.errors, stylesChanged)
     }
@@ -162,9 +215,9 @@ class CardCreator(
      * Overwrites note [id] with the note [data] makes, as Yomitan does with duplicates: each field
      * by its overwrite mode (by default only where the existing note's field is empty).
      */
-    fun overwrite(id: Long, data: CardData, screenshot: Bitmap?): Result {
+    fun overwrite(id: Long, data: CardData, screenshot: Bitmap?, region: Bitmap? = null): Result {
         val existing = anki.notesInfo(listOf(id)).singleOrNull()?.fields ?: throw AnkiException("Note $id is gone")
-        val note = render(data, screenshot)
+        val note = render(data, screenshot, region)
         val (newFields, stylesChanged) = withoutStyles(note.fields)
         val fields = newFields
             .filterKeys { it in existing }
@@ -208,8 +261,15 @@ class CardCreator(
         return out to styles.add(moved)
     }
 
-    /** Both passes: the fields, and, if they need media, the fields again with the media stored. */
-    private fun render(data: CardData, screenshot: Bitmap?): RenderedNote {
+    /**
+     * Both passes: the fields, and, if they need media, the fields again with the media stored.
+     * {screenshot-region}, Hiroi's own, is stored first, if a field has it.
+     */
+    private fun render(data: CardData, screenshot: Bitmap?, region: Bitmap?): RenderedNote {
+        if (region != null && data.screenshotRegion == null && format.fields.values.any { AnkiTemplates.SCREENSHOT_REGION in it }) {
+            val (bytes, extension) = image(region)
+            data.screenshotRegion = anki.storeMediaFile("hiroi_screenshot_region_${System.currentTimeMillis()}.$extension", bytes.base64())
+        }
         val first = renderer.render(data, null, null)
         if (first.requirements.length() == 0) return first
         return renderer.render(data, first.requirements, media(first.requirements, data, screenshot))
@@ -237,11 +297,8 @@ class CardCreator(
                     }
                 }
                 "screenshot" -> if (screenshot != null) {
-                    val jpeg = screenshotFormat == "jpeg"
-                    val bytes = ByteArrayOutputStream().also {
-                        screenshot.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, if (jpeg) screenshotQuality else 100, it)
-                    }.toByteArray()
-                    media.put("screenshot", anki.storeMediaFile("hiroi_screenshot_${System.currentTimeMillis()}.${if (jpeg) "jpg" else "png"}", bytes.base64()))
+                    val (bytes, extension) = image(screenshot)
+                    media.put("screenshot", anki.storeMediaFile("hiroi_screenshot_${System.currentTimeMillis()}.$extension", bytes.base64()))
                 }
                 "clipboardText" -> clipboard()?.let { media.put("clipboardText", it) }
                 "popupSelectionText" -> media.put("selectionText", data.selection)
@@ -283,6 +340,15 @@ class CardCreator(
     private fun rootDeck(deck: String) = deck.substringBefore("::")
 
     private fun ByteArray.base64() = Base64.encodeToString(this, Base64.NO_WRAP)
+
+    /** A screenshot as the settings say to store it (PNG, or JPEG of their quality), and its file extension */
+    private fun image(bitmap: Bitmap): Pair<ByteArray, String> {
+        val jpeg = screenshotFormat == "jpeg"
+        val bytes = ByteArrayOutputStream().also {
+            bitmap.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, if (jpeg) screenshotQuality else 100, it)
+        }.toByteArray()
+        return bytes to if (jpeg) "jpg" else "png"
+    }
 
     private companion object {
         val AUDIO_EXTENSIONS = setOf("mp3", "ogg", "opus", "m4a", "aac", "wav", "flac", "webm")

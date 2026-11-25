@@ -79,6 +79,18 @@ class YomitanTest {
     }
 
     @Test
+    fun tellsFormsOfOtherWordsFromDefinitions() {
+        val forms = Yomitan.forms("""[["痛い", ["adverbial"]], "an adverb", ["痛い", ["continuative stem"]]]""")
+        assertEquals(listOf(Yomitan.FormOf("痛い", listOf("adverbial")), Yomitan.FormOf("痛い", listOf("continuative stem"))), forms.forms)
+        assertEquals("""["an adverb"]""", forms.rest)
+        assertNull(Yomitan.forms("""[["日", ["transcription"]]]""").rest)
+        // Without forms, the glossary as it is
+        val plain = """[{"type":"structured-content","content":["a \"[quoted]\"", ["b"]]}, "c [d]"]"""
+        assertEquals(plain, Yomitan.forms(plain).rest)
+        assertEquals(emptyList<Yomitan.FormOf>(), Yomitan.forms(plain).forms)
+    }
+
+    @Test
     fun separatesALabelFromTheGlossesAfterIt() {
         val glossary = """[{"type":"structured-content","content":[
             {"tag":"span","data":{"class":"tag","content":"misc-info"},"content":"slang"},

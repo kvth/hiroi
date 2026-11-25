@@ -50,6 +50,100 @@ class TranslatorTest {
         s.title to result.terms.subList(s.first, end).map { it.expression }
     }
 
+    /** A store with words written other ways in texts */
+    private val variants = object : DictionaryStore by store {
+        val terms = listOf(
+            term("清掃", "せいそう", "vs"),
+            term("株式会社", "かぶしきがいしゃ", ""),
+            term("学校", "がっこう", ""),
+            term("人々", "ひとびと", ""),
+            term("こころ", "こころ", ""),
+            term("ゴミ", "ゴミ", ""),
+            term("凄い", "すごい", "adj-i"),
+            term("Ｔシャツ", "ティーシャツ", ""),
+            term("ＣＤ", "シーディー", ""),
+            term("改竄", "かいざん", "vs"),
+            term("改正", "かいせい", "vs"),
+            term("膨大", "ぼうだい", ""),
+            term("棒", "ぼう", ""),
+            term("覚醒剤", "かくせいざい", ""),
+            term("覚", "かく", ""),
+            term("クソガキ", "くそがき", ""),
+            term("死ぬ", "しぬ", "v5"),
+            term("本", "ほん", ""),
+            term("本屋", "ほんや", ""),
+        )
+
+        override fun findTerms(forms: Collection<String>) = terms.filter { it.expression in forms || it.reading in forms }
+
+        override fun findKeys(affix: String, suffix: Boolean, limit: Int, accepts: (String) -> Boolean) =
+            terms.flatMap { listOf(it.expression, it.reading) }.distinct().sorted()
+                .filter { (if (suffix) it.endsWith(affix) else it.startsWith(affix)) && accepts(it) }.take(limit)
+    }
+
+    @Test
+    fun textWrittenOtherWaysFindsItsWord() {
+        val translator = Translator(variants)
+        fun first(text: String) = translator.lookUp(text, 0)?.terms?.firstOrNull()
+        assertEquals("清掃", first("セーソーした")?.expression)
+        assertEquals("セーソーした", first("セーソーした")?.source)
+        assertEquals("せいそうした", first("セーソーした")?.transformed)
+        assertEquals("清掃", first("セ〜ソ〜")?.expression)
+        assertEquals("株式会社", first("㍿です")?.expression)
+        assertEquals("㍿", first("㍿です")?.source)
+        assertEquals("学校", first("ｶﾞｯｺｳ")?.expression)
+        assertEquals("ｶﾞｯｺｳ", first("ｶﾞｯｺｳ")?.source)
+        assertEquals("人々", first("人〻")?.expression)
+        assertEquals("人々", first("人人")?.expression)
+        assertEquals("こころ", first("こゝろ")?.expression)
+        // As written, nothing transformed
+        assertEquals("学校", first("学校")?.transformed)
+    }
+
+    @Test
+    fun kanaInTheOtherScriptAndEmphasis() {
+        val translator = Translator(variants)
+        assertEquals("ゴミ", translator.lookUp("ごみを", 0)?.terms?.first()?.expression)
+        val emphatic = translator.lookUp("すっごーーい！", 0)!!
+        assertEquals("凄い", emphatic.terms.first().expression)
+        assertEquals(6, emphatic.end)
+    }
+
+    @Test
+    fun mixedSpellingsFindTheirWord() {
+        val translator = Translator(variants)
+        val tampered = translator.lookUp("改ざんされた。", 0)!!
+        assertEquals("改竄", tampered.terms.first().expression)
+        assertEquals(6, tampered.end)
+        assertEquals("改竄", translator.lookUp("改ざん", 0)?.terms?.map { it.expression }?.single { it != "改正" && it != "改" })
+        assertEquals("膨大", translator.lookUp("ぼう大な", 0)?.terms?.first()?.expression)
+        assertEquals("覚醒剤", translator.lookUp("覚せい剤を", 0)?.terms?.first()?.expression)
+        // Kana that aren't another kanji's
+        assertEquals(listOf("本"), translator.lookUp("本を読む", 0)?.terms?.map { it.expression })
+    }
+
+    @Test
+    fun censoredCharactersFindTheirWord() {
+        val translator = Translator(variants)
+        val brat = translator.lookUp("ク○ガキが", 0)!!
+        assertEquals("クソガキ", brat.terms.first().expression)
+        assertEquals(4, brat.end)
+        // Starting with one, and conjugated
+        assertEquals("死ぬ", translator.lookUp("○ねよ", 0)?.terms?.first()?.expression)
+    }
+
+    @Test
+    fun lookupsStartOnLatinLettersWithJapaneseNear() {
+        val translator = Translator(variants)
+        val shirt = translator.lookUp("Tシャツを買った", 0)!!
+        assertEquals("Ｔシャツ", shirt.terms.first().expression)
+        assertEquals(4, shirt.end)
+        assertEquals("ＣＤ", translator.lookUp("CDを", 0)?.terms?.first()?.expression)
+        // English text: nothing Japanese near, or no word there
+        assertNull(translator.lookUp("Hello world", 0))
+        assertNull(translator.lookUp("Helloです", 0))
+    }
+
     @Test
     fun latinTextIsSearchedInSections() {
         val translator = Translator(latin)
@@ -303,7 +397,7 @@ class TranslatorTest {
             override fun findKanji(character: String) = emptyList<KanjiEntry>()
         }
         assertTrue(Translator(store).lookUp("食べた", 0)!!.terms.none { it.expression == "食べる" })
-        val unfiltered = Translator(store, { null }, { Grouping() }) { setOf("NoPos") }.lookUp("食べた", 0)!!
+        val unfiltered = Translator(store, { null }, { Grouping() }) { DictionaryOptions(partsOfSpeechFilterOff = setOf("NoPos")) }.lookUp("食べた", 0)!!
         assertEquals("食べる", unfiltered.terms.first().expression)
         assertEquals("食べた", unfiltered.terms.first().source)
     }
@@ -334,5 +428,52 @@ class TranslatorTest {
         store.asked.clear()
         assertEquals("猫", Translator(store).lookUp("猫", 0, definitions = false)!!.terms.single().expression)
         assertTrue(store.asked.isEmpty())
+    }
+
+    /** A dictionary with forms of other words, as wty's (their glossaries read only when asked for) */
+    private val withForms = object : DictionaryStore {
+        val full = listOf(
+            TermEntry("痛い", "いたい", "", "adj-i", 0, """["painful"]""", 1, "", "Wty", 1, id = 1),
+            TermEntry("痛く", "痛く", "non-lemma", "adj-i", 0, """[["痛い", ["adverbial"]], ["痛い", ["continuative stem"]]]""", 2, "", "Wty", 1, id = 2),
+            TermEntry("國", "くに", "non-lemma", "", 0, """[["国", ["alternative kanji kyūjitai"]], "country (old spelling)"]""", 3, "", "Wty", 1, id = 3),
+            TermEntry("国", "くに", "", "", 0, """["country"]""", 4, "", "Wty", 1, id = 4),
+            TermEntry("国", "くに", "", "", 0, """["country (Other)"]""", 5, "", "Other", 2, id = 5),
+        )
+        val asked = mutableListOf<Long>()
+        override fun findTerms(forms: Collection<String>) = full.filter { it.expression in forms || it.reading in forms }.map { it.copy(glossary = "") }
+        override fun findTermMeta(expressions: Collection<String>) = emptyList<TermMeta>()
+        override fun findKanji(character: String) = emptyList<KanjiEntry>()
+        override fun dictionariesWithForms() = setOf("Wty")
+        override fun withGlossaries(entries: List<TermEntry>) = entries.map { e ->
+            if (e.glossary.isNotEmpty()) e else full.first { it.id == e.id }.also { asked += it.id }
+        }
+    }
+
+    @Test
+    fun formsOfOtherWordsFindThoseWords() {
+        val terms = Translator(withForms).lookUp("國", 0)!!.terms
+        // 國 with its own definition only; 国 found through it, after it, with how
+        assertEquals(listOf("國", "国"), terms.map { it.expression })
+        assertEquals(listOf("""["country (old spelling)"]"""), terms[0].entries.map { it.glossary })
+        assertEquals(listOf("alternative kanji kyūjitai"), terms[1].inflections)
+        assertEquals(listOf("""["country"]""", """["country (Other)"]"""), terms[1].entries.map { it.glossary })
+        // To tell forms apart, only the glossaries of the dictionary that has them are read
+        withForms.asked.clear()
+        Translator(withForms).lookUp("國", 0, definitions = false)
+        assertEquals(listOf(3L, 4L), withForms.asked)
+    }
+
+    @Test
+    fun anEntryThatIsOnlyFormsIsNoResult() {
+        val terms = Translator(withForms).lookUp("痛く", 0)!!.terms
+        assertEquals(listOf("痛い"), terms.map { it.expression })
+        // Deinflected by Hiroi first (痛く → 痛い), which has fewer steps than the dictionary's two forms
+        assertEquals(listOf("""["painful"]"""), terms.single().entries.map { it.glossary })
+    }
+
+    @Test
+    fun formsAreLeftAloneWithUseDeinflectionsOff() {
+        val translator = Translator(withForms, options = { DictionaryOptions(deinflectionsOff = setOf("Wty")) })
+        assertEquals(listOf("國"), translator.lookUp("國", 0)!!.terms.map { it.expression })
     }
 }

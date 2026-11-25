@@ -26,7 +26,11 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
-/** [frequencies]: how many frequency values it has (terms and kanji); [frequencyMode] as its index.json says, if it does. */
+/**
+ * [frequencies]: how many frequency values it has (terms and kanji); [frequencyMode] as its
+ * index.json says, if it does. [forms]: how many of its terms are forms of other words
+ * ([Yomitan.FormOf]); null if it was imported before Hiroi counted them.
+ */
 data class DictionaryInfo(
     val id: Long,
     val title: String,
@@ -38,6 +42,7 @@ data class DictionaryInfo(
     val frequencyMode: String? = null,
     val enabled: Boolean = true,
     val images: Int = 0,
+    val forms: Int? = null,
 )
 
 /**
@@ -46,7 +51,7 @@ data class DictionaryInfo(
  * The list is kept in memory, so a lookup only opens the files of the dictionaries it needs.
  */
 class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 10), DictionaryStore {
+    SQLiteOpenHelper(context, "dictionaries.db", null, 11), DictionaryStore {
 
     /** The dictionaries' files */
     private val folder = File(context.filesDir, "dictionaries")
@@ -63,13 +68,14 @@ class DictionaryDb private constructor(context: Context) :
             "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
                 "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
                 "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1, images INTEGER DEFAULT 0, " +
-                "file TEXT NOT NULL)",
+                "file TEXT NOT NULL, forms INTEGER)",
         )
     }
 
     /**
      * Before 10, dictionaries were SQLite files (up to 8, tables here that they shared). Those
-     * aren't carried over to [DictionaryFile]s: the dictionaries need importing again.
+     * aren't carried over to [DictionaryFile]s: the dictionaries need importing again. 11 counts
+     * the forms of other words; the dictionaries imported before don't know theirs (null).
      */
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 10) {
@@ -77,6 +83,8 @@ class DictionaryDb private constructor(context: Context) :
             onCreate(db)
             legacyMediaDir.deleteRecursively()
             folder.deleteRecursively()
+        } else if (oldVersion < 11) {
+            db.execSQL("ALTER TABLE dictionaries ADD COLUMN forms INTEGER")
         }
     }
 
@@ -98,13 +106,13 @@ class DictionaryDb private constructor(context: Context) :
 
     private fun load(): List<Entry> {
         val entries = readableDatabase.rawQuery(
-            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled, images, position, file FROM dictionaries ORDER BY position, id", null,
+            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled, images, position, file, forms FROM dictionaries ORDER BY position, id", null,
         ).use { c ->
             List(c.count) {
                 c.moveToNext()
                 val info = DictionaryInfo(
                     c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
-                    c.getInt(6), c.getString(7), c.getInt(8) != 0, c.getInt(9),
+                    c.getInt(6), c.getString(7), c.getInt(8) != 0, c.getInt(9), if (c.isNull(12)) null else c.getInt(12),
                 )
                 Entry(info, c.getInt(10), c.getString(11))
             }
@@ -137,6 +145,12 @@ class DictionaryDb private constructor(context: Context) :
             buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) }
         }
 
+    /** What dictionary [id]'s file says about it, with the counts Yomitan's details show; null if it's gone. */
+    fun facts(id: Long): DictionaryFacts? {
+        val entry = entries().firstOrNull { it.info.id == id } ?: return null
+        return runCatching { file(entry).facts() }.getOrNull()
+    }
+
     /** Dictionary [id]'s index.json as stored (with its update links), if it was stored. */
     fun summary(id: Long): String? =
         readableDatabase.rawQuery("SELECT summary FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c ->
@@ -157,11 +171,18 @@ class DictionaryDb private constructor(context: Context) :
      * Yomitan: results show the definitions and frequencies of dictionaries higher up first.
      */
     fun move(id: Long, by: Int) {
+        val from = dictionaries().indexOfFirst { it.id == id }
+        if (from >= 0) moveTo(id, from + by)
+    }
+
+    /** Moves dictionary [id] to place [to] in the order (0 the first), as Yomitan's "Move to…"; one past either end goes to it. */
+    fun moveTo(id: Long, to: Int) {
         val order = dictionaries().map { it.id }.toMutableList()
         val from = order.indexOf(id)
-        val to = from + by
-        if (from < 0 || to !in order.indices) return
-        order.add(to, order.removeAt(from))
+        if (from < 0) return
+        val place = to.coerceIn(order.indices)
+        if (place == from) return
+        order.add(place, order.removeAt(from))
         setOrder(order)
     }
 
@@ -210,9 +231,10 @@ class DictionaryDb private constructor(context: Context) :
             put("kanji", facts.kanji)
             put("frequencies", facts.frequencies)
             put("images", facts.images)
+            put("forms", facts.forms)
         })
         changed()
-        return DictionaryInfo(id, facts.title, facts.revision, facts.terms, facts.meta, facts.kanji, facts.frequencies, facts.frequencyMode, enabled, facts.images)
+        return DictionaryInfo(id, facts.title, facts.revision, facts.terms, facts.meta, facts.kanji, facts.frequencies, facts.frequencyMode, enabled, facts.images, facts.forms)
     }
 
     /** A name for a new dictionary file; while it's written, it has ".importing" after it. */
@@ -258,6 +280,8 @@ class DictionaryDb private constructor(context: Context) :
         return each(searchable().filter { it.info.terms > 0 }) { e, f -> f.findTerms(forms, e.info.title, e.position) }
     }
 
+    override fun dictionariesWithForms(): Set<String> = searchable().filter { (it.info.forms ?: 0) > 0 }.mapTo(HashSet()) { it.info.title }
+
     override fun withGlossaries(entries: List<TermEntry>): List<TermEntry> {
         val missing = entries.filter { it.glossary.isEmpty() }
         if (missing.isEmpty()) return entries
@@ -289,6 +313,11 @@ class DictionaryDb private constructor(context: Context) :
         return each(entries) { e, f -> f.findTermsByAffix(affix, suffix, limit, e.info.title, e.position) }
             .sortedBy { it.second }.take(limit).map { it.first }
             .sortedBy { it.expression.length }
+    }
+
+    override fun findKeys(affix: String, suffix: Boolean, limit: Int, accepts: (String) -> Boolean): List<String> {
+        if (affix.isEmpty()) return emptyList()
+        return each(searchable().filter { it.info.terms > 0 }) { _, f -> f.findKeys(affix, suffix, limit, accepts) }.distinct()
     }
 
     override fun findTermsByMeaning(query: String, limit: Int): List<Pair<TermEntry, Int>> {

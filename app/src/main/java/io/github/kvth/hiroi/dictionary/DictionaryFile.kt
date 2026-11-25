@@ -35,6 +35,11 @@ data class DictionaryFacts(
     val kanji: Int = 0,
     val frequencies: Int = 0,
     val images: Int = 0,
+    /** How many terms are forms of other words ([Yomitan.FormOf]); null if the file is older than this count */
+    val forms: Int? = null,
+    /** How many of [meta] are kanji meta rows, and how many tags it explains; null if the file is older than these counts */
+    val kanjiMeta: Int? = null,
+    val tags: Int? = null,
 )
 
 /** Those of [forms] no longer than [longest] code points; [forms] itself if they all are. */
@@ -127,7 +132,18 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
     private val longestTermKey = info.optInt("longest_term_key", Int.MAX_VALUE)
     private val longestMetaKey = info.optInt("longest_meta_key", Int.MAX_VALUE)
 
-    fun facts(): DictionaryFacts = facts(info)
+    /** What the file says about the dictionary; counts that older files lack, and can be had from them, are counted. */
+    fun facts(): DictionaryFacts = facts(info).let { f ->
+        f.copy(kanjiMeta = f.kanjiMeta ?: kanjiMetaRows(), tags = f.tags ?: tags.values.sumOf { it.size })
+    }
+
+    /** The kanji meta rows, each key's group saying how many it has */
+    private fun kanjiMetaRows(): Int {
+        val cursor = kanjiMeta?.cursor() ?: return 0
+        var rows = 0
+        while (cursor.next()) rows += cursor.value().varint()
+        return rows
+    }
 
     /** Whether [filter] says [key] may be there, or there's no filter */
     private fun mayHave(filter: BloomFilter?, key: ByteArray): Boolean = filter == null || filter.mightContain(key)
@@ -258,6 +274,25 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
         val places = LongArray(unique) { glossaryPlace(ids[it]) }
         val order = sortedIndices(unique) { a, b -> if (lengths[a] != lengths[b]) lengths[a] - lengths[b] else places[a].compareTo(places[b]) }
         return order.take(limit).map { term(ids[it], dictionary, priority) to lengths[it] }
+    }
+
+    /**
+     * Up to [limit] keys that start with [affix] (end with it, if [suffix]: only once
+     * [buildReverseKeys] has made their table) and that [accepts], in their order.
+     */
+    fun findKeys(affix: String, suffix: Boolean, limit: Int, accepts: (String) -> Boolean): List<String> {
+        val keys = keys ?: return emptyList()
+        val table = if (suffix) reverseKeys() ?: return emptyList() else keys
+        val from = (if (suffix) reversed(affix) else affix).toByteArray(Charsets.UTF_8)
+        val out = ArrayList<String>()
+        val c = table.cursor()
+        var more = c.seekAtLeast(from)
+        while (more && c.startsWith(from) && out.size < limit) {
+            val key = String(c.key, 0, c.keyLength, Charsets.UTF_8).let { if (suffix) reversed(it) else it }
+            if (accepts(key)) out += key
+            more = c.next()
+        }
+        return out
     }
 
     // ---- Glossaries ----------------------------------------------------------------------------
@@ -1196,6 +1231,8 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
         internal val blockRows: IntArray,
         /** For a dictionary searched by meaning: each row's definitions' words, each with how well it fits */
         internal val words: Bytes?,
+        /** How many of the rows are forms of other words */
+        internal val forms: Int = 0,
     )
 
     /**
@@ -1253,7 +1290,9 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
         private var blockEnd = 0L
 
         private var metaRows = 0L
+        private var kanjiMetaRows = 0
         private var kanjiRows = 0
+        private var forms = 0
         private var longestTermKey = 0
         private var longestMetaKey = 0
         private val tags = ArrayList<TagInfo>()
@@ -1301,11 +1340,13 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
                 deflater.end()
             }
             val packed = Bytes(rows.size * 48 + 64)
+            var forms = 0
             for (row in rows) {
+                if (Yomitan.hasForms(row.glossary)) forms++
                 packed.string(row.expression).string(row.reading).string(row.definitionTags).string(row.rules)
                     .zigzag(row.score.toLong()).zigzag(row.sequence).string(row.termTags)
             }
-            return PreparedTerms(packed, rows.size, blocks, blockRows.toIntArray(), if (meanings) meaningWords(rows) else null)
+            return PreparedTerms(packed, rows.size, blocks, blockRows.toIntArray(), if (meanings) meaningWords(rows) else null, forms)
         }
 
         /**
@@ -1333,6 +1374,7 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
         fun terms(rows: List<TermEntry>) = terms(prepareTerms(rows))
 
         fun terms(prepared: PreparedTerms) {
+            forms += prepared.forms
             val firstBlock = blocks
             for (block in prepared.blocks) {
                 if (blocks + 1 >= blockOffsets.size) blockOffsets = blockOffsets.copyOf(blockOffsets.size * 2)
@@ -1419,7 +1461,7 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
                 r.position += valueLength
                 sorter.add(bytes, keyStart, keyLength, metaRows++, record.buffer, 0, record.size)
             }
-            if (!prepared.ofKanji) longestMetaKey = maxOf(longestMetaKey, prepared.longestKey)
+            if (prepared.ofKanji) kanjiMetaRows += prepared.count else longestMetaKey = maxOf(longestMetaKey, prepared.longestKey)
             frequencies += prepared.frequencies
         }
 
@@ -1538,6 +1580,7 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
         fun finish(facts: DictionaryFacts, reverseKeys: Boolean): DictionaryFacts {
             val stored = facts.copy(
                 terms = terms, meta = metaRows.toInt(), kanji = kanjiRows, frequencies = frequencies, images = mediaPaths.size,
+                forms = forms, kanjiMeta = kanjiMetaRows, tags = tags.size,
             )
             builder.add(DATA, HEADER_SIZE.toLong(), dataPosition)
 
@@ -1614,6 +1657,7 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
                 .put("title", stored.title).put("revision", stored.revision)
                 .put("terms", stored.terms).put("meta", stored.meta).put("kanji", stored.kanji)
                 .put("frequencies", stored.frequencies).put("images", stored.images)
+                .put("forms", stored.forms).put("kanji_meta", stored.kanjiMeta).put("tags", stored.tags)
                 .put("longest_term_key", longestTermKey)
                 .put("longest_meta_key", longestMetaKey)
             if (meanings) info.put("meaning_words", meaningCount)
@@ -1882,6 +1926,9 @@ class DictionaryFile private constructor(private val file: File) : Closeable {
                 kanji = info.optInt("kanji"),
                 frequencies = info.optInt("frequencies"),
                 images = info.optInt("images"),
+                forms = if (info.has("forms")) info.getInt("forms") else null,
+                kanjiMeta = if (info.has("kanji_meta")) info.getInt("kanji_meta") else null,
+                tags = if (info.has("tags")) info.getInt("tags") else null,
             )
         }
 

@@ -47,6 +47,18 @@ class YomitanNoteDataTest {
     private val entry = YomitanNoteData(store, dictionaries).dictionaryEntry(term)
 
     @Test
+    fun givesDictionariesTheNamesTheyWereGiven() {
+        val named = YomitanNoteData(store, dictionaries, mapOf("Jitendex" to "JTX", "JPDB" to "Frequency")).dictionaryEntry(term)
+        assertEquals("JTX", named.getString("dictionaryAlias"))
+        val definition = named.getJSONArray("definitions").getJSONObject(0)
+        assertEquals(listOf("Jitendex", "JTX"), listOf(definition.getString("dictionary"), definition.getString("dictionaryAlias")))
+        val frequency = named.getJSONArray("frequencies").getJSONObject(0)
+        assertEquals(listOf("JPDB", "Frequency"), listOf(frequency.getString("dictionary"), frequency.getString("dictionaryAlias")))
+        // Without one, a dictionary's alias is its title, as in Yomitan
+        assertEquals("Jitendex", entry.getString("dictionaryAlias"))
+    }
+
+    @Test
     fun describesTheTermAsYomitansTranslatorDoes() {
         assertEquals("term", entry.getString("type"))
         assertEquals(6, entry.getInt("maxOriginalTextLength"))

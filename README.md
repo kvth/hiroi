@@ -66,6 +66,22 @@ The looked-up word is also marked in the box on screen, where the app reports it
 
 A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `app/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
 
+Text written another way than the dictionary has it is found too, as [JL](https://github.com/rampaa/JL) and Yomitan find it:
+- half-width kana and squared words: ｶﾞｯｺｳ → 学校, ㍿ → 株式会社;
+- Latin letters and digits in either width: Tシャツ → Ｔシャツ, CD → ＣＤ;
+- iteration marks: 人〻 → 人々, こゝろ → こころ, いすゞ → いすず, 時時 → 時々;
+- katakana as hiragana, and text all in kana as katakana: ごみ → ゴミ;
+- emphasis collapsed, as in Yomitan: すっっごーーい → すっごーい or すごい (凄い);
+- long vowel marks and drawn-out small vowels: セーソー or セ〜ソ〜 → 清掃 (after an e or o sound, ー is tried as both vowels, せい and せえ).
+
+Text as written comes first, then the fewer changes, as Yomitan sorts its text processing. A lookup can start on a Latin letter or digit, as in Yomitan's popup, when there's Japanese text within the next 20 characters: tapping the T of Tシャツ finds Ｔシャツ. If no word starts there, it's not looked up. The search page starts from Latin letters joined to the first Japanese character in the same way.
+
+Two more, as JL finds them, matched against the dictionaries' own spellings and readings:
+- **Mixed spellings** (mazegaki), with some of a word's kanji in kana, as newspapers write the kanji outside the jōyō list: 改ざん → 改竄, ぼう大 → 膨大, 覚せい剤 → 覚醒剤. The kana have to be the reading of the kanji they stand for. They're only tried when the text as written doesn't find a word past its first kanji, or past its first two or more kana, and not when a particle follows the kanji (本を).
+- **Censored characters** (fuseji), any of ○ × ● ◎ □ ※ ＊ and the like, stand for any one character: ク○ガキ → クソガキ, ○ね → 死ぬ. Text that starts with one needs suffix search, which the search page sets up the first time you search for `*…`.
+
+Both come after words found as written of the same length.
+
 To move to a newer Yomitan release:
 
 ```bash
@@ -183,7 +199,15 @@ Hiroi talks to [AnkiConnect](https://foosoft.net/projects/anki-connect/):
 
 ### Making cards
 
-With a card format set up under *Anki → Cards*, every result in the overlay and on the search page gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a value per field with markers such as `{expression}` or `{glossary}`. *Fields…* edits them, and its **{…}** menu lists the markers: Yomitan's standard ones, Hiroi's `{sentence-translation}` (see [Translation](#translation)), one pair per dictionary (`{single-glossary-jitendex}`, `{single-frequency-number-jpdb}`), and those your own templates add. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*), together with that profile's Anki card templates and its compact glossary and tag settings; with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests field values from the field names.
+With a card format set up under *Anki → Cards*, every result in the overlay and on the search page gets a **＋ Anki** button that adds a note, the way Yomitan's button does. A card format works like Yomitan's: a deck, a note type, and a value per field with markers such as `{expression}` or `{glossary}`. *Fields…* edits them, and its **{…}** menu lists the markers: Yomitan's standard ones, Hiroi's own (below), one pair per dictionary (`{single-glossary-jitendex}`, `{single-frequency-number-jpdb}`), and those your own templates add. **Import from Yomitan settings…** takes a format from a Yomitan settings export (*Yomitan → Settings → Backup → Export settings*), together with that profile's Anki card templates and its compact glossary and tag settings; with several profiles, you pick one. Otherwise, choose a note type and Hiroi suggests field values from the field names.
+
+Hiroi's own markers, which Yomitan doesn't have:
+- `{sentence-translation}`: the card's sentence translated (see [Translation](#translation)).
+- `{kanji-meanings}` and `{kanji-readings}`: a line per kanji of the word, such as *食: eat, food* or *食: On ショク、ジキ · Kun く.う、た.べる*, from the first kanji dictionary that has them.
+- `{conjugation-description}`: the inflections from the dictionary form to the text, each with what it means, as tapping one in the results shows.
+- `{text-block}`: the text the word was looked up in: the box tapped, the region dragged out or all of them; on the search page, what was searched. `{sentence}` stops at 。, which can split a speech bubble or subtitle.
+- `{frequency-sort-rank}`: the word's number in the frequency dictionary results are sorted by (*Results → Result sorting*), for sorting notes in Anki whichever dictionary that is.
+- `{screenshot-region}`: the screenshot cut to the box or region, whether or not `{screenshot}` is, so a card can have both.
 
 #### Templates
 

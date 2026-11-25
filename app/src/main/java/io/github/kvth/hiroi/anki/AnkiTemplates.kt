@@ -60,8 +60,20 @@ object AnkiTemplates {
     /** {sentence-translation}: Hiroi's own marker (Yomitan has none for it), the sentence translated. */
     const val SENTENCE_TRANSLATION = "{sentence-translation}"
 
-    /** Hiroi's own markers, besides Yomitan's */
-    val HIROI_MARKERS = listOf("sentence-translation")
+    /** {screenshot-region}: the screenshot cut to the box tapped or the region dragged out, whatever {screenshot} does */
+    const val SCREENSHOT_REGION = "{screenshot-region}"
+
+    /**
+     * Hiroi's own markers, besides Yomitan's ([hiroiMarkers] fills them): the sentence translated;
+     * each kanji of the word with its meanings, and with its readings; the inflections with what
+     * each means; the text the word was looked up in (the box, the region, all of them, or what
+     * was searched); the rank from the frequency dictionary results are sorted by; and the
+     * screenshot of just the box or region.
+     */
+    val HIROI_MARKERS = listOf(
+        "sentence-translation", "kanji-meanings", "kanji-readings", "conjugation-description", "text-block",
+        "frequency-sort-rank", "screenshot-region",
+    )
 
     /** Markers [format]'s fields use that neither [templates] nor the dictionaries define: they'd come out as {name-render-error}. */
     fun unknownMarkers(format: CardFormat, templates: String, dictionaries: List<DictionaryInfo>): List<String> {
