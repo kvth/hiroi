@@ -30,7 +30,7 @@ class ResultsHtmlTest {
     @Test
     fun showsTheWordLikeYomitan() {
         assertTrue(html, "<ruby>届<rt>とど</rt></ruby>く" in html)
-        assertTrue(html, "« negative « -た" in html)
+        assertTrue(html, ">negative</span> « <span" in html) // the inflections, each tappable (explainsTheInflectionsOnATap)
         assertTrue(html, "<span class=\"tag anki\" id=\"anki0\"><span class=\"label\">✓ in Anki</span></span>" in html)
         assertTrue(html, "<span class=\"tag frequency\"><span class=\"label\">JPDB</span><span class=\"value\">2412</span></span>" in html)
         assertTrue(html, "class=\"tag pitch\"><span class=\"label\">NHK</span>" in html)
@@ -58,6 +58,18 @@ class ResultsHtmlTest {
         val result = LookupResult(0, 6, listOf(term), emptyList(), listOf(ResultSection(0, "Meaning", listOf("arrive"))))
         val sectioned = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(result, null, emptyMap(), cards = false)
         assertTrue(sectioned, "<div class=\"tile-gloss\">to arrive; 5-dan</div>" in sectioned)
+    }
+
+    @Test
+    fun explainsTheInflectionsOnATap() {
+        assertTrue(html, "<div class=\"inflections\">« <span class=\"inflection\" role=\"button\"" in html)
+        assertTrue(html, "onclick=\"inflection(this, 'inflection0-1')\">-た</span></div>" in html)
+        // Yomitan's description, hidden until the step is tapped
+        assertTrue(html, "<div class=\"inflection-info\" id=\"inflection0-0\" hidden><div class=\"inflection-name\">negative</div><div class=\"inflection-text\">1. Negative form of verbs." in html)
+        val unknown = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(
+            LookupResult(0, 6, listOf(term.copy(inflections = listOf("no such step"))), emptyList()), null, emptyMap(), cards = false,
+        )
+        assertTrue("a step without a description stays plain", "<div class=\"inflections\">« no such step</div>" in unknown)
     }
 
     @Test

@@ -11,6 +11,7 @@ import io.github.kvth.hiroi.dictionary.Meanings
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
+import io.github.kvth.hiroi.japanese.Deinflector
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -203,9 +204,7 @@ class ResultsHtml(private val colors: Colors) {
             append(">Open in Anki</button>")
             if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"Hiroi.addCard($index)\">＋ Anki</button>")
             append("</div>")
-            if (term.inflections.isNotEmpty()) {
-                append("<div class=\"inflections\">« ").append(Html.escape(term.inflections.joinToString(" « "))).append("</div>")
-            }
+            if (term.inflections.isNotEmpty()) inflections(index, term.inflections)
 
             val tags = StringBuilder()
             if (anki != null && anki.error == null) {
@@ -248,6 +247,24 @@ class ResultsHtml(private val colors: Colors) {
             }
             return true
         }
+    }
+
+    /**
+     * The inflections from the dictionary form to the text, as Yomitan shows them (« -て « -いる);
+     * tapping one shows what it means under them, as Yomitan describes it.
+     */
+    private fun StringBuilder.inflections(index: Int, names: List<String>) {
+        val boxes = StringBuilder()
+        append("<div class=\"inflections\">")
+        names.withIndex().joinTo(this, " « ", "« ") { (k, name) ->
+            val description = Deinflector.description(name) ?: return@joinTo Html.escape(name)
+            val id = "inflection$index-$k"
+            boxes.append("<div class=\"inflection-info\" id=\"").append(id).append("\" hidden><div class=\"inflection-name\">")
+                .append(Html.escape(name)).append("</div><div class=\"inflection-text\">").append(Html.escape(description)).append("</div></div>")
+            "<span class=\"inflection\" role=\"button\" tabindex=\"0\" aria-expanded=\"false\" aria-controls=\"$id\" onclick=\"inflection(this, '$id')\">${Html.escape(name)}</span>"
+        }
+        append("</div>")
+        if (boxes.isNotEmpty()) append("<div class=\"inflection-infos\">").append(boxes).append("</div>")
     }
 
     /** A tag among the frequencies naming the kanji of [term]'s word; tapping it opens or closes them ([kanjiOf]). */
@@ -401,6 +418,11 @@ class ResultsHtml(private val colors: Colors) {
             append("function showResults(sheets, html) { addStyles(sheets); document.body.innerHTML = html; window.scrollTo(0, 0); }")
             // The rest of a page made in parts (Page.rest): styles, the other definitions of the result it ended in, the other results
             append("function addDefinitions(i, items) { document.getElementById('definitions' + i).insertAdjacentHTML('beforeend', items); }")
+            // An inflection's description: tapping one shows it in place of another's, tapping it again closes it
+            append("function inflection(step, id) { var box = document.getElementById(id); var show = box.hidden; ")
+            append("step.parentNode.querySelectorAll('.inflection').forEach(function (s) { s.setAttribute('aria-expanded', 'false'); }); ")
+            append("box.parentNode.querySelectorAll('.inflection-info').forEach(function (b) { b.hidden = true; }); ")
+            append("box.hidden = !show; step.setAttribute('aria-expanded', show); }")
             append("function addResults(html) { document.body.insertAdjacentHTML('beforeend', html); }")
             // The 🔊 button while its audio loads, and when there's none
             append("function audioState(i, state) { var b = document.getElementById('audio' + i); if (b) b.className = 'audio ' + state; }")
@@ -467,6 +489,11 @@ class ResultsHtml(private val colors: Colors) {
         .audio.none { opacity: 0.4; filter: grayscale(1); }
         .card.duplicate { border-style: dashed; }
         .inflections { color: ${colors.secondary}; font-size: 0.85em; font-style: italic; }
+        .inflection { padding: 2px 0; text-decoration: underline dotted; text-underline-offset: 3px; }
+        .inflection[aria-expanded="true"] { color: ${colors.accent}; text-decoration-style: solid; }
+        .inflection-info { margin-top: 4px; padding: 6px 8px; border-radius: 6px; background: ${colors.secondary}14; font-size: 0.85em; }
+        .inflection-name { font-weight: bold; }
+        .inflection-text { white-space: pre-line; }
         .tags, .definition-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
         .tag { display: inline-flex; border-radius: 4px; overflow: hidden; font-size: 0.75em; line-height: 1.7; white-space: nowrap; }
         .tag > span { padding: 0 6px; }

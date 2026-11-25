@@ -59,7 +59,7 @@ The order of the dictionaries is their priority, as in Yomitan: results show the
 **How lookups stay fast**: every dictionary file has a table of keys, one per spelling and reading of a term, so a lookup finds the terms for all the forms it tries (as written, as hiragana, deinflected) with one probe each. Definitions are a table of their own: a lookup first reads the small rest of the matching entries, filters them by part of speech and sorts them, and only then reads the definitions of the results it shows. A lookup only searches the dictionaries that have what it needs (terms, frequencies, kanji), and in each only the forms no longer than its longest key, as JL does; the list of dictionaries stays in memory. Importing parses the banks on several threads while one writes them, without a journal, and makes the indexes at the end. Dictionaries imported by earlier versions of Hiroi (before they had files of their own) need importing again.
 
 Results look like Yomitan's popup:
-- the headword with furigana, then tags for the inflection, Anki status, frequencies and pitch accent,
+- the headword with furigana, then the inflections it went through (« causative « -た: tap one for what it means, as Yomitan describes it), then tags for Anki status, frequencies, the word's kanji (tap to open them) and pitch accent,
 - the definitions, numbered and labelled with their dictionary, styled by the dictionary's own `styles.css` as in Yomitan (Jitendex's coloured labels and example-sentence boxes, for instance), with the dictionary's images.
 
 The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.

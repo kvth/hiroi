@@ -19,8 +19,10 @@ object Deinflector {
     private val names by lazy { transformer.transforms.associate { it.id to it.name } }
     private val descriptions by lazy { transformer.transforms.associate { it.name to it.description } }
 
-    /** What an inflection (by its name, as in [Deinflection.inflections]) does, as Yomitan describes it. */
-    fun description(name: String): String? = descriptions[name]?.takeIf { it.isNotEmpty() }
+    /** What an inflection (by its name, as in [Deinflection.inflections]) does, as Yomitan describes it; Hiroi's own for する. */
+    fun description(name: String): String? = if (name == "する") SURU_DESCRIPTION else descriptions[name]?.takeIf { it.isNotEmpty() }
+
+    private const val SURU_DESCRIPTION = "A noun used as a verb with する (勉強 → 勉強する).\nDictionaries list these verbs under the noun."
     private val suru by lazy { transformer.conditionFlagsFromConditionType("vs") }
 
     /** [text] itself (first) and every form it could be an inflection of, fewest steps first. */
