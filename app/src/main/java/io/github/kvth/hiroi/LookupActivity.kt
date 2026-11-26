@@ -765,10 +765,14 @@ class LookupActivity : Activity() {
         val screenshot = CaptureStore.screenshot ?: return
         scanning = true
         val appText = overlay.blocks
+        val ignored = CaptureStore.ignored
         scanner.execute {
             val started = SystemClock.elapsedRealtime()
             val lines = runCatching {
-                ScreenOcr.recognize(screenshot).filter { it.hasJapanese() && !ScreenOcr.duplicates(it, appText) }
+                ScreenOcr.recognize(screenshot).filter { line ->
+                    line.hasJapanese() && !ScreenOcr.duplicates(line, appText) &&
+                        ignored.none { it.contains(line.bounds.centerX(), line.bounds.centerY()) }
+                }
             }.onFailure { Log.e(TAG, "OCR failed", it) }.getOrDefault(emptyList())
             Log.d(TAG, "OCR took ${SystemClock.elapsedRealtime() - started} ms: ${lines.size} new lines")
             runOnUiThread { if (generation == captureGeneration && !isDestroyed) scanDone(lines) }

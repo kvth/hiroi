@@ -17,8 +17,11 @@ import android.view.accessibility.AccessibilityNodeInfo.EXTRA_DATA_TEXT_CHARACTE
 import android.view.accessibility.AccessibilityWindowInfo
 import io.github.kvth.hiroi.japanese.Japanese
 
-/** The text on screen, and what the app it's from showed about where it's from (for cards) */
-class Capture(val blocks: List<TextBlock>, val source: ScreenSource = ScreenSource())
+/**
+ * The text on screen, and what the app it's from showed about where it's from (for cards).
+ * [ignored]: where Android's accessibility button is, whose labels aren't the screen's text.
+ */
+class Capture(val blocks: List<TextBlock>, val source: ScreenSource = ScreenSource(), val ignored: List<Rect> = emptyList())
 
 /**
  * Collects the text of every visible node in all windows. Hiroi's own windows count too (its
@@ -30,9 +33,20 @@ object AccessibilityCapture {
         val found = mutableListOf<Found>()
         val source = ScreenSourceCollector()
         var windowTitle: String? = null
+        val buttonLabel = service.serviceInfo?.resolveInfo?.loadLabel(service.packageManager)?.toString()
+        val ignored = mutableListOf<Rect>()
         for (window in service.windows) {
             val root = window.root ?: continue
             if (root.packageName == service.packageName && LookupActivity.showing) continue
+            // Android's accessibility button (floating, with Hiroi's icon) lists its features by
+            // their labels, Hiroi's (Hiroi 拾い screen text) and others' (拡大): none of it is text
+            // on screen. It's the system's window that has Hiroi's label.
+            if (window.type == AccessibilityWindowInfo.TYPE_SYSTEM && buttonLabel != null &&
+                root.findAccessibilityNodeInfosByText(buttonLabel).any { it.contentDescription?.toString() == buttonLabel }
+            ) {
+                ignored += Rect().also(window::getBoundsInScreen)
+                continue
+            }
             val app = window.isActive && window.type == AccessibilityWindowInfo.TYPE_APPLICATION
             if (app) windowTitle = window.title?.toString()
             collect(root, found, source.takeIf { app }, false)
@@ -52,7 +66,7 @@ object AccessibilityCapture {
             if (f.text != null) TextBlock(f.text, f.bounds, characters[i]?.takeUnless { i in waiting }) else TextBlock(f.description!!, f.bounds)
         }
         val joined = blocks.indices.groupBy { found[it].lines ?: -1 - it }.values.flatMap { group -> joinLines(group.map(blocks::get)) }
-        return Capture(joined, source.result(windowTitle))
+        return Capture(joined, source.result(windowTitle), ignored)
     }
 
     /**

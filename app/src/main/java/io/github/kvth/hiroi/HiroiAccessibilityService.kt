@@ -110,7 +110,7 @@ class HiroiAccessibilityService : AccessibilityService() {
 
     private fun captureNow(then: () -> Unit) {
         val capture = AccessibilityCapture.capture(this)
-        CaptureStore.update(capture.blocks)
+        CaptureStore.update(capture.blocks, capture.ignored)
         CaptureStore.source = capture.source
         CaptureStore.sourcePackage = rootInActiveWindow?.packageName?.toString()
         CaptureStore.screenshot = null

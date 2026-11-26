@@ -86,6 +86,11 @@ object CaptureStore {
     /** The address of the page the text is from, if it's from one: the browser's own, else its address bar's */
     val pageUrl get() = assistUrl ?: source.url
 
+    /** Where Android's accessibility button is, which OCR leaves out as the capture does ([Capture.ignored]) */
+    @Volatile
+    var ignored: List<Rect> = emptyList()
+        private set
+
     /** The screen as it was when the overlay was triggered, for OCR; null if there is none. */
     @Volatile
     var screenshot: Bitmap? = null
@@ -94,7 +99,8 @@ object CaptureStore {
     @Volatile
     var onClosed: (() -> Unit)? = null
 
-    fun update(raw: List<TextBlock>) {
+    fun update(raw: List<TextBlock>, ignored: List<Rect> = emptyList()) {
+        this.ignored = ignored
         blocks = raw
             .map { it.copy(text = it.text.trim(), textOffset = it.textOffset + it.text.length - it.text.trimStart().length) }
             .filter { it.hasJapanese() && !it.bounds.isEmpty }
