@@ -218,17 +218,69 @@ class YomitanNoteData(
                 .put("sentence", JSONObject().put("text", data.text.substring(start, end)).put("offset", data.start - start))
         }
 
-        /** The sentence around [wordStart]..[wordEnd]: from after the previous 。！？ or line break up to and including the next. */
+        /**
+         * The sentence around [wordStart]..[wordEnd], cut out as Yomitan does with its default
+         * sentence parsing (TextSourceGenerator.extractSentence): it ends at a line break or at
+         * one of 。！？．… .!? ︒︕︖︙, which it takes along with any right after it (！？, ……),
+         * and at a quote mark 「」『』"' it doesn't open and close itself, which it leaves out. A
+         * quote inside it is passed over whole, its 。 and all: in 「行くぞ！」と叫んだ, 叫んだ's
+         * sentence is all of it, 行く's 行くぞ！. It looks at most [SENTENCE_EXTENT] characters
+         * either way, and leaves out spaces at its ends.
+         */
         fun sentence(text: String, wordStart: Int, wordEnd: Int): Pair<Int, Int> {
-            val enders = "。！？!?\n"
+            val from = maxOf(0, wordStart - SENTENCE_EXTENT)
+            val to = minOf(text.length, wordEnd + 2 * SENTENCE_EXTENT - (wordStart - from))
+            // The quotes being passed over, innermost first: the mark each ends at, in the direction of the scan
+            val quotes = ArrayDeque<Char>()
             var start = wordStart
-            while (start > 0 && text[start - 1] !in enders) start--
+            while (start > from) {
+                val c = text[start - 1]
+                if (c == '\n' || quotes.isEmpty() && c in SENTENCE_ENDERS) break
+                if (c in QUOTES) {
+                    if (quotes.isEmpty()) break
+                    if (quotes.first() == c) {
+                        quotes.removeFirst()
+                        start--
+                        continue
+                    }
+                }
+                QUOTE_OPENINGS[c]?.let(quotes::addFirst)
+                start--
+            }
+            quotes.clear()
             var end = wordEnd
-            while (end < text.length && text[end] !in enders) end++
-            if (end < text.length && text[end] != '\n') end++
+            while (end < to) {
+                val c = text[end]
+                if (c == '\n') break
+                if (quotes.isEmpty() && c in SENTENCE_ENDERS) {
+                    while (end < to && text[end] in SENTENCE_ENDERS) end++
+                    break
+                }
+                if (c in QUOTE_OPENINGS) {
+                    if (quotes.isEmpty()) break
+                    if (quotes.first() == c) {
+                        quotes.removeFirst()
+                        end++
+                        continue
+                    }
+                }
+                QUOTES[c]?.let(quotes::addFirst)
+                end++
+            }
             while (start < wordStart && text[start].isWhitespace()) start++
+            while (end > wordEnd && text[end - 1].isWhitespace()) end--
             return start to end
         }
+
+        /** Yomitan's default scan extent: how far around the word a sentence is looked for */
+        private const val SENTENCE_EXTENT = 200
+
+        /** Yomitan's default termination characters that end a sentence, and are part of it */
+        private const val SENTENCE_ENDERS = ".!?．。！？…︒︕︖︙"
+
+        /** Yomitan's default quote pairs, which are sentence boundaries left out of it: opening to closing */
+        private val QUOTES = mapOf('「' to '」', '『' to '』', '"' to '"', '\'' to '\'')
+        private val QUOTE_OPENINGS = QUOTES.entries.associate { (open, close) -> close to open }
 
         /** Yomitan's parsed text (api.parseText's scanning-parser content): terms of {text, reading} segments. */
         fun parsedText(terms: List<List<Furigana.Segment>>): JSONArray = JSONArray(terms.map { segments ->

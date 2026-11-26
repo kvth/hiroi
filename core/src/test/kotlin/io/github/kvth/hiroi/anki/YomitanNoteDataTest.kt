@@ -128,6 +128,30 @@ class YomitanNoteDataTest {
         assertEquals(listOf(1), pitch.getJSONArray("devoicePositions").toList())
     }
 
+    private fun sentenceOf(text: String, word: String): String {
+        val start = text.indexOf(word)
+        val (s, e) = YomitanNoteData.sentence(text, start, start + word.length)
+        return text.substring(s, e)
+    }
+
+    @Test
+    fun cutsOutSentencesAsYomitan() {
+        // Ending at 。！？… and . ! ?, with any right after
+        assertEquals("今日は雨だ。", sentenceOf("昨日は晴れ。今日は雨だ。明日は？", "今日"))
+        assertEquals("本当に！？", sentenceOf("え……本当に！？うそ", "本当"))
+        assertEquals("え……", sentenceOf("え……本当に！？うそ", "え"))
+        assertEquals("まさか", sentenceOf("そんな…まさか", "まさか"))
+        assertEquals("It rains.", sentenceOf("No. It rains. Yes", "rains"))
+        // Quotes: a boundary, left out, unless the sentence has all of the quote
+        assertEquals("行くぞ！", sentenceOf("「行くぞ！」と叫んだ。", "行く"))
+        assertEquals("「行くぞ！」と叫んだ。", sentenceOf("「行くぞ！」と叫んだ。", "叫ん"))
+        assertEquals("彼は『猫』が好き。", sentenceOf("彼は『猫』が好き。", "好き"))
+        // Line breaks; spaces at the ends left out
+        assertEquals("二行目", sentenceOf("一行目\n　二行目 \n三", "二行目"))
+        // At most 200 characters either way
+        assertEquals("あ".repeat(200) + "猫" + "い".repeat(200), sentenceOf("あ".repeat(300) + "猫" + "い".repeat(300), "猫"))
+    }
+
     @Test
     fun cutsOutTheSentenceForTheContext() {
         val context: JSONObject = YomitanNoteData.context(CardData(term, "昨日、パンを食べなかった。今日は食べる。", 6, 12, "Kindle", url = "https://example.com/a"))

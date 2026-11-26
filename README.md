@@ -240,7 +240,7 @@ Apps don't expose text inside images; at most they describe the picture (Instagr
 - The first scan after starting the app takes a moment while the model loads.
 - Text the app draws itself isn't read twice: a line lying on characters the app reported is dropped, even where ML Kit misreads it, and a tap there goes to the app's text.
 
-**Manga with [mokuro](https://github.com/kha-white/mokuro):** in its web reader ([reader.mokuro.app](https://reader.mokuro.app)), turn on *Always show OCR*. Its text is then on the page, so Hiroi takes it from the browser rather than reading the pictures: mokuro's text, with each character where it is. The browser reports a speech bubble's lines one by one; Hiroi joins the lines of a block that read on from each other into one box, so its sentence is the whole bubble.
+**Manga with [mokuro](https://github.com/kha-white/mokuro):** in its web reader ([reader.mokuro.app](https://reader.mokuro.app)), turn on *Always show OCR*. Its text is then on the page, so Hiroi takes it from the browser rather than reading the pictures: mokuro's text, with each character where it is. The browser reports a speech bubble's lines one by one; Hiroi joins the lines of a block that read on from each other into one box, so a sentence runs on from one line to the next.
 
 **Licensing:** ML Kit (the OCR here, and the on-device translation) is closed source (Google APIs Terms of Service), while Hiroi is GPL-3.0 and contains Yomitan's GPL code. Publishing this source code is fine, and so is building the app for yourself. Distributing built APKs, which bundle ML Kit, would conflict with the GPL. A distributable build would need an open-source OCR engine (PaddleOCR, Tesseract), or ML Kit in a separate companion app.
 
@@ -261,7 +261,7 @@ Hiroi's own markers, which Yomitan doesn't have:
 - `{kanji-meanings}` and `{kanji-readings}`: a line per kanji of the word, such as *食: eat, food* or *食: On ショク、ジキ · Kun く.う、た.べる*, from the first kanji dictionary that has them.
 - `{kanji-parts}`: what each kanji of the word is built from, such as *働: 亻(人) + 動* (see [Kanji parts](#kanji-parts)); no kanji dictionary needed.
 - `{conjugation-description}`: the inflections from the dictionary form to the text, each with what it means, as tapping one in the results shows.
-- `{text-block}`: the text the word was looked up in: the box tapped, the region dragged out or all of them; on the search page, what was searched. `{sentence}` stops at 。, which can split a speech bubble or subtitle.
+- `{text-block}`: the text the word was looked up in: the box tapped, the region dragged out or all of them; on the search page, what was searched. `{sentence}` is cut out as Yomitan cuts it (at 。！？… and line breaks, and at quotes 「」 it doesn't hold whole), which can split a speech bubble or subtitle.
 - `{text-block-prefix}` and `{text-block-suffix}`: that text before and after the word, as Yomitan's `{cloze-prefix}` and `{cloze-suffix}` are the sentence before and after it (`{cloze-body}` is the word as it's written there), e.g. `{text-block-prefix}<b>{cloze-body}</b>{text-block-suffix}`.
 - `{local-time}`: when the card was made, by the phone's clock, such as *2026-11-26 17:30*. (Anki keeps when each note was added anyway; this is for showing it on the card.)
 - `{frequency-sort-rank}`: the word's number in the frequency dictionary results are sorted by (*Results → Result sorting*), for sorting notes in Anki whichever dictionary that is.
