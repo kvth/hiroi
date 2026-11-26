@@ -8,16 +8,25 @@ import org.json.JSONObject
 import java.text.Normalizer
 
 /**
- * Pitch accents for the results page, in Yomitan's three forms (pronunciation-generator.js): the
- * reading with a line over its high morae that drops where the pitch does (downstep notation),
- * the downstep position in brackets, and a graph of high and low dots.
+ * Pronunciations for the results page, as Yomitan shows them: IPA as it is, and pitch accents in
+ * its three forms (pronunciation-generator.js), the reading with a line over its high morae that
+ * drops where the pitch does (downstep notation), the downstep position in brackets, and a graph
+ * of high and low dots.
  */
-object PitchAccent {
+object Pronunciations {
+    /** A pitch accent or a phonetic transcription, with its tags */
+    sealed interface Pronunciation {
+        val tags: List<String>
+    }
+
+    /** A phonetic transcription in IPA */
+    data class Transcription(val ipa: String, override val tags: List<String>) : Pronunciation
+
     /**
      * A pitch accent: its downstep [position] (0: none), or Yomitan's [pattern] of H and L per
      * mora instead; its nasal and devoiced morae, counted from 1; and its tags.
      */
-    data class Pitch(val position: Int, val pattern: String?, val nasal: Set<Int>, val devoice: Set<Int>, val tags: List<String>) {
+    data class Pitch(val position: Int, val pattern: String?, val nasal: Set<Int>, val devoice: Set<Int>, override val tags: List<String>) : Pronunciation {
         /** Whether mora [index] (from 0) is high, as Yomitan's isMoraPitchHigh */
         fun isHigh(index: Int): Boolean = when {
             pattern != null -> pattern.getOrNull(index) == 'H'
@@ -34,33 +43,37 @@ object PitchAccent {
             } ?: position.toString()
     }
 
-    /** A dictionary's pitch accents for a reading */
-    data class Group(val dictionary: String, val pitches: List<Pitch>)
+    /** A dictionary's pronunciations of a reading */
+    data class Group(val dictionary: String, val pronunciations: List<Pronunciation>)
 
-    /** Which forms the results show, as Yomitan's "Pitch accent" options (and their defaults) */
-    data class Display(val text: Boolean = true, val position: Boolean = true, val graph: Boolean = false) {
+    /** The forms pitch accents show in, as Yomitan's "Pitch accent" options (and their defaults) */
+    data class PitchForms(val text: Boolean = true, val position: Boolean = true, val graph: Boolean = false) {
         val any: Boolean get() = text || position || graph
     }
 
-    /** The term's pitch accents for its reading, a group per dictionary as Yomitan shows them */
-    fun groups(term: TermGroup): List<Group> =
-        term.meta.filter { it.mode == "pitch" && it.expression == term.expression }
-            .map { it.dictionary to pitches(it, term.reading) }
+    /**
+     * The term's pronunciations of its reading, a group per dictionary as Yomitan shows them;
+     * without its pitch accents unless [pitches].
+     */
+    fun groups(term: TermGroup, pitches: Boolean = true): List<Group> =
+        term.meta.filter { (it.mode == "ipa" || it.mode == "pitch" && pitches) && it.expression == term.expression }
+            .map { it.dictionary to pronunciations(it, term.reading) }
             .filter { it.second.isNotEmpty() }
             .groupBy({ it.first }, { it.second })
             .map { (dictionary, lists) -> Group(dictionary, lists.flatten().distinct()) }
 
-    /** [meta]'s pitch accents if they're [reading]'s */
-    private fun pitches(meta: TermMeta, reading: String): List<Pitch> {
+    /** [meta]'s pitch accents or transcriptions if they're [reading]'s */
+    private fun pronunciations(meta: TermMeta, reading: String): List<Pronunciation> {
         (meta.parsed as? MetaData.Pitch)?.let { if (it.reading != reading) return emptyList() }
         val data = runCatching { JSONArray(meta.data).optJSONObject(0) }.getOrNull() ?: return emptyList()
         if (data.optString("reading") != reading) return emptyList()
-        val pitches = data.optJSONArray("pitches") ?: return emptyList()
-        return (0 until pitches.length()).mapNotNull { i ->
-            val pitch = pitches.optJSONObject(i) ?: return@mapNotNull null
-            when (val position = pitch.opt("position")) {
-                is Number -> Pitch(position.toInt(), null, morae(pitch, "nasal"), morae(pitch, "devoice"), tags(pitch))
-                is String -> Pitch(0, position, morae(pitch, "nasal"), morae(pitch, "devoice"), tags(pitch))
+        val list = data.optJSONArray(if (meta.mode == "pitch") "pitches" else "transcriptions") ?: return emptyList()
+        return (0 until list.length()).mapNotNull { i ->
+            val item = list.optJSONObject(i) ?: return@mapNotNull null
+            if (meta.mode == "ipa") return@mapNotNull item.optString("ipa").takeIf { it.isNotEmpty() }?.let { Transcription(it, tags(item)) }
+            when (val position = item.opt("position")) {
+                is Number -> Pitch(position.toInt(), null, morae(item, "nasal"), morae(item, "devoice"), tags(item))
+                is String -> Pitch(0, position, morae(item, "nasal"), morae(item, "devoice"), tags(item))
                 else -> null
             }
         }
@@ -73,8 +86,8 @@ object PitchAccent {
         else -> emptySet()
     }
 
-    private fun tags(pitch: JSONObject): List<String> =
-        pitch.optJSONArray("tags")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
+    private fun tags(item: JSONObject): List<String> =
+        item.optJSONArray("tags")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }.orEmpty()
 
     /**
      * [reading] with a line over its high morae that drops after the last one, as Yomitan's
@@ -144,11 +157,11 @@ object PitchAccent {
         append("</svg>")
     }
 
-    /** The forms [display] asks for of [pitch], in Yomitan's order */
-    fun html(reading: String, pitch: Pitch, display: Display): String = listOfNotNull(
-        text(reading, pitch).takeIf { display.text },
-        position(pitch).takeIf { display.position },
-        graph(reading, pitch).takeIf { display.graph },
+    /** The forms [forms] asks for of [pitch], in Yomitan's order */
+    fun html(reading: String, pitch: Pitch, forms: PitchForms): String = listOfNotNull(
+        text(reading, pitch).takeIf { forms.text },
+        position(pitch).takeIf { forms.position },
+        graph(reading, pitch).takeIf { forms.graph },
     ).joinToString("")
 
     /** Yomitan's pronunciation styles (anki-template-renderer's), for the results page */

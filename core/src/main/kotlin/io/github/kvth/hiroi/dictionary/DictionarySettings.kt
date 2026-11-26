@@ -1,6 +1,6 @@
 package io.github.kvth.hiroi.dictionary
 
-import io.github.kvth.hiroi.anki.PitchAccent
+import io.github.kvth.hiroi.anki.Pronunciations
 import io.github.kvth.hiroi.settings.KeyValueStore
 import org.json.JSONObject
 
@@ -44,7 +44,7 @@ class DictionarySettings(private val prefs: KeyValueStore) {
         set(value) = prefs.edit().putBoolean("pitch_accent_graph", value).apply()
 
     /** The forms the results show pitch accents in */
-    fun pitchAccents() = PitchAccent.Display(pitchAccentText, pitchAccentPosition, pitchAccentGraph)
+    fun pitchAccents() = Pronunciations.PitchForms(pitchAccentText, pitchAccentPosition, pitchAccentGraph)
 
     /** Yomitan's "Result grouping mode" (see [Grouping]); Yomitan's default groups term-reading pairs. */
     var resultGrouping: String

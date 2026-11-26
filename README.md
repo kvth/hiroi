@@ -59,7 +59,7 @@ The order of the dictionaries is their priority, as in Yomitan: results show the
 **How lookups stay fast**: every dictionary file has a table of keys, one per spelling and reading of a term, so a lookup finds the terms for all the forms it tries (as written, as hiragana, deinflected) with one probe each. Definitions are a table of their own: a lookup first reads the small rest of the matching entries, filters them by part of speech and sorts them, and only then reads the definitions of the results it shows. A lookup only searches the dictionaries that have what it needs (terms, frequencies, kanji), and in each only the forms no longer than its longest key, as JL does; the list of dictionaries stays in memory. Importing parses the banks on several threads while one writes them, without a journal, and makes the indexes at the end. Dictionaries imported by earlier versions of Hiroi (before they had files of their own, or while their list was in SQLite) need importing again.
 
 Results look like Yomitan's popup:
-- the headword with furigana, then the inflections it went through (« causative « -た: tap one for what it means, as Yomitan describes it), then tags for Anki status, frequencies and the word's kanji (tap to open them), then the pitch accents (see [Pitch accents](#pitch-accents)),
+- the headword with furigana, then the inflections it went through (« causative « -た: tap one for what it means, as Yomitan describes it), then tags for Anki status, frequencies and the word's kanji (tap to open them), then the pronunciations: pitch accents and IPA (see [Pronunciations](#pronunciations)),
 - the definitions, numbered and labelled with their dictionary, styled by the dictionary's own `styles.css` as in Yomitan (Jitendex's coloured labels and example-sentence boxes, for instance), with the dictionary's images.
 
 The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.
@@ -115,14 +115,16 @@ node scripts/update-yomitan-transforms.mjs 26.11.2.0
 
 Frequency lists (JPDB, BCCWJ, Innocent Corpus, …) show as a tag per list, with all of a list's values for the reading (`JPDB 1234, 5678㋕`), on words and, from `kanji_meta_bank` files, on kanji. With **Average frequencies** on, they're compressed into one *Average* tag, the harmonic mean of each list's lowest value, as Yomitan's option of that name does. Lists of occurrence counts are left out of the mean.
 
-### Pitch accents
+### Pronunciations
 
-Pitch accent dictionaries (Kanjium, NHK, …) show as Yomitan shows them: a line per dictionary for the word's reading, its tag and then each of its pitch accents, with that pitch accent's own tags. *Results → Pitch accents* has Yomitan's three forms, alone or together:
+Pitch accent dictionaries (Kanjium, NHK, …) and IPA dictionaries show as Yomitan shows them: a line per dictionary for the word's reading, its tag and then each of its pronunciations, with that pronunciation's own tags (東京, 名, …). IPA shows as the dictionary writes it, `[to̞do̞kɯ̟]`.
+
+For pitch accents, *Results → Pitch accents* has Yomitan's three forms, alone or together:
 - **downstep notation** (on by default): the reading with a line over its high morae that drops where the pitch does. A nasal mora gets a small circle and its kana loses its dakuten (か゚), and a devoiced one gets a dotted circle, when the dictionary says so;
 - **position notation** (on by default): where the pitch drops, as `[2]`; `[0]` is heiban;
 - **graph** (off by default): a dot per mora, high or low, and a triangle on a dashed line for the particle after the word. The last high mora before a drop is a ringed dot.
 
-They're drawn with Yomitan's own markup and styles. Dictionaries that give a pattern of H and L per mora instead of a position work too. With all three off, the results show no pitch accents.
+They're drawn with Yomitan's own markup and styles. Dictionaries that give a pattern of H and L per mora instead of a position work too. With all three off, the results show no pitch accents. These options are only for pitch accents: IPA always shows, as in Yomitan.
 
 **Result sorting** works like Yomitan's: results are sorted by how much of the text they match, then whether they needed the text read as hiragana, then the number of conjugation steps, then whether the headword is spelled as matched. After that comes the chosen frequency list, then dictionary order, then the entries' scores. A frequency list sorts in one of two ways:
 - lower values first, for ranks;

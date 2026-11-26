@@ -2,7 +2,7 @@ package io.github.kvth.hiroi
 
 import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.anki.Html
-import io.github.kvth.hiroi.anki.PitchAccent
+import io.github.kvth.hiroi.anki.Pronunciations
 import io.github.kvth.hiroi.anki.StructuredHtml
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
 import io.github.kvth.hiroi.dictionary.KanjiEntry
@@ -28,7 +28,7 @@ class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null) 
 
 /**
  * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana, tags for
- * inflection, Anki and frequency, the pitch accents, then the numbered definitions with their dictionary,
+ * inflection, Anki and frequency, the pronunciations (pitch accents, IPA), then the numbered definitions with their dictionary,
  * styled by the dictionary's own styles.css. What's tapped goes to Hiroi as a message ([SCRIPT]'s
  * hiroi(), which [LookupSession.handle] takes): "＋ Anki" buttons send {type: "addCard", index}.
  */
@@ -74,7 +74,7 @@ class ResultsHtml(
         media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
         audio: Boolean = false,
         tabs: Tabs? = null,
-        pitchAccents: PitchAccent.Display = PitchAccent.Display(),
+        pitchAccents: Pronunciations.PitchForms = Pronunciations.PitchForms(),
     ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs, pitchAccents = pitchAccents).first()
 
     /**
@@ -109,7 +109,7 @@ class ResultsHtml(
         /** The tabs to choose from, if there's more than one ([Tabs.shown]) */
         tabs: Tabs? = null,
         /** The forms pitch accents are shown in */
-        private val pitchAccents: PitchAccent.Display = PitchAccent.Display(),
+        private val pitchAccents: Pronunciations.PitchForms = Pronunciations.PitchForms(),
     ) {
         private val tabs = tabs?.takeIf { it.shown }
 
@@ -294,26 +294,33 @@ class ResultsHtml(
             tags.kanjiTag(index, term)
             if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
             kanjiOf(index, term)
-            pitchAccents(term)
+            pronunciations(term)
             append("<ol class=\"definitions\" id=\"definitions$index\">")
         }
 
         /**
-         * [term]'s pitch accents for its reading in the forms [pitchAccents] asks for: a line per
-         * dictionary, its tag then each pitch accent with its own tags, as Yomitan's pronunciation groups.
+         * [term]'s pronunciations of its reading: a line per dictionary, its tag then each
+         * pronunciation with its own tags, as Yomitan's pronunciation groups. Pitch accents in the
+         * forms [pitchAccents] asks for (none without any), IPA as it is.
          */
-        private fun StringBuilder.pitchAccents(term: TermGroup) {
-            if (!pitchAccents.any) return
-            val groups = PitchAccent.groups(term).ifEmpty { return }
-            append("<ul class=\"pronunciation-group-list\" lang=\"ja\">")
+        private fun StringBuilder.pronunciations(term: TermGroup) {
+            val groups = Pronunciations.groups(term, pitches = pitchAccents.any).ifEmpty { return }
+            append("<ul class=\"pronunciation-group-list\">")
             for (group in groups) {
                 append("<li class=\"pronunciation-group\">")
                 tag("pitch", name(group.dictionary))
                 append("<ul class=\"pronunciation-list\">")
-                for (pitch in group.pitches) {
-                    append("<li class=\"pronunciation\">")
-                    for (label in pitch.tags) tag("label", label)
-                    append(PitchAccent.html(term.reading, pitch, pitchAccents)).append("</li>")
+                for (pronunciation in group.pronunciations) {
+                    when (pronunciation) {
+                        is Pronunciations.Pitch -> append("<li class=\"pronunciation\" data-pronunciation-type=\"pitch-accent\" lang=\"ja\">")
+                        is Pronunciations.Transcription -> append("<li class=\"pronunciation\" data-pronunciation-type=\"phonetic-transcription\">")
+                    }
+                    for (label in pronunciation.tags) tag("label", label)
+                    when (pronunciation) {
+                        is Pronunciations.Pitch -> append(Pronunciations.html(term.reading, pronunciation, pitchAccents))
+                        is Pronunciations.Transcription -> append("<span class=\"pronunciation-text-container\">").append(Html.escape(pronunciation.ipa)).append("</span>")
+                    }
+                    append("</li>")
                 }
                 append("</ul></li>")
             }
@@ -778,5 +785,5 @@ class ResultsHtml(
         .link { color: ${colors.accent}; text-decoration: underline; text-underline-offset: 2px; }
         .kanji table { margin-top: 6px; border-collapse: collapse; }
         .kanji th { padding-right: 10px; color: ${colors.secondary}; font-weight: normal; text-align: left; }
-    """.trimIndent() + "\n" + PitchAccent.CSS
+    """.trimIndent() + "\n" + Pronunciations.CSS
 }

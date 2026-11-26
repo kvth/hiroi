@@ -1,6 +1,6 @@
 package io.github.kvth.hiroi
 
-import io.github.kvth.hiroi.anki.PitchAccent
+import io.github.kvth.hiroi.anki.Pronunciations
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.ResultSection
@@ -48,12 +48,28 @@ class ResultsHtmlTest {
         assertTrue(html, "<span class=\"pronunciation-downstep-notation-number\">2</span>" in html)
         assertFalse(html, "<svg" in html)
         assertTrue(html, html.indexOf("<div class=\"tags\">") < html.indexOf("pronunciation-group-list\"") && html.indexOf("pronunciation-group-list\"") < html.indexOf("<ol class=\"definitions\""))
-        fun page(display: PitchAccent.Display) = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+        fun page(display: Pronunciations.PitchForms) = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
             .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false, pitchAccents = display)
-        val graph = page(PitchAccent.Display(text = false, position = false, graph = true))
+        val graph = page(Pronunciations.PitchForms(text = false, position = false, graph = true))
         assertTrue(graph, "<svg" in graph)
         assertFalse(graph, "<span class=\"pronunciation-text\">" in graph)
-        assertFalse("all three off: none", "pronunciation-group\"" in page(PitchAccent.Display(text = false, position = false, graph = false)))
+        assertFalse("all three off: none", "pronunciation-group\"" in page(Pronunciations.PitchForms(text = false, position = false, graph = false)))
+    }
+
+    @Test
+    fun showsTheIpaLikeYomitan() {
+        val ipa = TermMeta("届く", "ipa", """[{"reading":"とどく","transcriptions":[{"ipa":"[to̞do̞kɯ̟]","tags":["東京"]}]}]""", "Wiktionary IPA", 5)
+        fun page(forms: Pronunciations.PitchForms) = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+            .document(LookupResult(0, 6, listOf(term.copy(meta = term.meta + ipa)), emptyList()), null, emptyMap(), cards = false, pitchAccents = forms)
+        val shown = page(Pronunciations.PitchForms())
+        assertTrue(shown, "<li class=\"pronunciation-group\"><span class=\"tag pitch\"><span class=\"label\">Wiktionary IPA</span></span>" in shown)
+        assertTrue(shown, "<li class=\"pronunciation\" data-pronunciation-type=\"phonetic-transcription\"><span class=\"tag label\"><span class=\"label\">東京</span></span>" +
+            "<span class=\"pronunciation-text-container\">[to̞do̞kɯ̟]</span></li>" in shown)
+        assertTrue("after the pitch accents' dictionary", shown.indexOf(">NHK<") < shown.indexOf(">Wiktionary IPA<"))
+        // The pitch accent options are only for pitch accents
+        val noPitch = page(Pronunciations.PitchForms(text = false, position = false, graph = false))
+        assertTrue(noPitch, "[to̞do̞kɯ̟]" in noPitch)
+        assertFalse(noPitch, ">NHK<" in noPitch)
     }
 
     @Test
