@@ -2,7 +2,7 @@ package io.github.kvth.hiroi.anki
 
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import io.github.kvth.hiroi.dictionary.DictionaryStore
-import io.github.kvth.hiroi.dictionary.TagInfo
+import io.github.kvth.hiroi.dictionary.Tags
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
 import io.github.kvth.hiroi.japanese.Deinflector
@@ -39,7 +39,7 @@ class YomitanNoteData(
         // the others are related terms (their source is themselves).
         val headwords = term.headwords.mapIndexed { i, headword ->
             val entries = term.entries.filter { term.headwordIndex(it) == i }
-            val headwordTags = entries.groupBy { it.dictionary }.flatMap { (dictionary, list) -> tags(dictionary, list.flatMap { it.termTags.split(' ') }) }
+            val headwordTags = tags(entries.groupBy({ it.dictionary }, { it.termTags }).mapValues { (_, tags) -> tags.flatMap { it.split(' ') } })
             val source = if (headword.primary) {
                 JSONObject()
                     .put("originalText", term.source)
@@ -101,22 +101,18 @@ class YomitanNoteData(
             .put("frequencies", JSONArray(frequencies(term)))
     }
 
-    /** Tags as Yomitan expands them: what the tag bank says, sorted by order then name; unknown ones in "default". */
-    private fun tags(dictionary: String, names: List<String>): List<JSONObject> {
-        val wanted = names.filter { it.isNotBlank() }.distinct()
-        val known = store.findTags(dictionary, wanted).associateBy { it.name }
-        return wanted.map { known[it] ?: TagInfo(it, "default", 0, "", 0, dictionary) }
-            .sortedWith(compareBy<TagInfo> { it.order }.thenBy { it.name })
-            .map { tag ->
-                JSONObject()
-                    .put("name", tag.name)
-                    .put("category", tag.category.ifEmpty { "default" })
-                    .put("order", tag.order)
-                    .put("score", tag.score)
-                    .put("content", JSONArray(listOfNotNull(tag.notes.takeIf { it.isNotEmpty() })))
-                    .put("dictionaries", JSONArray().put(dictionary))
-                    .put("redundant", false)
-            }
+    /** Tags as Yomitan expands them ([Tags.expand]) */
+    private fun tags(dictionary: String, names: List<String>): List<JSONObject> = tags(mapOf(dictionary to names))
+
+    private fun tags(names: Map<String, List<String>>): List<JSONObject> = Tags.expand(store::findTags, names).map { tag ->
+        JSONObject()
+            .put("name", tag.name)
+            .put("category", tag.category)
+            .put("order", tag.order)
+            .put("score", tag.score)
+            .put("content", JSONArray(tag.notes))
+            .put("dictionaries", JSONArray(tag.dictionaries))
+            .put("redundant", false)
     }
 
     private fun base(meta: TermMeta, i: Int, headwordIndex: Int) = JSONObject()

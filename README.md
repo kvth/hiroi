@@ -59,7 +59,7 @@ The order of the dictionaries is their priority, as in Yomitan: results show the
 **How lookups stay fast**: every dictionary file has a table of keys, one per spelling and reading of a term, so a lookup finds the terms for all the forms it tries (as written, as hiragana, deinflected) with one probe each. Definitions are a table of their own: a lookup first reads the small rest of the matching entries, filters them by part of speech and sorts them, and only then reads the definitions of the results it shows. A lookup only searches the dictionaries that have what it needs (terms, frequencies, kanji), and in each only the forms no longer than its longest key, as JL does; the list of dictionaries stays in memory. Importing parses the banks on several threads while one writes them, without a journal, and makes the indexes at the end. Dictionaries imported by earlier versions of Hiroi (before they had files of their own, or while their list was in SQLite) need importing again.
 
 Results look like Yomitan's popup:
-- the headword with furigana, then the inflections it went through (« causative « -た: tap one for what it means, as Yomitan describes it), then tags for Anki status, frequencies and the word's kanji (tap to open them), then the pronunciations: pitch accents and IPA (see [Pronunciations](#pronunciations)),
+- the headword with furigana and its tags (★, *rarely used form*, …), then the inflections it went through (« causative « -た: tap one for what it means, as Yomitan describes it), then tags for Anki status, frequencies and the word's kanji (tap to open them), then the pronunciations: pitch accents and IPA (see [Pronunciations](#pronunciations)),
 - the definitions, numbered and labelled with their dictionary, styled by the dictionary's own `styles.css` as in Yomitan (Jitendex's coloured labels and example-sentence boxes, for instance), with the dictionary's images.
 
 The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.
@@ -140,7 +140,7 @@ Choosing a list picks the way from its `index.json` (`frequencyMode`: `rank-base
 
 A result can then have several headwords. Definitions for only some of them are marked "… only", and a definition repeated for several headwords is shown once. Anki cards get the result as Yomitan would make it in that mode (`{expression}`, `{reading}`, `{furigana}` and the glossary's "(… only)"). As in Yomitan, the primary dictionary needs to be turned on; Hiroi doesn't use a turned-off dictionary only for grouping.
 
-Tag banks are only used for Anki cards so far; the results show tags by their name.
+Tags (the headword's, the definitions', the pronunciations' and the kanji's) show as in Yomitan, with what the dictionary's tag bank says about them. Each has its category's colour (part of speech, popular, archaism, …). Tapping one shows its notes at the bottom of the results, as Yomitan's tag notification does (★: *high priority entry*); a tag without notes shows its name. A headword tag that's only for some of a result's headwords also names those. Dictionaries imported before tag banks were supported need importing again to get their tags' categories and notes.
 
 ## Search
 

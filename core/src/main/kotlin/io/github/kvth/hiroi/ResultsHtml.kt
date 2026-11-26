@@ -9,6 +9,8 @@ import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Meanings
 import io.github.kvth.hiroi.dictionary.ResultTabs
+import io.github.kvth.hiroi.dictionary.TagInfo
+import io.github.kvth.hiroi.dictionary.Tags
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
@@ -27,8 +29,8 @@ class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null) 
 }
 
 /**
- * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana, tags for
- * inflection, Anki and frequency, the pronunciations (pitch accents, IPA), then the numbered definitions with their dictionary,
+ * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana and its tags,
+ * the inflections, tags for Anki and frequency, the pronunciations (pitch accents, IPA), then the numbered definitions with their dictionary,
  * styled by the dictionary's own styles.css. What's tapped goes to Hiroi as a message ([SCRIPT]'s
  * hiroi(), which [LookupSession.handle] takes): "＋ Anki" buttons send {type: "addCard", index}.
  */
@@ -75,7 +77,8 @@ class ResultsHtml(
         audio: Boolean = false,
         tabs: Tabs? = null,
         pitchAccents: Pronunciations.PitchForms = Pronunciations.PitchForms(),
-    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs, pitchAccents = pitchAccents).first()
+        tags: (dictionary: String, names: Collection<String>) -> List<TagInfo> = { _, _ -> emptyList() },
+    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs, pitchAccents = pitchAccents, findTags = tags).first()
 
     /**
      * An empty results page that stays loaded: [Page.show] shows each result in it, so a lookup
@@ -110,6 +113,8 @@ class ResultsHtml(
         tabs: Tabs? = null,
         /** The forms pitch accents are shown in */
         private val pitchAccents: Pronunciations.PitchForms = Pronunciations.PitchForms(),
+        /** What a dictionary's tags mean, from its tag bank ([io.github.kvth.hiroi.dictionary.DictionaryStore.findTags]) */
+        private val findTags: (dictionary: String, names: Collection<String>) -> List<TagInfo> = { _, _ -> emptyList() },
     ) {
         private val tabs = tabs?.takeIf { it.shown }
 
@@ -241,7 +246,9 @@ class ResultsHtml(
                 definition = 0
             }
             // The kanji of the text: in 漢字 too, unless a word's kanji there show it already
-            for (kanji in result.kanji) kanji(kanji, frequencies, if (tabs?.kanji == true && kanji.character !in wordKanji) ResultTabs.KANJI else "")
+            for (kanji in result.kanji) {
+                kanji(kanji, Tags.expand(findTags, kanji.dictionary, kanji.tags.split(' ')), frequencies, if (tabs?.kanji == true && kanji.character !in wordKanji) ResultTabs.KANJI else "")
+            }
             complete = true
         }
 
@@ -280,6 +287,7 @@ class ResultsHtml(
             append(">Open in Anki</button>")
             if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"hiroi({type: 'addCard', index: $index})\">＋ Anki</button>")
             append("</div></div>")
+            headwordTags(term)
             if (term.inflections.isNotEmpty()) inflections(index, term.inflections)
 
             val tags = StringBuilder()
@@ -299,6 +307,30 @@ class ResultsHtml(
         }
 
         /**
+         * The tags of [term]'s headwords, from their entries' term tags, as Yomitan groups them
+         * (groupTermTags): a tag for only some of the headwords says which they are when tapped.
+         */
+        private fun StringBuilder.headwordTags(term: TermGroup) {
+            val byHeadword = term.headwords.indices.map { i ->
+                val names = term.entries.filter { term.headwordIndex(it) == i }.groupBy({ it.dictionary }, { it.termTags })
+                Tags.expand(findTags, names.mapValues { (_, tags) -> tags.flatMap { it.split(' ') } })
+            }
+            val grouped = LinkedHashMap<Tags.Tag, MutableList<Int>>()
+            byHeadword.forEachIndexed { i, tags -> for (tag in tags) grouped.getOrPut(tag) { mutableListOf() } += i }
+            if (grouped.isEmpty()) return
+            append("<div class=\"tags headword-tags\">")
+            for ((tag, indices) in grouped) {
+                val only = if (indices.size < term.headwords.size) {
+                    indices.joinToString("") { "<span class=\"tag-details-disambiguation\">" + Furigana.html(Furigana.distribute(term.headwords[it].expression, term.headwords[it].reading)) + "</span>" }
+                } else {
+                    null
+                }
+                tag(tag, only)
+            }
+            append("</div>")
+        }
+
+        /**
          * [term]'s pronunciations of its reading: a line per dictionary, its tag then each
          * pronunciation with its own tags, as Yomitan's pronunciation groups. Pitch accents in the
          * forms [pitchAccents] asks for (none without any), IPA as it is.
@@ -315,7 +347,7 @@ class ResultsHtml(
                         is Pronunciations.Pitch -> append("<li class=\"pronunciation\" data-pronunciation-type=\"pitch-accent\" lang=\"ja\">")
                         is Pronunciations.Transcription -> append("<li class=\"pronunciation\" data-pronunciation-type=\"phonetic-transcription\">")
                     }
-                    for (label in pronunciation.tags) tag("label", label)
+                    for (tag in Tags.expand(findTags, group.dictionary, pronunciation.tags)) tag(tag)
                     when (pronunciation) {
                         is Pronunciations.Pitch -> append(Pronunciations.html(term.reading, pronunciation, pitchAccents))
                         is Pronunciations.Transcription -> append("<span class=\"pronunciation-text-container\">").append(Html.escape(pronunciation.ipa)).append("</span>")
@@ -342,7 +374,7 @@ class ResultsHtml(
                 } else {
                     null
                 }
-                definition(item.entry, media, only, tabOf(item.entry.dictionary))
+                definition(item.entry, Tags.expand(findTags, item.entry.dictionary, item.entry.definitionTags.split(' ')), media, only, tabOf(item.entry.dictionary))
                 used += item.entry.dictionary
                 definition++
             }
@@ -459,13 +491,13 @@ class ResultsHtml(
         }
     }
 
-    /** A definition of [entry]; [tab]: its dictionary's, if the page has tabs */
-    private fun StringBuilder.definition(entry: TermEntry, media: (String, String) -> DictionaryMedia?, only: String? = null, tab: String? = null) {
+    /** A definition of [entry] with its [tags]; [tab]: its dictionary's, if the page has tabs */
+    private fun StringBuilder.definition(entry: TermEntry, tags: List<Tags.Tag>, media: (String, String) -> DictionaryMedia?, only: String? = null, tab: String? = null) {
         append("<li")
         if (tab != null) append(" data-tab=\"").append(Html.escape(tab)).append('"')
         append("><div class=\"definition-tags\">")
         if (only != null) tag("only", only)
-        for (tag in entry.definitionTags.split(' ').filter { it.isNotBlank() }) tag("label", tag)
+        for (tag in tags) tag(tag)
         tag("dictionary", name(entry.dictionary))
         append("</div><div class=\"glossary\" lang=\"en\" data-dictionary=\"").append(Html.escape(entry.dictionary)).append("\">")
         val items = JSONArray(entry.glossary).let { array -> (0 until array.length()).map { StructuredHtml.item(array.get(it)) { path -> media(entry.dictionary, path) } } }
@@ -491,12 +523,13 @@ class ResultsHtml(
         for ((dictionary, values) in byDictionary) tag("frequency", name(dictionary), Html.escape(values.map { it.display }.distinct().joinToString(", ")))
     }
 
-    /** A kanji of the text; [tabs]: the tabs it shows in besides All, if the page has tabs */
-    private fun StringBuilder.kanji(kanji: KanjiEntry, frequencies: Frequencies, tabs: String? = null) {
+    /** A kanji of the text with its [tags]; [tabs]: the tabs it shows in besides All, if the page has tabs */
+    private fun StringBuilder.kanji(kanji: KanjiEntry, tags: List<Tags.Tag>, frequencies: Frequencies, tabs: String? = null) {
         append("<div class=\"entry kanji\"")
         if (tabs != null) append(" data-tabs=\"").append(Html.escape(tabs)).append('"')
         append("><div class=\"header\"><span class=\"character\" lang=\"ja\">")
         append(Html.escape(kanji.character)).append("</span></div><div class=\"tags\">")
+        for (tag in tags) tag(tag)
         // A kanji no dictionary has (only its parts are known) has no dictionary to name
         if (kanji.dictionary.isNotEmpty()) tag("dictionary", name(kanji.dictionary))
         frequencyTags(kanji.frequencies, frequencies)
@@ -549,6 +582,20 @@ class ResultsHtml(
         append("><span class=\"label\">").append(Html.escape(label)).append("</span>")
         if (valueHtml != null) append("<span class=\"value\">").append(valueHtml).append("</span>")
         append("</span>")
+    }
+
+    /**
+     * A tag from a tag bank ([Tags]), coloured by its category as Yomitan colours it. Tapping it
+     * shows its notes, or its name without any, at the bottom of the page (showTag), as Yomitan's
+     * tag notification; with [headwordsHtml], the headwords it's for when it's only for some.
+     */
+    private fun StringBuilder.tag(tag: Tags.Tag, headwordsHtml: String? = null) {
+        val notes = tag.notes.joinToString("\n")
+        append("<span class=\"tag label\" data-category=\"").append(Html.escape(tag.category)).append('"')
+        if (notes.isNotEmpty()) append(" title=\"").append(Html.escape(notes)).append('"')
+        append(" data-details=\"").append(Html.escape(notes.ifEmpty { tag.name })).append('"')
+        if (headwordsHtml != null) append(" data-headwords=\"").append(Html.escape(headwordsHtml)).append('"')
+        append(" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">").append(Html.escape(tag.name)).append("</span></span>")
     }
 
     private companion object {
@@ -654,6 +701,13 @@ class ResultsHtml(
             append("box.parentNode.querySelectorAll('.inflection-info').forEach(function (b) { b.hidden = true; }); ")
             append("box.hidden = !show; step.setAttribute('aria-expanded', show); }")
             append("function addResults(html) { document.body.insertAdjacentHTML('beforeend', html); }")
+            // A tag's notes (and the headwords it's for, if only some) at the bottom of the page, as Yomitan's tag notification; another tag's replace them
+            append("function showTag(t) { var n = document.getElementById('tag-notification'); ")
+            append("if (!n) { n = document.createElement('div'); n.id = 'tag-notification'; n.className = 'footer-notification'; n.setAttribute('role', 'status'); ")
+            append("n.innerHTML = '<div class=\"footer-notification-body\"><div class=\"tag-details\"></div><div class=\"tag-details-disambiguation-list\"></div></div>' + ")
+            append("'<button class=\"footer-notification-close\" aria-label=\"Close\" onclick=\"closeTag()\">✕</button>'; document.body.appendChild(n); } ")
+            append("n.querySelector('.tag-details').textContent = t.dataset.details; n.querySelector('.tag-details-disambiguation-list').innerHTML = t.dataset.headwords || ''; }")
+            append("function closeTag() { var n = document.getElementById('tag-notification'); if (n) n.remove(); }")
             // The 🔊 button while its audio loads, and when there's none
             append("function audioState(i, state) { var b = document.getElementById('audio' + i); if (b) b.className = 'audio ' + state; }")
             // On a touch screen the button takes its touches itself: a tap plays, a long press opens the
@@ -668,7 +722,7 @@ class ResultsHtml(
             append("if (h) h.closest('.tile').classList.remove('open'); });")
             // Results looked up from a definition (Yomitan's nested popups) go in place of these, which wait on a stack to come back
             append("var stack = [];")
-            append("function pushResults() { stack.push({html: document.body.innerHTML, y: window.scrollY}); }")
+            append("function pushResults() { closeTag(); stack.push({html: document.body.innerHTML, y: window.scrollY}); }")
             append("function popResults() { var s = stack.pop(); if (!s) return; document.body.innerHTML = s.html; window.scrollTo(0, s.y); }")
             append("function clearStack() { stack = []; }")
             append("function backBar(label) { var b = document.createElement('div'); b.className = 'back'; b.setAttribute('role', 'button'); ")
@@ -763,6 +817,23 @@ class ResultsHtml(
         .tag.dictionary .label { background: #9057ad; }
         .tag.frequency .label { background: #489148; }
         .tag.pitch .label { background: #6640be; }
+        /* Tag-bank tags by their category, in Yomitan's colours */
+        .tag[data-category="name"] .label { background: #992a67; }
+        .tag[data-category="expression"] .label { background: #b07f39; }
+        .tag[data-category="popular"] .label { background: #025caa; }
+        .tag[data-category="frequent"] .label { background: #4490a7; }
+        .tag[data-category="archaism"] .label { background: #b04340; }
+        .tag[data-category="dictionary"] .label { background: #9057ad; }
+        .tag[data-category="frequency"] .label { background: #489148; }
+        .tag[data-category="partOfSpeech"] .label { background: #565656; }
+        .tag[data-category="pronunciation-dictionary"] .label { background: #6640be; }
+        .tag[data-details] { cursor: pointer; }
+        .footer-notification { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 2; display: flex; align-items: flex-start;
+            max-height: calc(1em + 4 * 1.45em); overflow: auto; border: 1px solid ${colors.secondary}40; border-radius: 6px;
+            background: ${colors.background.takeIf { it != "transparent" } ?: "white"}; box-shadow: 0 2px 4px #0000004d; font-size: 0.9em; }
+        .footer-notification-body { flex: 1 1 auto; padding: 0.5em 0.75em; white-space: pre-line; }
+        .footer-notification-close { position: sticky; top: 0; flex: none; padding: 0.5em 0.75em; border: none; background: none; color: inherit; font: inherit; }
+        .tag-details-disambiguation:not(:last-child)::after { content: ", "; }
         .pronunciation-group-list, .pronunciation-list { margin: 0; padding: 0; list-style: none; }
         .pronunciation-group-list { margin-top: 4px; }
         .pronunciation-group { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }

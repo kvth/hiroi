@@ -1,9 +1,11 @@
 package io.github.kvth.hiroi
 
 import io.github.kvth.hiroi.anki.Pronunciations
+import io.github.kvth.hiroi.dictionary.Headword
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.ResultSection
+import io.github.kvth.hiroi.dictionary.TagInfo
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
@@ -63,7 +65,8 @@ class ResultsHtmlTest {
             .document(LookupResult(0, 6, listOf(term.copy(meta = term.meta + ipa)), emptyList()), null, emptyMap(), cards = false, pitchAccents = forms)
         val shown = page(Pronunciations.PitchForms())
         assertTrue(shown, "<li class=\"pronunciation-group\"><span class=\"tag pitch\"><span class=\"label\">Wiktionary IPA</span></span>" in shown)
-        assertTrue(shown, "<li class=\"pronunciation\" data-pronunciation-type=\"phonetic-transcription\"><span class=\"tag label\"><span class=\"label\">東京</span></span>" +
+        assertTrue(shown, "<li class=\"pronunciation\" data-pronunciation-type=\"phonetic-transcription\"><span class=\"tag label\" data-category=\"default\" data-details=\"東京\" " +
+            "role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">東京</span></span>" +
             "<span class=\"pronunciation-text-container\">[to̞do̞kɯ̟]</span></li>" in shown)
         assertTrue("after the pitch accents' dictionary", shown.indexOf(">NHK<") < shown.indexOf(">Wiktionary IPA<"))
         // The pitch accent options are only for pitch accents
@@ -210,10 +213,37 @@ class ResultsHtmlTest {
 
     @Test
     fun numbersDefinitionsWithTheirDictionary() {
-        assertTrue(html, "<span class=\"tag label\"><span class=\"label\">★</span></span><span class=\"tag dictionary\"><span class=\"label\">Jitendex</span></span>" in html)
+        assertTrue(html, ">★</span></span><span class=\"tag dictionary\"><span class=\"label\">Jitendex</span></span>" in html)
         assertTrue(html, "<ul><li>to reach</li><li>to arrive</li></ul>" in html)
         assertTrue("dictionary names are escaped", "JMdict &lt;b&gt;" in html)
         assertFalse(html, "JMdict <b>" in html)
+    }
+
+    @Test
+    fun coloursTagsByTheirCategoryAndShowsTheirNotesOnATap() {
+        val bank = mapOf(
+            "Jitendex" to listOf(TagInfo("★", "popular", -10, "high priority entry", 0), TagInfo("v5", "partOfSpeech", 0, "Godan verb", 0), TagInfo("ateji", "expression", 0, "ateji reading", 0)),
+            "NHK" to listOf(TagInfo("東京", "", 0, "Tokyo accent", 0)),
+        )
+        val grouped = term.copy(
+            headwords = listOf(Headword("届く", "とどく"), Headword("屆く", "とどく")),
+            entries = term.entries + TermEntry("屆く", "とどく", "", "v5", 0, "[\"to reach\"]", 0, "ateji", "Jitendex", 1),
+            meta = term.meta + TermMeta("届く", "ipa", """[{"reading":"とどく","transcriptions":[{"ipa":"[to̞do̞kɯ̟]","tags":["東京"]}]}]""", "NHK", 4),
+        )
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")).document(
+            LookupResult(0, 6, listOf(grouped), emptyList()), null, emptyMap(), cards = false,
+            tags = { dictionary, names -> bank[dictionary].orEmpty().filter { it.name in names } },
+        )
+        assertTrue(page, "<span class=\"tag label\" data-category=\"popular\" title=\"high priority entry\" data-details=\"high priority entry\" " +
+            "role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">★</span></span>" in page)
+        assertTrue("one with notes but no category is in default", "data-category=\"default\" title=\"Tokyo accent\"" in page)
+        // A headword's tag, only for 屆く: tapped, it says so
+        val headwordTags = page.substringAfter("<div class=\"tags headword-tags\">").substringBefore("</div>")
+        assertTrue(headwordTags, "data-category=\"expression\"" in headwordTags)
+        assertTrue(headwordTags, "data-headwords=\"&lt;span class=&quot;tag-details-disambiguation&quot;&gt;&lt;ruby&gt;屆" in headwordTags)
+        assertTrue("before the inflections", page.indexOf("headword-tags") < page.indexOf("<div class=\"inflections\">"))
+        assertTrue(page, ".tag[data-category=\"popular\"] .label { background: #025caa; }" in page)
+        assertTrue(page, "function showTag(t)" in page)
     }
 
     private fun frequencyTags(average: Boolean, occurrenceBased: Set<String> = emptySet()): List<String> {
