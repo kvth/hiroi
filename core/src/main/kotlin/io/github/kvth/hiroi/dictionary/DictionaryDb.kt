@@ -43,12 +43,6 @@ class DictionaryDb(
      */
     private class Entry(val info: DictionaryInfo, val position: Int, val file: String, val styles: String?, val summary: String?)
 
-    /**
-     * A dictionary of a list kept elsewhere before (in SQLite, as Hiroi on Android did), for
-     * [writeList]; [file] is its file's name in the dictionaries' folder.
-     */
-    class Listed(val info: DictionaryInfo, val file: String, val styles: String?, val index: String?)
-
     @Volatile
     private var cached: List<Entry>? = null
 
@@ -696,9 +690,5 @@ class DictionaryDb(
                 Entry(info, i + 1, o.getString("file"), string("styles"), string("index"))
             }
         }
-
-        /** Writes [dictionaries], in their order, as the list at [list] for a [DictionaryDb] to read */
-        fun writeList(list: File, dictionaries: List<Listed>) =
-            save(list, dictionaries.mapIndexed { i, d -> Entry(d.info, i + 1, d.file, d.styles, d.index) })
     }
 }

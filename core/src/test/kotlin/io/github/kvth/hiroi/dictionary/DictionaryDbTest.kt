@@ -107,18 +107,4 @@ class DictionaryDbTest {
         assertEquals(listOf("A"), db().titles())
         assertEquals(1, folder.list()!!.size)
     }
-
-    @Test
-    fun readsAListWrittenFromElsewhere() {
-        val db = db()
-        val a = db.import(zip("A", "犬" to "dog", styles = ".a{}")) {}
-        val file = folder.list()!!.single()
-        list.delete()
-        // As the phone's SQLite list is carried over
-        DictionaryDb.writeList(list, listOf(DictionaryDb.Listed(a.copy(enabled = false), file, ".a{}", """{"title":"A"}""")))
-        val again = db()
-        assertEquals(listOf(a.copy(enabled = false)), again.dictionaries())
-        assertEquals("""{"title":"A"}""", again.summary(a.id))
-        assertEquals(mapOf("A" to ".a{}"), again.styles())
-    }
 }
