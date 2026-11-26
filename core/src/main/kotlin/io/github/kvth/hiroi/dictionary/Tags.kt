@@ -7,8 +7,19 @@ package io.github.kvth.hiroi.dictionary
  * merged into one, then all sorted by order and name.
  */
 object Tags {
-    /** A tag as Yomitan's results and Anki templates have it: [notes] from each of its [dictionaries] that has some */
-    data class Tag(val name: String, val category: String, val order: Int, val score: Int, val notes: List<String>, val dictionaries: List<String>)
+    /**
+     * A tag as Yomitan's results and Anki templates have it: [notes] from each of its
+     * [dictionaries] that has some; [redundant] if it repeats the previous definition's ([flagRedundant]).
+     */
+    data class Tag(
+        val name: String,
+        val category: String,
+        val order: Int,
+        val score: Int,
+        val notes: List<String>,
+        val dictionaries: List<String>,
+        val redundant: Boolean = false,
+    )
 
     /** The tags [names] of [dictionary]; [find] is [DictionaryStore.findTags] */
     fun expand(find: (dictionary: String, names: Collection<String>) -> List<TagInfo>, dictionary: String, names: List<String>): List<Tag> =
@@ -41,6 +52,32 @@ object Tags {
         }
         return tags.sortedWith(compareBy<Tag> { it.order }.thenBy { it.name })
     }
+
+    /**
+     * The tags of each definition (its dictionary and tags, in their order) with those that repeat
+     * the previous definition's marked [Tag.redundant], as Yomitan's translator marks them
+     * (_flagRedundantDefinitionTags): its part-of-speech tags if they're the previous
+     * definition's of the same dictionary. "Compact tags" leaves those out.
+     */
+    fun flagRedundant(definitions: List<Pair<String, List<Tag>>>): List<List<Tag>> {
+        var lastDictionary: String? = null
+        var lastPartOfSpeech: List<String>? = null
+        return definitions.map { (dictionary, tags) ->
+            val partOfSpeech = tags.filter { it.category == PART_OF_SPEECH }.map { it.name }.sorted()
+            if (dictionary != lastDictionary) {
+                lastDictionary = dictionary
+                lastPartOfSpeech = null
+            }
+            if (partOfSpeech == lastPartOfSpeech) {
+                tags.map { if (it.category == PART_OF_SPEECH) it.copy(redundant = true) else it }
+            } else {
+                lastPartOfSpeech = partOfSpeech
+                tags
+            }
+        }
+    }
+
+    private const val PART_OF_SPEECH = "partOfSpeech"
 
     /** What Yomitan looks a tag up by: its name up to a colon */
     private fun base(name: String) = name.substringBefore(':')

@@ -1,6 +1,7 @@
 package io.github.kvth.hiroi
 
 import io.github.kvth.hiroi.anki.Pronunciations
+import io.github.kvth.hiroi.dictionary.DictionarySummary
 import io.github.kvth.hiroi.dictionary.Headword
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
@@ -36,8 +37,8 @@ class ResultsHtmlTest {
         assertTrue(html, "<span class=\"headword\" lang=\"ja\"><span class=\"word\"><ruby>届<rt>とど</rt></ruby>く</span></span>" in html)
         assertTrue(html, ">negative</span> « <span" in html) // the inflections, each tappable (explainsTheInflectionsOnATap)
         assertTrue(html, "<span class=\"tag anki\" id=\"anki0\"><span class=\"label\">✓ in Anki</span></span>" in html)
-        assertTrue(html, "<span class=\"tag frequency\"><span class=\"label\">JPDB</span><span class=\"value\">2412</span></span>" in html)
-        assertTrue(html, "class=\"tag pitch\"><span class=\"label\">NHK</span>" in html)
+        assertTrue(html, "<span class=\"tag frequency\" data-details=\"JPDB\" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">JPDB</span><span class=\"value\">2412</span></span>" in html)
+        assertTrue(html, "class=\"tag pitch\" data-details=\"NHK\" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">NHK</span>" in html)
         assertTrue(html, "onclick=\"hiroi({type: 'addCard', index: 0})\"" in html)
         assertTrue("an existing note can be opened", "<button class=\"card\" id=\"open0\" onclick=\"hiroi({type: 'openNote', index: 0})\">Open in Anki</button>" in html)
     }
@@ -45,7 +46,7 @@ class ResultsHtmlTest {
     @Test
     fun showsPitchAccentsInTheFormsChosen() {
         // A line per dictionary under the tags, by default the reading with its line and the position
-        assertTrue(html, "<li class=\"pronunciation-group\"><span class=\"tag pitch\"><span class=\"label\">NHK</span></span><ul class=\"pronunciation-list\">" in html)
+        assertTrue(html, "<li class=\"pronunciation-group\"><span class=\"tag pitch\" data-details=\"NHK\" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">NHK</span></span><ul class=\"pronunciation-list\">" in html)
         assertTrue(html, "<span class=\"pronunciation-text\">" in html)
         assertTrue(html, "<span class=\"pronunciation-downstep-notation-number\">2</span>" in html)
         assertFalse(html, "<svg" in html)
@@ -64,7 +65,7 @@ class ResultsHtmlTest {
         fun page(forms: Pronunciations.PitchForms) = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
             .document(LookupResult(0, 6, listOf(term.copy(meta = term.meta + ipa)), emptyList()), null, emptyMap(), cards = false, pitchAccents = forms)
         val shown = page(Pronunciations.PitchForms())
-        assertTrue(shown, "<li class=\"pronunciation-group\"><span class=\"tag pitch\"><span class=\"label\">Wiktionary IPA</span></span>" in shown)
+        assertTrue(shown, "<li class=\"pronunciation-group\"><span class=\"tag pitch\" data-details=\"Wiktionary IPA\" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">Wiktionary IPA</span></span>" in shown)
         assertTrue(shown, "<li class=\"pronunciation\" data-pronunciation-type=\"phonetic-transcription\"><span class=\"tag label\" data-category=\"default\" data-details=\"東京\" " +
             "role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">東京</span></span>" +
             "<span class=\"pronunciation-text-container\">[to̞do̞kɯ̟]</span></li>" in shown)
@@ -79,7 +80,9 @@ class ResultsHtmlTest {
     fun namesDictionariesByTheNamesTheyWereGiven() {
         val named = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"), aliases = { mapOf("JMdict <b>" to "JMdict", "JPDB" to "Frequency") })
             .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false)
-        assertTrue(named, "<span class=\"tag dictionary\"><span class=\"label\">JMdict</span></span>" in named)
+        // Tapped, its tag still says its title, as in Yomitan
+        assertTrue(named, "<span class=\"tag dictionary\" title=\"JMdict &lt;b&gt;\" data-details=\"JMdict &lt;b&gt;\" role=\"button\" tabindex=\"0\" " +
+            "onclick=\"showTag(this)\"><span class=\"label\">JMdict</span></span>" in named)
         assertTrue(named, "<span class=\"label\">Frequency</span><span class=\"value\">2412</span>" in named)
         // Its styles still go by its title
         assertTrue(named, "data-dictionary=\"JMdict &lt;b&gt;\"" in named)
@@ -213,7 +216,7 @@ class ResultsHtmlTest {
 
     @Test
     fun numbersDefinitionsWithTheirDictionary() {
-        assertTrue(html, ">★</span></span><span class=\"tag dictionary\"><span class=\"label\">Jitendex</span></span>" in html)
+        assertTrue(html, ">★</span></span><span class=\"tag dictionary\" title=\"Jitendex\" data-details=\"Jitendex\" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"><span class=\"label\">Jitendex</span></span>" in html)
         assertTrue(html, "<ul><li>to reach</li><li>to arrive</li></ul>" in html)
         assertTrue("dictionary names are escaped", "JMdict &lt;b&gt;" in html)
         assertFalse(html, "JMdict <b>" in html)
@@ -246,6 +249,47 @@ class ResultsHtmlTest {
         assertTrue(page, "function showTag(t)" in page)
     }
 
+    @Test
+    fun saysWhatADictionaryIsWhenItsTagIsTapped() {
+        val summaries = mapOf(
+            "Jitendex" to DictionarySummary("Jitendex", "2026.08.11", "Stephen Kraus", "Japanese-English dictionary", "https://jitendex.org", terms = 290000),
+            "JPDB" to DictionarySummary("JPDB", "1", frequencies = 600000),
+            "KANJIDIC" to DictionarySummary("KANJIDIC", "1", kanji = 13108),
+        )
+        val kanji = KanjiEntry("届", "カイ", "とど.く", "", listOf("deliver"), "KANJIDIC")
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"), summaries = { summaries })
+            .document(LookupResult(0, 6, listOf(term), listOf(kanji)), null, emptyMap(), cards = false)
+        val jitendex = "Jitendex\nrev.2026.08.11\nAuthor: Stephen Kraus\nDescription: Japanese-English dictionary\nURL: https://jitendex.org\nTerm Count: 290000"
+        assertTrue(page, "<span class=\"tag dictionary\" title=\"$jitendex\" data-details=\"$jitendex\"" in page)
+        assertTrue(page, "data-details=\"JPDB\nDictionary size: 600000 terms\"" in page)
+        // A kanji's dictionary, without its revision, with its number of kanji
+        assertTrue(page, "data-details=\"KANJIDIC\nKanji Count: 13108\"" in page)
+        // One with no summary: its title
+        assertTrue(page, "data-details=\"JMdict &lt;b&gt;\"" in page)
+    }
+
+    @Test
+    fun leavesOutTagsThatRepeatThePreviousDefinitionsWithCompactTags() {
+        val bank = listOf(TagInfo("v5k", "partOfSpeech", 0, "Godan verb", 0), TagInfo("★", "popular", 0, "", 0))
+        val three = term.copy(
+            entries = listOf(
+                TermEntry("届く", "とどく", "★ v5k", "v5", 0, "[\"to reach\"]", 0, "", "Jitendex", 1),
+                TermEntry("届く", "とどく", "v5k", "v5", 0, "[\"to arrive\"]", 0, "", "Jitendex", 1),
+                TermEntry("届く", "とどく", "v5k", "v5", 0, "[\"to be delivered\"]", 0, "", "JMdict", 2),
+            ),
+        )
+        fun definitionTags(compact: Boolean): List<List<String>> = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+            .document(
+                LookupResult(0, 6, listOf(three), emptyList()), null, emptyMap(), cards = false,
+                tags = { _, names -> bank.filter { it.name in names } }, compactTags = compact,
+            )
+            .split("<div class=\"definition-tags\">").drop(1)
+            .map { Regex("<span class=\"label\">([^<]*)</span>").findAll(it.substringBefore("</div>")).map { m -> m.groupValues[1] }.toList() }
+        assertEquals(listOf(listOf("v5k", "★", "Jitendex"), listOf("v5k", "Jitendex"), listOf("v5k", "JMdict")), definitionTags(compact = false))
+        // The part of speech and dictionary the definition before has; another dictionary's start anew
+        assertEquals(listOf(listOf("v5k", "★", "Jitendex"), emptyList(), listOf("v5k", "JMdict")), definitionTags(compact = true))
+    }
+
     private fun frequencyTags(average: Boolean, occurrenceBased: Set<String> = emptySet()): List<String> {
         val meta = listOf(
             TermMeta("届く", "freq", """[{"reading":"とどく","frequency":120}]""", "JPDB", 3),
@@ -257,7 +301,7 @@ class ResultsHtmlTest {
             LookupResult(0, 2, listOf(term.copy(meta = meta)), emptyList()), null, emptyMap(), cards = false,
             frequencies = ResultsHtml.Frequencies(average, occurrenceBased),
         )
-        return Regex("<span class=\"tag frequency\"><span class=\"label\">([^<]*)</span><span class=\"value\">([^<]*)</span>")
+        return Regex("<span class=\"tag frequency\"[^>]*><span class=\"label\">([^<]*)</span><span class=\"value\">([^<]*)</span>")
             .findAll(html).map { "${it.groupValues[1]}: ${it.groupValues[2]}" }.toList()
     }
 

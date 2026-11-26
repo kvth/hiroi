@@ -5,6 +5,7 @@ import io.github.kvth.hiroi.anki.Html
 import io.github.kvth.hiroi.anki.Pronunciations
 import io.github.kvth.hiroi.anki.StructuredHtml
 import io.github.kvth.hiroi.dictionary.DictionaryMedia
+import io.github.kvth.hiroi.dictionary.DictionarySummary
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.Meanings
@@ -40,13 +41,42 @@ class ResultsHtml(
     private val aliases: () -> Map<String, String> = { emptyMap() },
     /** What kanji are built from, for their cards' "Parts" and "Used in"; null without */
     private val kanjiParts: () -> KanjiParts? = { null },
+    /** What the dictionaries' tags say about them when tapped, by title, read for each page */
+    private val summaries: () -> Map<String, DictionarySummary> = { emptyMap() },
 ) {
     /** The names of the page being made ([Page]) */
     @Volatile
     private var names: Map<String, String> = emptyMap()
 
+    /** The dictionaries' summaries for the page being made */
+    @Volatile
+    private var summaryOf: Map<String, DictionarySummary> = emptyMap()
+
     /** What dictionary [title] is called on the page */
     private fun name(title: String) = names[title] ?: title
+
+    /**
+     * What a definition's dictionary tag says when tapped, as Yomitan's: the dictionary's title,
+     * revision, author, description, address and number of terms; or, for a kanji's ([kanji]),
+     * all but the revision and the number of kanji instead. Just the title if it isn't known.
+     */
+    private fun dictionaryDetails(title: String, kanji: Boolean = false): String {
+        val summary = summaryOf[title] ?: return title
+        return listOfNotNull(
+            summary.title,
+            "rev.${summary.revision}".takeIf { !kanji },
+            summary.author.ifEmpty { null }?.let { "Author: $it" },
+            summary.description.ifEmpty { null }?.let { "Description: $it" },
+            summary.url.ifEmpty { null }?.let { "URL: $it" },
+            if (kanji) summary.kanji.takeIf { it > 0 }?.let { "Kanji Count: $it" } else summary.terms.takeIf { it > 0 }?.let { "Term Count: $it" },
+        ).joinToString("\n")
+    }
+
+    /** What a frequency list's tag says when tapped, as Yomitan's: its title and how many values it has */
+    private fun frequencyDetails(title: String, kanji: Boolean): String {
+        val summary = summaryOf[title] ?: return title
+        return "$title\nDictionary size: ${summary.frequencies} ${if (kanji) "kanji" else "terms"}"
+    }
 
     /** CSS colours from the app theme, so the results match the panel; [background] behind the tabs, which stay at the top. */
     data class Colors(val text: String, val secondary: String, val accent: String, val background: String = "transparent")
@@ -78,7 +108,8 @@ class ResultsHtml(
         tabs: Tabs? = null,
         pitchAccents: Pronunciations.PitchForms = Pronunciations.PitchForms(),
         tags: (dictionary: String, names: Collection<String>) -> List<TagInfo> = { _, _ -> emptyList() },
-    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs, pitchAccents = pitchAccents, findTags = tags).first()
+        compactTags: Boolean = false,
+    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs, pitchAccents = pitchAccents, findTags = tags, compactTags = compactTags).first()
 
     /**
      * An empty results page that stays loaded: [Page.show] shows each result in it, so a lookup
@@ -115,6 +146,8 @@ class ResultsHtml(
         private val pitchAccents: Pronunciations.PitchForms = Pronunciations.PitchForms(),
         /** What a dictionary's tags mean, from its tag bank ([io.github.kvth.hiroi.dictionary.DictionaryStore.findTags]) */
         private val findTags: (dictionary: String, names: Collection<String>) -> List<TagInfo> = { _, _ -> emptyList() },
+        /** Yomitan's "Compact tags": tags that repeat the previous definition's left out ([Tags.flagRedundant]) */
+        private val compactTags: Boolean = false,
     ) {
         private val tabs = tabs?.takeIf { it.shown }
 
@@ -130,7 +163,15 @@ class ResultsHtml(
 
         init {
             names = aliases()
+            summaryOf = summaries()
         }
+
+        /** The tags of the definitions of the result being made, marked where they repeat the previous definition's */
+        private var definitionTags: Pair<TermGroup, List<List<Tags.Tag>>>? = null
+
+        private fun definitionTags(term: TermGroup): List<List<Tags.Tag>> = definitionTags?.takeIf { it.first === term }?.second
+            ?: Tags.flagRedundant(term.definitions.map { (entry, _) -> entry.dictionary to Tags.expand(findTags, entry.dictionary, entry.definitionTags.split(' ')) })
+                .also { definitionTags = term to it }
 
         /** The result made next, and its next definition (0: the result isn't begun) */
         private var term = 0
@@ -340,7 +381,7 @@ class ResultsHtml(
             append("<ul class=\"pronunciation-group-list\">")
             for (group in groups) {
                 append("<li class=\"pronunciation-group\">")
-                tag("pitch", name(group.dictionary))
+                tag("pitch", name(group.dictionary), details = group.dictionary)
                 append("<ul class=\"pronunciation-list\">")
                 for (pronunciation in group.pronunciations) {
                     when (pronunciation) {
@@ -374,7 +415,10 @@ class ResultsHtml(
                 } else {
                     null
                 }
-                definition(item.entry, Tags.expand(findTags, item.entry.dictionary, item.entry.definitionTags.split(' ')), media, only, tabOf(item.entry.dictionary))
+                val tags = definitionTags(term)[definition].filter { !(compactTags && it.redundant) }
+                // As in Yomitan, the dictionary of a definition after one of its own repeats it
+                val dictionaryTag = !compactTags || all.subList(0, definition).none { it.entry.dictionary == item.entry.dictionary }
+                definition(item.entry, tags, dictionaryTag, media, only, tabOf(item.entry.dictionary))
                 used += item.entry.dictionary
                 definition++
             }
@@ -429,7 +473,7 @@ class ResultsHtml(
             append("<div class=\"kanji-card\"><div class=\"kanji-character\" lang=\"ja\">").append(Html.escape(character)).append("</div><div>")
             for (kanji in term.kanji.filter { it.character == character }) {
                 append("<div class=\"kanji-dictionary\">")
-                tag("dictionary", name(kanji.dictionary))
+                tag("dictionary", name(kanji.dictionary), details = dictionaryDetails(kanji.dictionary, kanji = true), title = true)
                 if (kanji.meanings.isNotEmpty()) append(" ").append(Html.escape(kanji.meanings.joinToString(", ")))
                 append("</div>")
                 val readings = listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi).filter { it.second.isNotBlank() }
@@ -491,14 +535,21 @@ class ResultsHtml(
         }
     }
 
-    /** A definition of [entry] with its [tags]; [tab]: its dictionary's, if the page has tabs */
-    private fun StringBuilder.definition(entry: TermEntry, tags: List<Tags.Tag>, media: (String, String) -> DictionaryMedia?, only: String? = null, tab: String? = null) {
+    /** A definition of [entry] with its [tags], and its dictionary's if [dictionaryTag]; [tab]: its dictionary's, if the page has tabs */
+    private fun StringBuilder.definition(
+        entry: TermEntry,
+        tags: List<Tags.Tag>,
+        dictionaryTag: Boolean,
+        media: (String, String) -> DictionaryMedia?,
+        only: String? = null,
+        tab: String? = null,
+    ) {
         append("<li")
         if (tab != null) append(" data-tab=\"").append(Html.escape(tab)).append('"')
         append("><div class=\"definition-tags\">")
         if (only != null) tag("only", only)
         for (tag in tags) tag(tag)
-        tag("dictionary", name(entry.dictionary))
+        if (dictionaryTag) tag("dictionary", name(entry.dictionary), details = dictionaryDetails(entry.dictionary), title = true)
         append("</div><div class=\"glossary\" lang=\"en\" data-dictionary=\"").append(Html.escape(entry.dictionary)).append("\">")
         val items = JSONArray(entry.glossary).let { array -> (0 until array.length()).map { StructuredHtml.item(array.get(it)) { path -> media(entry.dictionary, path) } } }
             .filter { it.isNotEmpty() }
@@ -510,17 +561,19 @@ class ResultsHtml(
      * One tag per dictionary with all its values, as Yomitan groups them; or, with
      * [Frequencies.average], one "Average" tag: the harmonic mean of each list's lowest value.
      */
-    private fun StringBuilder.frequencyTags(list: List<Pair<String, Yomitan.Frequency>>, frequencies: Frequencies) {
+    private fun StringBuilder.frequencyTags(list: List<Pair<String, Yomitan.Frequency>>, frequencies: Frequencies, kanji: Boolean = false) {
         val byDictionary = list.groupBy({ it.first }, { it.second })
         if (frequencies.average) {
             val ranks = byDictionary.filterKeys { it !in frequencies.occurrenceBased }
                 .values.mapNotNull { values -> values.mapNotNull { it.value?.takeIf { v -> v > 0 } }.minOrNull() }
             if (ranks.isNotEmpty()) {
-                tag("frequency", "Average", Yomitan.harmonicMean(ranks).toString())
+                tag("frequency", "Average", Yomitan.harmonicMean(ranks).toString(), details = "Average")
                 return
             }
         }
-        for ((dictionary, values) in byDictionary) tag("frequency", name(dictionary), Html.escape(values.map { it.display }.distinct().joinToString(", ")))
+        for ((dictionary, values) in byDictionary) {
+            tag("frequency", name(dictionary), Html.escape(values.map { it.display }.distinct().joinToString(", ")), details = frequencyDetails(dictionary, kanji))
+        }
     }
 
     /** A kanji of the text with its [tags]; [tabs]: the tabs it shows in besides All, if the page has tabs */
@@ -531,8 +584,8 @@ class ResultsHtml(
         append(Html.escape(kanji.character)).append("</span></div><div class=\"tags\">")
         for (tag in tags) tag(tag)
         // A kanji no dictionary has (only its parts are known) has no dictionary to name
-        if (kanji.dictionary.isNotEmpty()) tag("dictionary", name(kanji.dictionary))
-        frequencyTags(kanji.frequencies, frequencies)
+        if (kanji.dictionary.isNotEmpty()) tag("dictionary", name(kanji.dictionary), details = dictionaryDetails(kanji.dictionary, kanji = true), title = true)
+        frequencyTags(kanji.frequencies, frequencies, kanji = true)
         append("</div><table>")
         for ((label, readings) in listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi)) {
             if (readings.isNotBlank()) append("<tr><th>$label</th><td lang=\"ja\">").append(Html.escape(readings.replace(" ", "、"))).append("</td></tr>")
@@ -575,10 +628,17 @@ class ResultsHtml(
     private fun kanjiLink(kanji: String?, label: String): String =
         if (kanji == null) Html.escape(label) else "<span class=\"link\" data-kanji=\"${Html.escape(kanji)}\">${Html.escape(label)}</span>"
 
-    /** A tag like Yomitan's: a coloured label, optionally followed by a value (frequency, pitch). */
-    private fun StringBuilder.tag(kind: String, label: String, valueHtml: String? = null, id: String? = null) {
+    /**
+     * A tag like Yomitan's: a coloured label, optionally followed by a value (frequency, pitch).
+     * Tapping one with [details] shows them as a tag's notes are shown (showTag); with [title] they're its title too, as Yomitan's dictionary tags have them.
+     */
+    private fun StringBuilder.tag(kind: String, label: String, valueHtml: String? = null, id: String? = null, details: String? = null, title: Boolean = false) {
         append("<span class=\"tag $kind\"")
         if (id != null) append(" id=\"").append(id).append('"')
+        if (details != null) {
+            if (title) append(" title=\"").append(Html.escape(details)).append('"')
+            append(" data-details=\"").append(Html.escape(details)).append("\" role=\"button\" tabindex=\"0\" onclick=\"showTag(this)\"")
+        }
         append("><span class=\"label\">").append(Html.escape(label)).append("</span>")
         if (valueHtml != null) append("<span class=\"value\">").append(valueHtml).append("</span>")
         append("</span>")

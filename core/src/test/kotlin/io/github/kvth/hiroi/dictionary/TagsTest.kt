@@ -32,4 +32,19 @@ class TagsTest {
             Tags.expand(find, mapOf("Jitendex" to listOf("★"), "JMdict" to listOf("★"))),
         )
     }
+
+    @Test
+    fun marksPartOfSpeechTagsThatRepeatThePreviousDefinitionsOfTheirDictionary() {
+        fun tags(dictionary: String, names: String) = dictionary to Tags.expand(find, dictionary, names.split(' '))
+        val flagged = Tags.flagRedundant(
+            listOf(tags("Jitendex", "v1 ★"), tags("Jitendex", "v1"), tags("Jitendex", "★"), tags("Jitendex", ""), tags("JMdict", "★")),
+        )
+        assertEquals(
+            listOf(emptyList(), listOf("v1"), emptyList(), emptyList(), emptyList()),
+            flagged.map { list -> list.filter { it.redundant }.map { it.name } },
+        )
+        // Another dictionary's begins anew: its first definition's are never repeats
+        val other = Tags.flagRedundant(listOf(tags("Jitendex", "v1"), "Other" to listOf(Tags.Tag("v1", "partOfSpeech", 0, 0, emptyList(), listOf("Other")))))
+        assertEquals(listOf(false, false), other.map { it.single().redundant })
+    }
 }

@@ -185,7 +185,7 @@ class LookupSession(
     private val stack = ArrayList<Lookup.Found>()
 
     // The HTML itself is made on the lookup thread.
-    val html = ResultsHtml(colors, { settings.aliases }) { kanjiParts }
+    val html = ResultsHtml(colors, { settings.aliases }, { kanjiParts }, dictionaries::summaries)
 
     /** The dictionaries whose styles the results page has, or are on their way to it */
     private val pageStyles: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -284,7 +284,7 @@ class LookupSession(
                             // Anki is asked once the results show (checkAnki), so they needn't wait for it
                             val results = html.Page(
                                 result, AnkiStatus.ASKING.takeIf { anki.enabled }, styles, anki.cardFormat.complete, frequencies,
-                                dictionaries::findMedia, audioSettings.enabled, pageStyles::contains, tabs(), settings.pitchAccents(), dictionaries::findTags,
+                                dictionaries::findMedia, audioSettings.enabled, pageStyles::contains, tabs(), settings.pitchAccents(), dictionaries::findTags, anki.compactTags,
                             ).also { page = it }
                             val script = results.show(FIRST_PART)
                             Lookup.Found(result, text, script, results.styledSoFar, notes = HashMap())

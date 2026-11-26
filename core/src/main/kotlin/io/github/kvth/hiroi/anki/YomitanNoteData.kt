@@ -65,6 +65,10 @@ class YomitanNoteData(
                 .put("tags", JSONArray(headwordTags))
                 .put("wordClasses", JSONArray(entries.flatMap { it.rules.split(' ') }.filter { it.isNotEmpty() }.distinct()))
         }
+        // Their part-of-speech tags marked where they repeat the previous definition's, for "Compact tags"
+        val definitionTags = Tags.flagRedundant(
+            term.definitions.map { (entry, _) -> entry.dictionary to Tags.expand(store::findTags, entry.dictionary, entry.definitionTags.split(' ')) },
+        )
         val definitions = term.definitions.mapIndexed { i, (entry, headwordIndices) ->
             JSONObject()
                 .put("index", i)
@@ -77,7 +81,7 @@ class YomitanNoteData(
                 .put("frequencyOrder", 0)
                 .put("sequences", JSONArray().put(entry.sequence))
                 .put("isPrimary", headwordIndices.any { term.headwords[it].primary })
-                .put("tags", JSONArray(tags(entry.dictionary, entry.definitionTags.split(' '))))
+                .put("tags", JSONArray(definitionTags[i].map(::json)))
                 .put("entries", JSONArray(entry.glossary))
         }
         val inflections = JSONArray(
@@ -104,16 +108,16 @@ class YomitanNoteData(
     /** Tags as Yomitan expands them ([Tags.expand]) */
     private fun tags(dictionary: String, names: List<String>): List<JSONObject> = tags(mapOf(dictionary to names))
 
-    private fun tags(names: Map<String, List<String>>): List<JSONObject> = Tags.expand(store::findTags, names).map { tag ->
-        JSONObject()
-            .put("name", tag.name)
-            .put("category", tag.category)
-            .put("order", tag.order)
-            .put("score", tag.score)
-            .put("content", JSONArray(tag.notes))
-            .put("dictionaries", JSONArray(tag.dictionaries))
-            .put("redundant", false)
-    }
+    private fun tags(names: Map<String, List<String>>): List<JSONObject> = Tags.expand(store::findTags, names).map(::json)
+
+    private fun json(tag: Tags.Tag) = JSONObject()
+        .put("name", tag.name)
+        .put("category", tag.category)
+        .put("order", tag.order)
+        .put("score", tag.score)
+        .put("content", JSONArray(tag.notes))
+        .put("dictionaries", JSONArray(tag.dictionaries))
+        .put("redundant", tag.redundant)
 
     private fun base(meta: TermMeta, i: Int, headwordIndex: Int) = JSONObject()
         .put("index", i)

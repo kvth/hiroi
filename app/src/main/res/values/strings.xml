@@ -261,7 +261,7 @@
     <string name="templates_title">Anki card templates</string>
     <string name="templates_intro">The Handlebars templates that fill the fields, Yomitan\'s own (%s): every {marker} is the template of that name ({{#*inline \"expression\"}}…{{/inline}}), filled from the looked-up word as in Yomitan. Change them, or add your own markers, as described in Yomitan\'s docs (docs/templates.md). Changes are saved as you leave this page.</string>
     <string name="templates_compact_glossaries">Compact glossaries (Yomitan\'s \"Compact Popup and Anki\" layout)</string>
-    <string name="templates_compact_tags">Compact tags (only tags that differ from the previous definition\'s)</string>
+    <string name="templates_compact_tags">Compact tags, in the results and on cards (only tags that differ from the previous definition\'s)</string>
     <string name="templates_test_title">Test</string>
     <string name="templates_test_word">Text to look up</string>
     <string name="templates_test_word_default">毎日、日本語を勉強しています。</string>

@@ -87,6 +87,23 @@ class YomitanNoteDataTest {
     }
 
     @Test
+    fun marksPartOfSpeechTagsThatRepeatThePreviousDefinitions() {
+        val more = term.copy(
+            entries = term.entries + listOf(
+                TermEntry("食べる", "たべる", "v1", "v1", 4, "[\"to live on\"]", 1358280, "", "Jitendex", 1),
+                TermEntry("食べる", "たべる", "v1 ★", "v1", 3, "[\"to make a living\"]", 1358280, "", "Jitendex", 1),
+            ),
+        )
+        val definitions = YomitanNoteData(store, dictionaries).dictionaryEntry(more).getJSONArray("definitions")
+        val redundant = List(definitions.length()) { i ->
+            val tags = definitions.getJSONObject(i).getJSONArray("tags")
+            List(tags.length()) { tags.getJSONObject(it) }.filter { it.getBoolean("redundant") }.map { it.getString("name") }
+        }
+        // Only the part of speech, only where it's the previous one's ("Compact tags" leaves them out of {glossary})
+        assertEquals(listOf(emptyList(), listOf("v1"), listOf("v1")), redundant)
+    }
+
+    @Test
     fun readsFrequenciesLikeYomitan() {
         val frequencies = entry.getJSONArray("frequencies")
         // The one for くう is left out

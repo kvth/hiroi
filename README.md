@@ -142,6 +142,16 @@ A result can then have several headwords. Definitions for only some of them are 
 
 Tags (the headword's, the definitions', the pronunciations' and the kanji's) show as in Yomitan, with what the dictionary's tag bank says about them. Each has its category's colour (part of speech, popular, archaism, …). Tapping one shows its notes at the bottom of the results, as Yomitan's tag notification does (★: *high priority entry*); a tag without notes shows its name. A headword tag that's only for some of a result's headwords also names those. Dictionaries imported before tag banks were supported need importing again to get their tags' categories and notes.
 
+The tags naming a dictionary can be tapped too, and say what Yomitan's say, from the dictionary's `index.json`:
+- a definition's dictionary: its title, revision, author, description, address and number of terms;
+- a kanji's dictionary: the same without the revision, and its number of kanji;
+- a frequency list: its title and how many values it has;
+- a pitch accent or IPA dictionary: its title.
+
+A renamed dictionary's tags still say its own title.
+
+**Compact tags** (*Anki card templates…*, off by default) is Yomitan's option of that name, for the results as for cards. A definition leaves out the part-of-speech tags that are the same as those of the previous definition from its dictionary. It also leaves out the name of a dictionary that one of the definitions before it already names.
+
 ## Search
 
 *Search dictionaries* on the main screen (or long-press Hiroi's launcher icon → *Search*) opens a search page like Yomitan's. Type or paste Japanese and the results come up as you type. Romaji is searched as kana, as in Yomitan's search box: `taberu` → たべる, upper case for katakana (`TEREBI` → テレビ), `nn`/`n'` for ん, `-` for ー; the **a→あ** button switches that off. The results are for the text from its first character, so a sentence gives its first word and a conjugated form its dictionary form (食べさせられた → 食べる). The text is shown below the search box too, with furigana over its words, the matched word highlighted and the words you have in Anki marked; tap any character in it to look up the word starting there. Its words are found as Yomitan's search page finds them with its scanning parser: from the start, the longest word your dictionaries have at each place, conjugated forms included, so the furigana are only as good as your dictionaries. Yomitan can also split the text with MeCab, a separate program on the computer; Hiroi can't. Results look and work as in the overlay, with ＋ Anki and Open in Anki (the card's sentence is the searched text). Under each result, *Kanji* folds out its word's kanji as your kanji dictionaries have them: meanings, readings, strokes, grade, frequency (KANJIDIC), the words they're common in and how often each reading is (JPDB Kanji).
@@ -266,7 +276,7 @@ Fields are filled by **Yomitan's own code**: its `AnkiNoteBuilder`, its Handleba
 *Anki card templates…* is Yomitan's templates page:
 - the template text, saved as you leave the page, and **Reset to Yomitan's default**;
 - a **test**: a text to look up and a field value with markers, filled for the first word in the text, with the templates' errors;
-- **Compact glossaries** (Yomitan's *Compact Popup and Anki* layout) and **Compact tags**.
+- **Compact glossaries** (Yomitan's *Compact Popup and Anki* layout) and **Compact tags** (which also applies to the results, as in Yomitan).
 
 **Dictionary styles once in the note type** (*Cards*, off by default): Yomitan's templates copy each dictionary's whole stylesheet into every glossary field, tens of KB per card. That can push a collection over AnkiWeb's 300 MB limit. With this on, Hiroi takes the rules limited to one dictionary (every selector has `[data-dictionary="…"]`) out of new cards and keeps the latest stylesheet of each dictionary in the app. Other rules, such as Yomitan's compact glossary rules, stay in the card. This is what the [anki-yomitan-css-dedup](https://github.com/kvth/anki-yomitan-css-dedup) add-on does for existing notes, ported to Kotlin. **Note type CSS…** shows the stylesheets in the add-on's section format, to copy or share. Paste that at the end of the note type's Styling (Anki: *Note types → Cards → Styling*), replacing the section between the same `BEGIN`/`END` lines if it's there; the add-on uses the same section. Hiroi says when a new card brought a new or changed stylesheet, so the section needs copying again. Until it's pasted, new cards show without the dictionaries' styles. Hiroi can't write the Styling itself: AnkiConnect Android has no action for it.
 

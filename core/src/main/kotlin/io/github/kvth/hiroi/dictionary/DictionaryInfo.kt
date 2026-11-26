@@ -18,3 +18,19 @@ data class DictionaryInfo(
     val images: Int = 0,
     val forms: Int? = null,
 )
+
+/**
+ * What a dictionary's tag in the results says about it when tapped, as in Yomitan: its title,
+ * revision, and its index.json's [author], [description] and [url] (empty if it has none); how
+ * many [terms], [kanji] and [frequencies] it has.
+ */
+data class DictionarySummary(
+    val title: String,
+    val revision: String,
+    val author: String = "",
+    val description: String = "",
+    val url: String = "",
+    val terms: Int = 0,
+    val kanji: Int = 0,
+    val frequencies: Int = 0,
+)

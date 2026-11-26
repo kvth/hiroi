@@ -99,6 +99,21 @@ class DictionaryDb(
     /** Dictionary [id]'s index.json as stored (with its update links), if it was stored. */
     fun summary(id: Long): String? = entries().firstOrNull { it.info.id == id }?.summary
 
+    /** [summaries] and the list they're of */
+    @Volatile
+    private var summaries: Pair<List<Entry>, Map<String, DictionarySummary>>? = null
+
+    /** What each dictionary's tag in the results says about it, by title; read from their index.json once per change to the list */
+    fun summaries(): Map<String, DictionarySummary> {
+        val entries = entries()
+        summaries?.let { (of, map) -> if (of === entries) return map }
+        return entries.associate { e ->
+            val index = e.summary?.let { runCatching { JSONObject(it) }.getOrNull() }
+            fun text(key: String) = index?.optString(key).orEmpty()
+            e.info.title to DictionarySummary(e.info.title, e.info.revision, text("author"), text("description"), text("url"), e.info.terms, e.info.kanji, e.info.frequencies)
+        }.also { summaries = entries to it }
+    }
+
     /**
      * Turns dictionary [id] on or off, as Yomitan's switch per dictionary: one that's off stays
      * installed but is left out of lookups, frequency sorting and Anki's per-dictionary markers.
