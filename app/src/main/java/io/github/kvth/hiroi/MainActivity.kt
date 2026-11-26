@@ -133,6 +133,17 @@ class MainActivity : Activity() {
             isChecked = DictionarySettings(this@MainActivity).averageFrequencies
             setOnCheckedChangeListener { _, checked -> DictionarySettings(this@MainActivity).averageFrequencies = checked }
         }
+        val pitchAccents = DictionarySettings(this)
+        for ((id, setting) in listOf(
+            R.id.pitch_accent_text to pitchAccents::pitchAccentText,
+            R.id.pitch_accent_position to pitchAccents::pitchAccentPosition,
+            R.id.pitch_accent_graph to pitchAccents::pitchAccentGraph,
+        )) {
+            findViewById<CheckBox>(id).apply {
+                isChecked = setting.get()
+                setOnCheckedChangeListener { _, checked -> setting.set(checked) }
+            }
+        }
         findViewById<Button>(R.id.check_updates).setOnClickListener { checkForUpdates() }
         findViewById<Button>(R.id.export_collection).setOnClickListener {
             val create = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)

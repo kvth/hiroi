@@ -215,6 +215,11 @@
     <string name="grouping_secondary">Secondary dictionaries: %1$s</string>
     <string name="average_frequencies">Average frequencies</string>
     <string name="average_frequencies_hint">Compress the frequency tags into one \"Average\" tag, the harmonic mean of each list\'s value, as Yomitan\'s option does. Lists of occurrence counts are left out of it.</string>
+    <string name="pitch_accent_title">Pitch accents</string>
+    <string name="pitch_accent_hint">How pitch accents show under the tags, a line per dictionary, as Yomitan\'s options.</string>
+    <string name="pitch_accent_text">Downstep notation: the reading with a line over its high part</string>
+    <string name="pitch_accent_position">Position notation: where the pitch drops, as [2]</string>
+    <string name="pitch_accent_graph">Graph: a dot per mora, high or low</string>
     <string name="count_kanji">%d kanji</string>
     <string name="count_images">%d images</string>
     <string name="usage_hint">Trigger Hiroi with the accessibility button, the accessibility shortcut, or the assistant gesture, then tap a word in one of the boxes to look it up. Text in pictures is read with OCR as soon as Hiroi opens and gets a dashed box. Drag over the screen to take just the text in that region. In the panel, long-press to select text yourself; Share sends the word, sentence, box or selection to the clipboard, an app, DeepL, ChatGPT and so on, and \"Look up\" opens it in a dictionary app. Long-press \"Look up\" to pick a different app.</string>

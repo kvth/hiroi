@@ -1,5 +1,6 @@
 package io.github.kvth.hiroi
 
+import io.github.kvth.hiroi.anki.PitchAccent
 import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.ResultSection
@@ -37,6 +38,22 @@ class ResultsHtmlTest {
         assertTrue(html, "class=\"tag pitch\"><span class=\"label\">NHK</span>" in html)
         assertTrue(html, "onclick=\"hiroi({type: 'addCard', index: 0})\"" in html)
         assertTrue("an existing note can be opened", "<button class=\"card\" id=\"open0\" onclick=\"hiroi({type: 'openNote', index: 0})\">Open in Anki</button>" in html)
+    }
+
+    @Test
+    fun showsPitchAccentsInTheFormsChosen() {
+        // A line per dictionary under the tags, by default the reading with its line and the position
+        assertTrue(html, "<li class=\"pronunciation-group\"><span class=\"tag pitch\"><span class=\"label\">NHK</span></span><ul class=\"pronunciation-list\">" in html)
+        assertTrue(html, "<span class=\"pronunciation-text\">" in html)
+        assertTrue(html, "<span class=\"pronunciation-downstep-notation-number\">2</span>" in html)
+        assertFalse(html, "<svg" in html)
+        assertTrue(html, html.indexOf("<div class=\"tags\">") < html.indexOf("pronunciation-group-list\"") && html.indexOf("pronunciation-group-list\"") < html.indexOf("<ol class=\"definitions\""))
+        fun page(display: PitchAccent.Display) = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"))
+            .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false, pitchAccents = display)
+        val graph = page(PitchAccent.Display(text = false, position = false, graph = true))
+        assertTrue(graph, "<svg" in graph)
+        assertFalse(graph, "<span class=\"pronunciation-text\">" in graph)
+        assertFalse("all three off: none", "pronunciation-group\"" in page(PitchAccent.Display(text = false, position = false, graph = false)))
     }
 
     @Test

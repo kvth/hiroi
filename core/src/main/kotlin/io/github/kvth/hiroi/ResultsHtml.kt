@@ -28,7 +28,7 @@ class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null) 
 
 /**
  * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana, tags for
- * inflection, Anki, frequency and pitch, then the numbered definitions with their dictionary,
+ * inflection, Anki and frequency, the pitch accents, then the numbered definitions with their dictionary,
  * styled by the dictionary's own styles.css. What's tapped goes to Hiroi as a message ([SCRIPT]'s
  * hiroi(), which [LookupSession.handle] takes): "＋ Anki" buttons send {type: "addCard", index}.
  */
@@ -74,7 +74,8 @@ class ResultsHtml(
         media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
         audio: Boolean = false,
         tabs: Tabs? = null,
-    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs).first()
+        pitchAccents: PitchAccent.Display = PitchAccent.Display(),
+    ): String = Page(result, anki, styles, cards, frequencies, media, audio, tabs = tabs, pitchAccents = pitchAccents).first()
 
     /**
      * An empty results page that stays loaded: [Page.show] shows each result in it, so a lookup
@@ -107,6 +108,8 @@ class ResultsHtml(
         private val hasStyles: (String) -> Boolean = { false },
         /** The tabs to choose from, if there's more than one ([Tabs.shown]) */
         tabs: Tabs? = null,
+        /** The forms pitch accents are shown in */
+        private val pitchAccents: PitchAccent.Display = PitchAccent.Display(),
     ) {
         private val tabs = tabs?.takeIf { it.shown }
 
@@ -289,14 +292,32 @@ class ResultsHtml(
             }
             tags.frequencyTags(termFrequencies(term), frequencies)
             tags.kanjiTag(index, term)
-            val pitches = PitchAccent.positions(term)
-            if (pitches.isNotEmpty()) {
-                val dictionary = term.meta.firstOrNull { it.mode == "pitch" }?.dictionary.orEmpty()
-                tags.tag("pitch", name(dictionary), pitches.joinToString(" ") { PitchAccent.html(term.reading, it) })
-            }
             if (tags.isNotEmpty()) append("<div class=\"tags\">").append(tags).append("</div>")
             kanjiOf(index, term)
+            pitchAccents(term)
             append("<ol class=\"definitions\" id=\"definitions$index\">")
+        }
+
+        /**
+         * [term]'s pitch accents for its reading in the forms [pitchAccents] asks for: a line per
+         * dictionary, its tag then each pitch accent with its own tags, as Yomitan's pronunciation groups.
+         */
+        private fun StringBuilder.pitchAccents(term: TermGroup) {
+            if (!pitchAccents.any) return
+            val groups = PitchAccent.groups(term).ifEmpty { return }
+            append("<ul class=\"pronunciation-group-list\" lang=\"ja\">")
+            for (group in groups) {
+                append("<li class=\"pronunciation-group\">")
+                tag("pitch", name(group.dictionary))
+                append("<ul class=\"pronunciation-list\">")
+                for (pitch in group.pitches) {
+                    append("<li class=\"pronunciation\">")
+                    for (label in pitch.tags) tag("label", label)
+                    append(PitchAccent.html(term.reading, pitch, pitchAccents)).append("</li>")
+                }
+                append("</ul></li>")
+            }
+            append("</ul>")
         }
 
         /**
@@ -735,6 +756,12 @@ class ResultsHtml(
         .tag.dictionary .label { background: #9057ad; }
         .tag.frequency .label { background: #489148; }
         .tag.pitch .label { background: #6640be; }
+        .pronunciation-group-list, .pronunciation-list { margin: 0; padding: 0; list-style: none; }
+        .pronunciation-group-list { margin-top: 4px; }
+        .pronunciation-group { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+        .pronunciation-group + .pronunciation-group { margin-top: 2px; }
+        .pronunciation-list { display: contents; }
+        .pronunciation { display: inline-flex; align-items: center; gap: 6px; }
         .tag.anki .label { background: ${colors.accent}; }
         .tag.not-anki { border: 1px solid ${colors.secondary}80; }
         .tag.not-anki .label { background: none; color: ${colors.secondary}; font-weight: normal; }
@@ -751,5 +778,5 @@ class ResultsHtml(
         .link { color: ${colors.accent}; text-decoration: underline; text-underline-offset: 2px; }
         .kanji table { margin-top: 6px; border-collapse: collapse; }
         .kanji th { padding-right: 10px; color: ${colors.secondary}; font-weight: normal; text-align: left; }
-    """.trimIndent()
+    """.trimIndent() + "\n" + PitchAccent.CSS
 }

@@ -1,5 +1,6 @@
 package io.github.kvth.hiroi.dictionary
 
+import io.github.kvth.hiroi.anki.PitchAccent
 import io.github.kvth.hiroi.settings.KeyValueStore
 import org.json.JSONObject
 
@@ -26,6 +27,24 @@ class DictionarySettings(private val prefs: KeyValueStore) {
     var averageFrequencies: Boolean
         get() = prefs.getBoolean("average_frequencies", false)
         set(value) = prefs.edit().putBoolean("average_frequencies", value).apply()
+
+    /** Pitch accents as the reading with a line over its high part, as Yomitan's "Show downstep notation" (on by default). */
+    var pitchAccentText: Boolean
+        get() = prefs.getBoolean("pitch_accent_text", true)
+        set(value) = prefs.edit().putBoolean("pitch_accent_text", value).apply()
+
+    /** Pitch accents as their downstep position, [2], as Yomitan's "Show position notation" (on by default). */
+    var pitchAccentPosition: Boolean
+        get() = prefs.getBoolean("pitch_accent_position", true)
+        set(value) = prefs.edit().putBoolean("pitch_accent_position", value).apply()
+
+    /** Pitch accents as a graph of high and low dots, as Yomitan's "Show graph" (off by default). */
+    var pitchAccentGraph: Boolean
+        get() = prefs.getBoolean("pitch_accent_graph", false)
+        set(value) = prefs.edit().putBoolean("pitch_accent_graph", value).apply()
+
+    /** The forms the results show pitch accents in */
+    fun pitchAccents() = PitchAccent.Display(pitchAccentText, pitchAccentPosition, pitchAccentGraph)
 
     /** Yomitan's "Result grouping mode" (see [Grouping]); Yomitan's default groups term-reading pairs. */
     var resultGrouping: String
