@@ -10,6 +10,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import io.github.kvth.hiroi.TextBlock
 import io.github.kvth.hiroi.japanese.Japanese
+import java.text.Normalizer
 
 /**
  * Reads text in a screenshot with ML Kit's on-device Japanese recognizer (bundled model, no
@@ -55,8 +56,9 @@ object ScreenOcr {
 
     /**
      * Whether [block] (from OCR) repeats text the app already provides: it mostly lies inside an
-     * app box that has the same text. Lying inside isn't enough: apps like Instagram describe a
-     * whole picture ("写真、…"), and the text in the picture must still count.
+     * app box that has the same text, or on the app's own characters. Lying inside isn't enough:
+     * apps like Instagram describe a whole picture ("写真、…"), and the text in the picture must
+     * still count.
      */
     fun duplicates(block: TextBlock, appText: List<TextBlock>): Boolean {
         val area = block.bounds.width().toLong() * block.bounds.height()
@@ -71,34 +73,29 @@ object ScreenOcr {
     }
 
     /**
-     * Whether the app reported most of the line's text in its place, character by character,
-     * though in several boxes: a web page's paragraph is split at its links and bold words.
-     * OCR misreads a few characters, so most of them must be there, not all.
+     * Whether the app drew most of the line itself: nearly as many of the app's characters lie
+     * inside it as it has letters, though in several boxes (a web page's paragraph is split at
+     * its links and bold words). Which characters they are doesn't matter, since OCR misreads
+     * text an app draws in a font of its own (mokuro's columns: F今日も大猟! for 今日も大猟！),
+     * and only letters count: punctuation is what it reads worst (これは、 for これは…).
      */
     private fun coveredByAppCharacters(block: TextBlock, text: String, appText: List<TextBlock>): Boolean {
         if (text.isEmpty()) return true
-        val there = HashMap<Char, Int>()
+        var there = 0
         for (other in appText) {
             val characters = other.characters ?: continue
             if (!Rect.intersects(block.bounds, other.bounds)) continue
             for (i in other.text.indices) {
+                if (other.text[i].isWhitespace()) continue
                 val box = characters.getOrNull(other.textOffset + i) ?: continue
-                if (block.bounds.contains(box.centerX().toInt(), box.centerY().toInt())) there.merge(other.text[i], 1, Int::plus)
+                if (block.bounds.contains(box.centerX().toInt(), box.centerY().toInt())) there++
             }
         }
-        if (there.isEmpty()) return false
-        var found = 0
-        for (c in text) {
-            val left = there[c] ?: 0
-            if (left > 0) {
-                found++
-                there[c] = left - 1
-            }
-        }
-        return found >= text.length * COVERED
+        return there > 0 && there >= text.count(Char::isLetterOrDigit) * COVERED
     }
 
     private const val COVERED = 0.8
 
-    private fun compact(text: String) = text.filterNot { it.isWhitespace() }
+    /** Without spaces, and full-width forms as their usual ones (！ as !, ５ as 5), as OCR often reads them */
+    private fun compact(text: String) = Normalizer.normalize(text, Normalizer.Form.NFKC).filterNot { it.isWhitespace() }
 }

@@ -51,23 +51,39 @@ object AccessibilityCapture {
         val blocks = found.mapIndexed { i, f ->
             if (f.text != null) TextBlock(f.text, f.bounds, characters[i]?.takeUnless { i in waiting }) else TextBlock(f.description!!, f.bounds)
         }
-        return Capture(blocks, source.result(windowTitle))
+        val joined = blocks.indices.groupBy { found[it].lines ?: -1 - it }.values.flatMap { group -> joinLines(group.map(blocks::get)) }
+        return Capture(joined, source.result(windowTitle))
     }
 
-    /** A node with text (or, for want of it, a description) and where it is */
-    private class Found(val node: AccessibilityNodeInfo, val text: String?, val description: String?, val bounds: Rect)
+    /**
+     * A node with text (or, for want of it, a description) and where it is. Nodes that are the
+     * [lines] of one web page element share its number.
+     */
+    private class Found(val node: AccessibilityNodeInfo, val text: String?, val description: String?, val bounds: Rect, val lines: Int? = null)
 
-    /** [source]: the app in front's window, whose nodes also go there; [inToolbar]: [node] is in its app bar */
-    private fun collect(node: AccessibilityNodeInfo, out: MutableList<Found>, source: ScreenSourceCollector?, inToolbar: Boolean) {
+    /**
+     * [source]: the app in front's window, whose nodes also go there; [inToolbar]: [node] is in its
+     * app bar; [web]: it's in a web page; [lines]: it's a line of the element with that number.
+     */
+    private fun collect(
+        node: AccessibilityNodeInfo,
+        out: MutableList<Found>,
+        source: ScreenSourceCollector?,
+        inToolbar: Boolean,
+        web: Boolean = false,
+        lines: Int? = null,
+    ) {
         if (!node.isVisibleToUser) return
+        val inWeb = web || node.className == "android.webkit.WebView"
         val text = node.text?.toString()
         // An icon's description (back arrow, status bar icons) isn't text on screen.
         val description = node.contentDescription?.toString()
             ?.takeUnless { node.className?.contains("Image") == true }
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
-        if (!text.isNullOrBlank() || !description.isNullOrBlank()) {
-            out += Found(node, text?.takeIf { it.isNotBlank() }, description, bounds)
+        val hasText = !text.isNullOrBlank() || !description.isNullOrBlank()
+        if (hasText) {
+            out += Found(node, text?.takeIf { it.isNotBlank() }, description, bounds, lines)
         }
         var toolbar = inToolbar
         if (source != null) {
@@ -78,9 +94,53 @@ object AccessibilityCapture {
             toolbar = inToolbar || source.toolbar(view)
             source.visit(view, toolbar)
         }
-        for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { collect(it, out, source, toolbar) }
+        // Chrome reports a block's lines as nodes of their own when the page sets each line
+        // apart, as mokuro's speech bubbles do: one text-less node with only lines in it.
+        val childLines = out.size.takeIf {
+            inWeb && !hasText && node.childCount > 1 && (0 until node.childCount).all { i -> node.getChild(i)?.let(::isLine) == true }
         }
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { collect(it, out, source, toolbar, inWeb, childLines) }
+        }
+    }
+
+    /** Plain text with nothing in it: not a link, a button or a field */
+    private fun isLine(node: AccessibilityNodeInfo) =
+        node.isVisibleToUser && node.childCount == 0 && !node.text.isNullOrBlank() && !node.isClickable && !node.isEditable
+
+    /**
+     * Joins the [lines] of one element into a block, if they read on from each other: each line
+     * within three quarters of a character of the next (the next column of a bubble, the next
+     * row; mokuro sets a column in a smaller font where it's narrower), so paragraphs, a line
+     * apart, stay apart. Japanese lines without character positions stay as they are (others,
+     * such as a bubble's …, aren't asked for theirs).
+     */
+    private fun joinLines(lines: List<TextBlock>): List<TextBlock> {
+        if (lines.size < 2) return lines
+        val characters = lines.flatMap { it.characters.orEmpty().filterNotNull() }
+        if (lines.any { it.characters == null && it.hasJapanese() } || characters.isEmpty()) return lines
+        val slack = characters.map { minOf(it.width(), it.height()) }.sorted()[characters.size / 2] * 3 / 4
+        val readsOn = lines.zipWithNext().all { (a, b) ->
+            RectF.intersects(RectF(a.bounds).apply { inset(-slack, -slack) }, RectF(b.bounds))
+        }
+        if (!readsOn) return lines
+        val text = StringBuilder()
+        val joined = mutableListOf<RectF?>()
+        val bounds = Rect(lines[0].bounds)
+        for (line in lines) {
+            val first = line.text.first()
+            // A space only between two words in Latin script, never inside Japanese
+            if (text.isNotEmpty() && text.last().isLetterOrDigit() && first.isLetterOrDigit() &&
+                !Japanese.isJapanese(text.last()) && !Japanese.isJapanese(first)
+            ) {
+                text.append(' ')
+                joined += null
+            }
+            text.append(line.text)
+            joined += line.text.indices.map { line.characters?.getOrNull(it) }
+            bounds.union(line.bounds)
+        }
+        return listOf(TextBlock(text.toString(), bounds, joined))
     }
 
     /** Every character in the same place, which is no answer: Chrome's before it has loaded them. */

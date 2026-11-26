@@ -228,6 +228,9 @@ Apps don't expose text inside images; at most they describe the picture (Instagr
 - Apps that forbid screenshots (streaming, banking) give a black image, so there's nothing to read.
 - ML Kit reads horizontal text well; vertical text (manga) is hit and miss.
 - The first scan after starting the app takes a moment while the model loads.
+- Text the app draws itself isn't read twice: a line lying on characters the app reported is dropped, even where ML Kit misreads it, and a tap there goes to the app's text.
+
+**Manga with [mokuro](https://github.com/kha-white/mokuro):** in its web reader ([reader.mokuro.app](https://reader.mokuro.app)), turn on *Always show OCR*. Its text is then on the page, so Hiroi takes it from the browser rather than reading the pictures: mokuro's text, with each character where it is. The browser reports a speech bubble's lines one by one; Hiroi joins the lines of a block that read on from each other into one box, so its sentence is the whole bubble.
 
 **Licensing:** ML Kit (the OCR here, and the on-device translation) is closed source (Google APIs Terms of Service), while Hiroi is GPL-3.0 and contains Yomitan's GPL code. Publishing this source code is fine, and so is building the app for yourself. Distributing built APKs, which bundle ML Kit, would conflict with the GPL. A distributable build would need an open-source OCR engine (PaddleOCR, Tesseract), or ML Kit in a separate companion app.
 

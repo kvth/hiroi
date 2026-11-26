@@ -227,8 +227,16 @@ class OverlayView(
     /**
      * The box at screen point ([x], [y]); containers and their children overlap, so the smallest,
      * and of boxes as small (a link around its text), one that knows where its characters are.
+     * The app's text comes before OCR's reading of it where the app says where its characters
+     * are (OCR's box hugs the letters, so it's often the smaller); a picture's description doesn't.
      */
-    fun blockAt(x: Int, y: Int): TextBlock? = blocks
-        .filter { it.bounds.contains(x, y) }
-        .minWithOrNull(compareBy<TextBlock> { it.bounds.width().toLong() * it.bounds.height() }.thenBy { it.characters == null })
+    fun blockAt(x: Int, y: Int): TextBlock? {
+        val hits = blocks.filter { it.bounds.contains(x, y) }
+        val appCharacters = hits.any { !it.ocr && it.characters != null }
+        return hits.minWithOrNull(
+            compareBy<TextBlock> { it.ocr && appCharacters }
+                .thenBy { it.bounds.width().toLong() * it.bounds.height() }
+                .thenBy { it.characters == null },
+        )
+    }
 }
