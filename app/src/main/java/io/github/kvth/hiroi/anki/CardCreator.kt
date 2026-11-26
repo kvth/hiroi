@@ -14,7 +14,10 @@ import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
 import io.github.kvth.hiroi.japanese.Deinflector
+import io.github.kvth.hiroi.japanese.KanjiParts
 import java.io.ByteArrayOutputStream
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -39,7 +42,14 @@ class CardData(
     val translate: (String) -> String = { throw IllegalStateException("No translation here") },
     /** The frequency dictionary results are sorted by, for {frequency-sort-rank} */
     val frequencySort: FrequencySort? = null,
+    /** What kanji are built from, for {kanji-parts} */
+    val kanjiParts: KanjiParts? = null,
+    /** The time now, for {local-time} */
+    private val now: () -> LocalDateTime = LocalDateTime::now,
 ) {
+    /** When the card is made, for {local-time}: once, so both passes have the same */
+    val time: LocalDateTime by lazy(now)
+
     /** The screenshot of the box or region as stored in Anki, for {screenshot-region}; set by [CardCreator] */
     var screenshotRegion: String? = null
 
@@ -131,10 +141,19 @@ fun hiroiMarkers(fields: Map<String, String>, data: CardData): Pair<Map<String, 
                 listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi).filter { it.second.isNotBlank() }
                     .takeIf { it.isNotEmpty() }?.joinToString(" · ") { (label, readings) -> "$label " + readings.trim().replace(" ", "、") }
             }
+            "kanji-parts" -> data.kanjiParts?.let { parts ->
+                // Every kanji of the word, whether a kanji dictionary has it or not
+                data.term.expression.codePoints().toArray().map { String(Character.toChars(it)) }.distinct()
+                    .mapNotNull { kanji -> parts.line(kanji)?.let { markerHtml("$kanji: $it") } }.joinToString("<br>")
+            }.orEmpty()
             "conjugation-description" -> data.term.inflections.joinToString("<br>") { name ->
                 markerHtml(Deinflector.description(name)?.let { "$name: " + it.replace("\n", " ") } ?: name)
             }
             "text-block" -> markerHtml(data.text.trim())
+            // The text block around the word ({cloze-body} is the word as it is there), as {cloze-prefix} and {cloze-suffix} are the sentence around it
+            "text-block-prefix" -> markerHtml(data.text.substring(0, data.start.coerceIn(0, data.text.length)).trimStart())
+            "text-block-suffix" -> markerHtml(data.text.substring(data.end.coerceIn(0, data.text.length)).trimEnd())
+            "local-time" -> data.time.format(LOCAL_TIME)
             "frequency-sort-rank" -> frequencySortRank(data)?.toString().orEmpty()
             "screenshot-region" -> data.screenshotRegion?.let { "<img src=\"${Html.escape(it)}\">" }.orEmpty()
             else -> ""
@@ -142,6 +161,9 @@ fun hiroiMarkers(fields: Map<String, String>, data: CardData): Pair<Map<String, 
     }
     return fields.mapValues { (_, value) -> values.entries.fold(value) { v, (marker, html) -> v.replace(marker, html) } } to error
 }
+
+/** {local-time}: the date and the time to the minute, as the phone's clock has them */
+private val LOCAL_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
 /** [text] as HTML, and with no { left that Yomitan would take for a marker */
 private fun markerHtml(text: String) = Html.escape(text).replace("\n", "<br>").replace("{", "&#123;")

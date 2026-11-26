@@ -28,10 +28,12 @@ import io.github.kvth.hiroi.audio.AudioSources
 import io.github.kvth.hiroi.audio.WordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
+import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Translator
 import io.github.kvth.hiroi.dictionary.Wildcard
+import io.github.kvth.hiroi.japanese.KanjiParts
 import io.github.kvth.hiroi.translation.Translations
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
@@ -108,7 +110,8 @@ class DictionaryLookup(
             css(themeColor(android.R.attr.colorAccent)),
             css(themeColor(android.R.attr.colorBackground)),
         ),
-    ) { DictionarySettings(activity).aliases }
+        { DictionarySettings(activity).aliases },
+    ) { kanjiParts }
 
     @SuppressLint("SetJavaScriptEnabled")
     val web: WebView = WebView(activity).apply {
@@ -284,12 +287,34 @@ class DictionaryLookup(
      */
     private fun lookUpIn(text: String, offset: Int) {
         val parent = shown ?: return
-        find("in a definition at $offset", text, { outcome ->
-            if (outcome !is Lookup.Found || shown !== parent) return@find
-            stack += parent
-            onPage("pushResults()")
-            show(outcome, back = parent.result.terms.firstOrNull()?.expression ?: parent.text)
-        }, nested = true) { translator.lookUp(text, offset) }
+        find("in a definition at $offset", text, { showNested(parent, it) }, nested = true) { translator.lookUp(text, offset) }
+    }
+
+    /**
+     * Shows kanji [character]'s card alone, in place of the results shown, as [lookUpIn]: a part
+     * of a kanji, or one built with it, tapped on a card. If no kanji dictionary has it, a card
+     * with what it's built from and what's built with it.
+     */
+    private fun lookUpKanji(character: String) {
+        val parent = shown ?: return
+        find("for kanji $character", character, { showNested(parent, it) }, nested = true) {
+            val result = translator.lookUpKanji(character)
+            if (result.kanji.isNotEmpty() || kanjiParts?.has(character) != true) result
+            else result.copy(kanji = listOf(KanjiEntry(character, "", "", "", emptyList())))
+        }
+    }
+
+    /** [outcome] in place of [parent] (still shown), with a bar back to it; nothing if it found nothing */
+    private fun showNested(parent: Lookup.Found, outcome: Lookup) {
+        if (outcome !is Lookup.Found || shown !== parent) return
+        stack += parent
+        onPage("pushResults()")
+        show(outcome, back = parent.result.terms.firstOrNull()?.expression ?: parent.text)
+    }
+
+    /** What kanji are built from (assets/kanji-parts.txt), read on the lookup thread the first time a card needs it */
+    private val kanjiParts: KanjiParts? by lazy {
+        runCatching { KanjiParts.get(activity) }.onFailure { Log.e(TAG, "Reading the kanji parts failed", it) }.getOrNull()
     }
 
     /** Back to the results a lookup from their definitions showed in place of ([lookUpIn]); false if there are none. */
@@ -479,6 +504,7 @@ class DictionaryLookup(
             audio = found.audio[index],
             translate = { sentence -> Translations(activity).translate(sentence).text },
             frequencySort = DictionarySettings(activity).frequencySort(dictionaries),
+            kanjiParts = kanjiParts,
         )
     }
 
@@ -532,6 +558,11 @@ class DictionaryLookup(
         @JavascriptInterface
         fun selectTab(tab: String) {
             activity.runOnUiThread { DictionarySettings(activity).lastTab = tab }
+        }
+
+        @JavascriptInterface
+        fun lookUpKanji(character: String) {
+            activity.runOnUiThread { this@DictionaryLookup.lookUpKanji(character) }
         }
 
         @JavascriptInterface

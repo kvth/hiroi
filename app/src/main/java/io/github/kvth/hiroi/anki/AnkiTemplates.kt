@@ -65,14 +65,15 @@ object AnkiTemplates {
 
     /**
      * Hiroi's own markers, besides Yomitan's ([hiroiMarkers] fills them): the sentence translated;
-     * each kanji of the word with its meanings, and with its readings; the inflections with what
-     * each means; the text the word was looked up in (the box, the region, all of them, or what
-     * was searched); the rank from the frequency dictionary results are sorted by; and the
-     * screenshot of just the box or region.
+     * each kanji of the word with its meanings, with its readings, and with its parts; the
+     * inflections with what each means; the text the word was looked up in (the box, the region,
+     * all of them, or what was searched), and that text before and after the word; the rank from
+     * the frequency dictionary results are sorted by; the screenshot of just the box or region;
+     * and when the card was made.
      */
     val HIROI_MARKERS = listOf(
-        "sentence-translation", "kanji-meanings", "kanji-readings", "conjugation-description", "text-block",
-        "frequency-sort-rank", "screenshot-region",
+        "sentence-translation", "kanji-meanings", "kanji-readings", "kanji-parts", "conjugation-description", "text-block",
+        "text-block-prefix", "text-block-suffix", "frequency-sort-rank", "screenshot-region", "local-time",
     )
 
     /** Markers [format]'s fields use that neither [templates] nor the dictionaries define: they'd come out as {name-render-error}. */

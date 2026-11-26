@@ -211,14 +211,19 @@ class Translator(
         val terms = match(candidates, definitions) { longest -> mixed(text.substring(start, end), longest) }
         if (latin && terms.isEmpty()) return null
 
-        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else {
-            val character = text[start].toString()
-            val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
-            store.findKanji(character).map { it.copy(frequencies = frequencies) }
-        }
+        val kanji = if (!Japanese.isKanji(text[start])) emptyList() else kanjiEntries(text[start].toString())
         val length = terms.firstOrNull()?.source?.length ?: 1
         return LookupResult(start, start + length, terms, kanji)
     }
+
+    /** [character] in the kanji dictionaries, with its frequencies */
+    private fun kanjiEntries(character: String): List<KanjiEntry> {
+        val frequencies = store.findKanjiMeta(character).mapNotNull { m -> Yomitan.frequency(m, null)?.let { m.dictionary to it } }
+        return store.findKanji(character).map { it.copy(frequencies = frequencies) }
+    }
+
+    /** Kanji [character] alone: what the kanji dictionaries have for it, no words (a kanji's part, or one built with it) */
+    fun lookUpKanji(character: String): LookupResult = LookupResult(0, character.length, emptyList(), kanjiEntries(character))
 
     /**
      * The results for [candidates], the best first: the entries of their forms that their

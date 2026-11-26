@@ -13,6 +13,8 @@ import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Yomitan
 import io.github.kvth.hiroi.japanese.Deinflector
+import io.github.kvth.hiroi.japanese.Japanese
+import io.github.kvth.hiroi.japanese.KanjiParts
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -33,6 +35,8 @@ class ResultsHtml(
     private val colors: Colors,
     /** The names dictionaries were given (their aliases, Yomitan's "Rename…") by title, read for each page */
     private val aliases: () -> Map<String, String> = { emptyMap() },
+    /** What kanji are built from, for their cards' "Parts" and "Used in"; null without */
+    private val kanjiParts: () -> KanjiParts? = { null },
 ) {
     /** The names of the page being made ([Page]) */
     @Volatile
@@ -109,11 +113,11 @@ class ResultsHtml(
         private fun tabOf(dictionary: String) = tabs?.byDictionary?.get(dictionary)
 
         /** The kanji of the results' words */
-        private val wordKanji = result.terms.flatMapTo(LinkedHashSet()) { term -> term.kanji.map { it.character } }
+        private val wordKanji = result.terms.flatMapTo(LinkedHashSet()) { term -> cardKanji(term) }
 
         /** The tabs [term] is in: those of its definitions' dictionaries, and 漢字 if its word has kanji */
         private fun tabsOf(term: TermGroup): List<String> =
-            term.definitions.mapNotNull { tabOf(it.entry.dictionary) }.distinct() + listOfNotNull(ResultTabs.KANJI.takeIf { term.kanji.isNotEmpty() })
+            term.definitions.mapNotNull { tabOf(it.entry.dictionary) }.distinct() + listOfNotNull(ResultTabs.KANJI.takeIf { cardKanji(term).isNotEmpty() })
 
         init {
             names = aliases()
@@ -335,19 +339,30 @@ class ResultsHtml(
         if (boxes.isNotEmpty()) append("<div class=\"inflection-infos\">").append(boxes).append("</div>")
     }
 
+    /**
+     * The kanji of [term]'s word that get a card, in its order: those a kanji dictionary has, and
+     * the others whose parts are known ([kanjiParts]), which get a card with just those.
+     */
+    private fun cardKanji(term: TermGroup): List<String> {
+        val inDictionaries = term.kanji.mapTo(HashSet()) { it.character }
+        val parts = kanjiParts()
+        return term.expression.filter(Japanese::isKanji).map { it.toString() }.distinct()
+            .filter { it in inDictionaries || parts?.has(it) == true }
+    }
+
     /** A tag among the frequencies naming the kanji of [term]'s word; tapping it opens or closes them ([kanjiOf]). */
     private fun StringBuilder.kanjiTag(index: Int, term: TermGroup) {
-        if (term.kanji.isEmpty()) return
-        val characters = term.kanji.map { it.character }.distinct()
+        val characters = cardKanji(term)
+        if (characters.isEmpty()) return
         append("<span class=\"tag kanji-toggle\" role=\"button\" tabindex=\"0\" aria-expanded=\"false\" aria-controls=\"kanji$index\" ")
         append("onclick=\"var k = document.getElementById('kanji$index'); k.hidden = !k.hidden; this.setAttribute('aria-expanded', !k.hidden)\">")
         append("<span class=\"label\">Kanji</span><span class=\"value\" lang=\"ja\">").append(Html.escape(characters.joinToString(" "))).append("</span></span>")
     }
 
-    /** The kanji of [term]'s word, under its tags until its [kanjiTag] opens them: each kanji dictionary's meanings, readings and numbers for it */
+    /** The kanji of [term]'s word ([cardKanji]), under its tags until its [kanjiTag] opens them: each kanji dictionary's meanings, readings and numbers for it, and its parts */
     private fun StringBuilder.kanjiOf(index: Int, term: TermGroup) {
-        if (term.kanji.isEmpty()) return
-        val characters = term.kanji.map { it.character }.distinct()
+        val characters = cardKanji(term)
+        if (characters.isEmpty()) return
         append("<div class=\"kanji-breakdown\" id=\"kanji$index\" hidden>")
         for (character in characters) {
             append("<div class=\"kanji-card\"><div class=\"kanji-character\" lang=\"ja\">").append(Html.escape(character)).append("</div><div>")
@@ -365,6 +380,7 @@ class ResultsHtml(
                 val numbers = kanjiNumbers(kanji) + kanji.frequencies.map { (dictionary, f) -> "${Html.escape(name(dictionary))} ${Html.escape(f.display)}" }
                 if (numbers.isNotEmpty()) append("<div class=\"kanji-numbers\">").append(numbers.joinToString(" · ")).append("</div>")
             }
+            kanjiParts(character)
             append("</div></div>")
         }
         append("</div>")
@@ -452,16 +468,50 @@ class ResultsHtml(
         if (tabs != null) append(" data-tabs=\"").append(Html.escape(tabs)).append('"')
         append("><div class=\"header\"><span class=\"character\" lang=\"ja\">")
         append(Html.escape(kanji.character)).append("</span></div><div class=\"tags\">")
-        tag("dictionary", name(kanji.dictionary))
+        // A kanji no dictionary has (only its parts are known) has no dictionary to name
+        if (kanji.dictionary.isNotEmpty()) tag("dictionary", name(kanji.dictionary))
         frequencyTags(kanji.frequencies, frequencies)
         append("</div><table>")
         for ((label, readings) in listOf("On" to kanji.onyomi, "Kun" to kanji.kunyomi)) {
             if (readings.isNotBlank()) append("<tr><th>$label</th><td lang=\"ja\">").append(Html.escape(readings.replace(" ", "、"))).append("</td></tr>")
         }
         append("</table>")
+        kanjiParts(kanji.character)
         kanji.meanings.joinTo(this, "", "<ol class=\"definitions\">", "</ol>") { "<li>${Html.escape(it)}</li>" }
         append("</div>")
     }
+
+    /**
+     * What [character] is built from ("Parts 亻(人) + 動") and the kanji built with it ("Used in",
+     * the commonest first, the rest folded), each a link to that kanji's card.
+     */
+    private fun StringBuilder.kanjiParts(character: String) {
+        val data = kanjiParts() ?: return
+        val parts = data.parts(character)
+        val usedIn = data.usedIn(character)
+        if (parts.isEmpty() && usedIn.isEmpty()) return
+        append("<div class=\"kanji-parts\" lang=\"ja\">")
+        if (parts.isNotEmpty()) {
+            append("<div><span class=\"kanji-label\">Parts</span> ")
+            parts.joinTo(this, " + ") { kanjiLink(it.kanji, it.label) }
+            append("</div>")
+        }
+        if (usedIn.isNotEmpty()) {
+            append("<div><span class=\"kanji-label\">Used in</span> ")
+            usedIn.take(USED_IN).joinTo(this, " ") { kanjiLink(it, it) }
+            if (usedIn.size > USED_IN) {
+                append(" <details class=\"used-in-more\"><summary>+").append(usedIn.size - USED_IN).append("</summary>")
+                usedIn.drop(USED_IN).joinTo(this, " ") { kanjiLink(it, it) }
+                append("</details>")
+            }
+            append("</div>")
+        }
+        append("</div>")
+    }
+
+    /** [label], a link to [kanji]'s card (a part without a character has none) */
+    private fun kanjiLink(kanji: String?, label: String): String =
+        if (kanji == null) Html.escape(label) else "<span class=\"link\" data-kanji=\"${Html.escape(kanji)}\">${Html.escape(label)}</span>"
 
     /** A tag like Yomitan's: a coloured label, optionally followed by a value (frequency, pitch). */
     private fun StringBuilder.tag(kind: String, label: String, valueHtml: String? = null, id: String? = null) {
@@ -483,8 +533,10 @@ class ResultsHtml(
             document.addEventListener('click', function (e) {
               var t = e.target;
               if (!t.closest || !window.getSelection().isCollapsed) return;
-              var g = t.closest('.glossary, .kanji .definitions, .kanji-card');
+              var g = t.closest('.glossary, .kanji .definitions, .kanji-card, .kanji-parts');
               if (!g || t.closest('button, summary, img, .inflection, .tag')) return;
+              var kanji = t.closest('[data-kanji]');
+              if (kanji) { Hiroi.lookUpKanji(kanji.dataset.kanji); return; }
               var link = t.closest('[data-query]');
               if (link) { Hiroi.lookUpIn(link.dataset.query, 0); return; }
               var r = document.caretRangeFromPoint(e.clientX, e.clientY);
@@ -593,6 +645,9 @@ class ResultsHtml(
         }
 
 
+        /** How many kanji built with a kanji its card shows before the others are folded */
+        const val USED_IN = 24
+
         /** Up to which frequency rank a word's tile is marked as common */
         const val COMMON_RANK = 10_000
 
@@ -639,6 +694,12 @@ class ResultsHtml(
         .kanji-dictionary + .kanji-readings, .kanji-numbers + .kanji-dictionary { margin-top: 2px; }
         .kanji-readings, .kanji-numbers { color: ${colors.secondary}; font-size: 0.8em; }
         .kanji-label { font-weight: bold; }
+        .kanji-parts { margin-top: 4px; font-size: 0.9em; line-height: 1.7; }
+        .kanji-parts .kanji-label { color: ${colors.secondary}; font-size: 0.85em; margin-right: 4px; }
+        .kanji-parts .link { font-size: 1.2em; text-decoration: none; }
+        .used-in-more { display: inline; }
+        .used-in-more > summary { display: inline; color: ${colors.accent}; cursor: pointer; }
+        .used-in-more[open] > summary { display: none; }
         /* The buttons go under the word, kept together on the right, when they don't fit beside it */
         .header { display: flex; flex-wrap: wrap; align-items: flex-end; column-gap: 8px; }
         .headword { flex: 1 1 auto; font-size: 2em; line-height: 1.25; }

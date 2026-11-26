@@ -64,6 +64,15 @@ Results look like Yomitan's popup:
 
 The looked-up word is also marked in the box on screen, where the app reports its character positions. Dictionaries imported before styles and images were supported need importing again to get them.
 
+**Kanji parts**<a id="kanji-parts"></a>: each kanji card (the **Kanji ▸** tag, the **漢字** tab, the kanji of the tapped character) says what the kanji is built from and which kanji are built with it:
+- **Parts** 亻(人) + 動: its parts in order, a radical form with the kanji it's a form of.
+- **Used in** 働 慟: the kanji with it as a part, or with one of its forms (人: 休, 体 with 亻), those in JIS X 0208's first level (the common ones) first, the rest folded behind **+N**.
+- Tap a part or a kanji there for its own card, with the **‹** bar back, as with words in definitions: 勉 → 力 → 動 → 働.
+- Every kanji of a word gets a card, also those no kanji dictionary has: theirs show just the parts and Used in.
+- A part phones' fonts don't have is shown as its own parts (強: 弓 + 厶 + 虫), or as … if it has none.
+
+The data is [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids)' `ids.txt`, based on the [CHISE IDS Database](https://www.chise.org/ids/), for the kanji Japanese uses (`app/src/main/assets/kanji-parts.txt`, 13,000 kanji, made by `scripts/make-kanji-parts.py`). It describes how kanji are put together, not their strokes, so look-alikes such as 土 and 士 (both 十 over 一) or 末 and 未 aren't told apart by it.
+
 **Tabs** above the results show them in parts, once there's more than one:
 - **All**, as usual, then one tab per language of the dictionaries' definitions: **国語** for Japanese–Japanese dictionaries, **EN**, **DE** and so on for the others. A dictionary that doesn't say its language goes by its definitions: Japanese ones in 国語, ones in Latin letters in EN.
 - A tab shows the same results in the same order, with only its dictionaries' definitions. Results without any are left out. Each tab says how many results it has; an empty one is greyed.
@@ -218,8 +227,11 @@ With a card format set up under *Anki → Cards*, every result in the overlay an
 Hiroi's own markers, which Yomitan doesn't have:
 - `{sentence-translation}`: the card's sentence translated (see [Translation](#translation)).
 - `{kanji-meanings}` and `{kanji-readings}`: a line per kanji of the word, such as *食: eat, food* or *食: On ショク、ジキ · Kun く.う、た.べる*, from the first kanji dictionary that has them.
+- `{kanji-parts}`: what each kanji of the word is built from, such as *働: 亻(人) + 動* (see [Kanji parts](#kanji-parts)); no kanji dictionary needed.
 - `{conjugation-description}`: the inflections from the dictionary form to the text, each with what it means, as tapping one in the results shows.
 - `{text-block}`: the text the word was looked up in: the box tapped, the region dragged out or all of them; on the search page, what was searched. `{sentence}` stops at 。, which can split a speech bubble or subtitle.
+- `{text-block-prefix}` and `{text-block-suffix}`: that text before and after the word, as Yomitan's `{cloze-prefix}` and `{cloze-suffix}` are the sentence before and after it (`{cloze-body}` is the word as it's written there), e.g. `{text-block-prefix}<b>{cloze-body}</b>{text-block-suffix}`.
+- `{local-time}`: when the card was made, by the phone's clock, such as *2026-11-26 17:30*. (Anki keeps when each note was added anyway; this is for showing it on the card.)
 - `{frequency-sort-rank}`: the word's number in the frequency dictionary results are sorted by (*Results → Result sorting*), for sorting notes in Anki whichever dictionary that is.
 - `{screenshot-region}`: the screenshot cut to the box or region, whether or not `{screenshot}` is, so a card can have both.
 
@@ -336,4 +348,4 @@ After a code change: `./podman-build-apk.sh && scripts/emulator.sh install`. Run
 
 Copyright (C) 2026 Kevin Thomas
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The fallback sounds in `app/src/main/assets/audio/` come from Yomitan; `fallback-bloop.mp3` is by [UNIVERSFIELD](https://pixabay.com/sound-effects/error-8-206492/) under the [Pixabay Content License](https://pixabay.com/service/license-summary/). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`.
+GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The fallback sounds in `app/src/main/assets/audio/` come from Yomitan; `fallback-bloop.mp3` is by [UNIVERSFIELD](https://pixabay.com/sound-effects/error-8-206492/) under the [Pixabay Content License](https://pixabay.com/service/license-summary/). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`. The kanji parts (`app/src/main/assets/kanji-parts.txt`) come from [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids) (Copyright (c) 2014-2017 CJKVI Database), based on the [CHISE IDS Database](https://www.chise.org/ids/) (MORIOKA Tomohiko and others, with data from Academia Sinica's CDP database), GPL-2.0-or-later.

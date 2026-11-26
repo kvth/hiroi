@@ -5,6 +5,7 @@ import io.github.kvth.hiroi.dictionary.KanjiEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
 import io.github.kvth.hiroi.japanese.Deinflector
+import io.github.kvth.hiroi.japanese.KanjiParts
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -13,6 +14,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.time.LocalDateTime
 
 class CardCreatorTest {
     private val requests = mutableListOf<JSONObject>()
@@ -212,6 +214,29 @@ class CardCreatorTest {
         // Without a sorting dictionary or a region: empty
         val bare = hiroiMarkers(fields, CardData(term, "", 0, 0)).first
         assertEquals(listOf("", ""), listOf(bare["Rank"], bare["Picture"]))
+    }
+
+    @Test
+    fun fillsTheTextAroundTheWordAndTheTime() {
+        // The word 食べ in a text block of two lines, spaces around it
+        val text = "  昨日、ラーメンを\n食べた。今日は{寿司}。  "
+        val start = text.indexOf("食べ")
+        val data = CardData(term("食べる"), text, start, start + 2, now = { LocalDateTime.of(2026, 11, 26, 9, 5, 30) })
+        val fields = mapOf("Before" to "{text-block-prefix}", "After" to "{text-block-suffix}", "Added" to "{local-time}")
+        val filled = hiroiMarkers(fields, data).first
+        assertEquals("昨日、ラーメンを<br>", filled["Before"])
+        assertEquals("た。今日は&#123;寿司}。", filled["After"])
+        assertEquals("2026-11-26 09:05", filled["Added"])
+    }
+
+    @Test
+    fun fillsTheKanjiParts() {
+        val parts = KanjiParts("働\t⿰亻動\t1\n動\t⿰重力\t1\n")
+        val data = CardData(term("働動"), "", 0, 2, kanjiParts = parts)
+        assertEquals("働: 亻(人) + 動<br>動: 重 + 力", hiroiMarkers(mapOf("Parts" to "{kanji-parts}"), data).first["Parts"])
+        // Kanji without parts are left out; without the data, empty
+        assertEquals("", hiroiMarkers(mapOf("Parts" to "{kanji-parts}"), CardData(term("木"), "", 0, 1, kanjiParts = parts)).first["Parts"])
+        assertEquals("", hiroiMarkers(mapOf("Parts" to "{kanji-parts}"), CardData(term("働"), "", 0, 1)).first["Parts"])
     }
 
     @Test

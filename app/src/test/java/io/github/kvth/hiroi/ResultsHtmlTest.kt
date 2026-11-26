@@ -6,6 +6,7 @@ import io.github.kvth.hiroi.dictionary.ResultSection
 import io.github.kvth.hiroi.dictionary.TermEntry
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.TermMeta
+import io.github.kvth.hiroi.japanese.KanjiParts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,7 +41,7 @@ class ResultsHtmlTest {
 
     @Test
     fun namesDictionariesByTheNamesTheyWereGiven() {
-        val named = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA")) { mapOf("JMdict <b>" to "JMdict", "JPDB" to "Frequency") }
+        val named = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"), aliases = { mapOf("JMdict <b>" to "JMdict", "JPDB" to "Frequency") })
             .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false)
         assertTrue(named, "<span class=\"tag dictionary\"><span class=\"label\">JMdict</span></span>" in named)
         assertTrue(named, "<span class=\"label\">Frequency</span><span class=\"value\">2412</span>" in named)
@@ -139,6 +140,39 @@ class ResultsHtmlTest {
             .document(LookupResult(0, 6, listOf(term), emptyList()), null, emptyMap(), cards = false, tabs = ResultsHtml.Tabs(mapOf("Jitendex" to "EN"), listOf("EN"), kanji = false))
         val body = one.substringAfter("<body>")
         assertFalse(body, "id=\"tabs\"" in body || "data-tab" in body)
+    }
+
+    @Test
+    fun showsWhatKanjiAreBuiltFromAndWith() {
+        val parts = KanjiParts("働\t⿰亻動\t1\n動\t⿰重力\t1\n" + (1..30).joinToString("") { "${(0x4E00 + it).toChar()}\t⿰動木\t2\n" })
+        val withKanji = term.copy(expression = "動く", kanji = listOf(KanjiEntry("動", "ドウ", "うご.く", "", listOf("move"), "KANJIDIC")))
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"), kanjiParts = { parts })
+            .document(LookupResult(0, 6, listOf(withKanji), listOf(KanjiEntry("働", "ドウ", "はたら.く", "", listOf("work"), "KANJIDIC"))), null, emptyMap(), cards = false)
+        // Each part a link to its kanji, a form as the kanji it's of
+        assertTrue(page, "<span class=\"kanji-label\">Parts</span> <span class=\"link\" data-kanji=\"重\">重</span> + <span class=\"link\" data-kanji=\"力\">力</span>" in page)
+        assertTrue(page, "<span class=\"link\" data-kanji=\"人\">亻(人)</span> + <span class=\"link\" data-kanji=\"動\">動</span>" in page)
+        // The kanji built with it, the commonest first, the rest folded
+        val usedIn = page.substringAfter("<span class=\"kanji-label\">Used in</span> ")
+        assertTrue(usedIn, usedIn.startsWith("<span class=\"link\" data-kanji=\"働\">働</span> "))
+        assertTrue(usedIn, "<details class=\"used-in-more\"><summary>+7</summary>" in usedIn)
+    }
+
+    @Test
+    fun showsEveryKanjiOfTheWordWhoseDictionaryOrPartsHaveIt() {
+        val parts = KanjiParts("勉\t⿺免力\t1\n強\t⿰弓⿱厶虫\t1\n")
+        // 勉 from a kanji dictionary, 強 only from its parts; 学 from neither
+        val word = TermGroup(
+            expression = "勉強学", reading = "", source = "勉強学", inflections = emptyList(),
+            entries = listOf(TermEntry("勉強学", "", "", "", 0, """["x"]""", 0, "", "J", 1)), meta = emptyList(),
+            kanji = listOf(KanjiEntry("勉", "ベン", "", "", listOf("exertion"), "KANJIDIC")),
+        )
+        val page = ResultsHtml(ResultsHtml.Colors("#000000", "#666666", "#0055AA"), kanjiParts = { parts })
+            .document(LookupResult(0, 3, listOf(word), emptyList()), null, emptyMap(), cards = false)
+        assertTrue(page, "<span class=\"label\">Kanji</span><span class=\"value\" lang=\"ja\">勉 強</span>" in page)
+        val card = page.substringAfter("<div class=\"kanji-character\" lang=\"ja\">強</div>").substringBefore("</div></div></div>")
+        assertTrue(card, card.startsWith("<div><div class=\"kanji-parts\" lang=\"ja\"><div><span class=\"kanji-label\">Parts</span> "))
+        assertFalse(card, "kanji-dictionary" in card)
+        assertFalse(page, "kanji-character\" lang=\"ja\">学" in page)
     }
 
     @Test
