@@ -212,7 +212,7 @@ class CardCreator(
     constructor(context: Context, settings: AnkiSettings, clipboard: () -> String? = { null }) :
         this(
             settings.cardFormat, settings.client(), YomitanRenderer(context, settings), settings.wordAudio, clipboard,
-            DictionaryDb.get(context)::findMedia, AudioSettings(context).sources,
+            DictionaryDb.get(context)::findMedia, AudioSettings(context).sources, AudioSettings(context).wordAudio(context),
             screenshotFormat = settings.screenshotFormat, screenshotQuality = settings.screenshotQuality,
             styles = NoteTypeStyles(context).takeIf { settings.dedupStyles },
             updateNoteType = settings.updateNoteTypeCss,

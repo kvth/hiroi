@@ -149,6 +149,7 @@ Each result has a 🔊 button that plays the word, as in Yomitan. It tries the *
 | Jisho | The recording on jisho.org's page for the word. |
 | Custom URL | A URL with `{term}`, `{reading}` and `{language}` (`ja`) filled in, whose answer is the audio. |
 | Custom URL (JSON) | A URL answering with Yomitan's audio list, `{"type": "audioSourceList", "audioSources": [{"url": …, "name": …}]}`, e.g. a local audio server made for Yomitan. |
+| Local audio database | Recordings on the phone, without internet: the `android.db` of the [Local Audio Server for Yomitan](https://github.com/yomidevs/local-audio-yomichan) Anki add-on (see below). |
 | Text-to-speech | The phone's Japanese voice, for the word or for its reading. |
 
 Long-press 🔊 for Yomitan's audio menu: every source and recording, marked *(none)* where a source has nothing, to play one. The one picked is also what the result's Anki card gets for `{audio}`; without a pick, `{audio}` takes the first recording the sources have. Text-to-speech can't go on a card, so it's skipped there.
@@ -158,6 +159,13 @@ The other options are Yomitan's too:
 - volume;
 - a fallback sound when no source has audio (none, a click or a bloop, Yomitan's sounds);
 - turning the button off.
+
+**Local audio database**: the recordings most Yomitan users keep on their computer (JapanesePod101, NHK 2016, Shinmeikai 8, Forvo; 3–5 GB), offline on the phone, without a server app. Hiroi doesn't download them; set them up yourself:
+1. Set up the [Local Audio Server for Yomitan](https://github.com/yomidevs/local-audio-yomichan) add-on in desktop Anki, with its audio collection, as its instructions say.
+2. In Anki: *Tools → Local Audio Server → Generate Android database*. This makes `android.db`, all the recordings in one file (the one [AnkiConnect Android](https://github.com/KamWithK/AnkiconnectAndroid) uses too).
+3. Copy it to the phone and choose it under *Audio → Local audio database → Choose android.db…*: Hiroi copies it into its own files (it then needs the space once more until you delete the copy you chose). Or copy it there yourself, over USB, to `Android/data/io.github.kvth.hiroi/files/android.db`.
+
+It then becomes the first audio source (once: if you remove it from the sources, it stays removed). The page shows how many recordings each of its sources has, and *Order…* sets which is tried first, NHK16 first by default, as in the add-on. Its recordings are found as the add-on's server finds them, by the word and its reading. Each is named as the add-on names it (*NHK16 たべる [2]*, *Forvo (akitomo)*) in the long-press menu, and goes onto cards as it is: usually Opus, which AnkiDroid and desktop Anki play but AnkiMobile (iOS) and AnkiWeb don't (use the add-on's MP3 collection for those).
 
 Recordings are downloaded once per lookup and played on the phone; nothing else is sent anywhere. Lingua Libre, Wiktionary and the generic LanguagePod101 sources aren't there: they're for other languages and have little Japanese.
 

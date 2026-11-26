@@ -349,7 +349,7 @@ class DictionaryLookup(
     // ---- Audio ------------------------------------------------------------------------------
 
     private val player by lazy { AudioPlayer(activity) }
-    private val wordAudio = WordAudio(WordAudio::httpFetch)
+    private val wordAudio = AudioSettings(activity).wordAudio(activity)
     private val audioWorker = Executors.newSingleThreadExecutor()
 
     /** Recordings already downloaded, by URL, so playing one again needs no download. */

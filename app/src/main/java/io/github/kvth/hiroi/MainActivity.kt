@@ -57,9 +57,12 @@ import io.github.kvth.hiroi.anki.NoteTypeStyles
 import io.github.kvth.hiroi.anki.AnkiTemplates
 import io.github.kvth.hiroi.anki.YomitanCardFormat
 import io.github.kvth.hiroi.anki.YomitanSettings
+import io.github.kvth.hiroi.audio.AndroidLocalAudio
 import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.AudioSource
 import io.github.kvth.hiroi.audio.AudioSources
+import io.github.kvth.hiroi.audio.LocalAudio
+import io.github.kvth.hiroi.audio.LocalRecording
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionaryFacts
 import io.github.kvth.hiroi.dictionary.DictionaryInfo
@@ -205,6 +208,8 @@ class MainActivity : Activity() {
             null -> showHome()
             else -> {
                 if (shown == Page.SETUP) placeSetupSteps(onHome = false)
+                // A database copied there by hand meanwhile
+                if (shown == Page.AUDIO) showLocalAudio()
                 findViewById<ScrollView>(shown.view).scrollTo(0, 0)
             }
         }
@@ -929,6 +934,7 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_IMPORT_COLLECTION && resultCode == RESULT_OK && uri != null) importCollection(uri)
         if (requestCode == REQUEST_EXPORT_SETTINGS && resultCode == RESULT_OK && uri != null) exportSettings(uri)
         if (requestCode == REQUEST_IMPORT_SETTINGS && resultCode == RESULT_OK && uri != null) importSettings(uri)
+        if (requestCode == REQUEST_LOCAL_AUDIO && resultCode == RESULT_OK && uri != null) importLocalAudio(uri)
     }
 
     /** Whether the settings file being exported gets the API keys (asked before picking the file) */
@@ -1029,9 +1035,9 @@ class MainActivity : Activity() {
      * it returns, called from any thread, shows how far the work is: a few times a second at most,
      * as some work tells it after each 64 kB.
      */
-    private fun startProgress(start: Int): (DictionaryDb.Progress) -> Unit {
-        val status = findViewById<TextView>(R.id.import_status)
-        val bar = findViewById<ProgressBar>(R.id.import_progress)
+    private fun startProgress(start: Int, statusView: Int = R.id.import_status, barView: Int = R.id.import_progress): (DictionaryDb.Progress) -> Unit {
+        val status = findViewById<TextView>(statusView)
+        val bar = findViewById<ProgressBar>(barView)
         status.visibility = View.VISIBLE
         status.setText(start)
         bar.visibility = View.VISIBLE
@@ -1063,10 +1069,10 @@ class MainActivity : Activity() {
     }
 
     /** Shows [message] in the import status line, in place of the progress, and lets the screen turn off. */
-    private fun endProgress(message: String) {
+    private fun endProgress(message: String, statusView: Int = R.id.import_status, barView: Int = R.id.import_progress) {
         window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        findViewById<ProgressBar>(R.id.import_progress).visibility = View.GONE
-        findViewById<TextView>(R.id.import_status).text = message
+        findViewById<ProgressBar>(barView).visibility = View.GONE
+        findViewById<TextView>(statusView).text = message
     }
 
     /** The size of the file at [uri], or 0 if its app doesn't say */
@@ -1366,6 +1372,139 @@ class MainActivity : Activity() {
     }
 
     /** Yomitan's audio settings: the 🔊 button, its sources in order, auto-play, volume and fallback sound. */
+    private fun showAudioSources() {
+        val audio = AudioSettings(this)
+        findViewById<Button>(R.id.audio_sources).text =
+            getString(R.string.audio_sources, audio.sources.joinToString(", ") { AudioSources.label(this, AudioSource(it.type)) }.ifEmpty { getString(R.string.sort_none) })
+    }
+
+    /** The local audio database's size and recordings per source, or that there's none; its buttons as fit */
+    private fun showLocalAudio() {
+        background.execute {
+            val file = LocalAudio.file(this)
+            val counts = runCatching { LocalAudio.open(this)?.counts() }.getOrNull()
+            // A database put there by hand: the first audio source, once (removing it there stays)
+            val added = counts != null && AudioSettings(this).offerLocal("${file.length()}:${file.lastModified()}")
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (added) showAudioSources()
+                val status = findViewById<TextView>(R.id.local_audio_status)
+                status.visibility = View.VISIBLE
+                status.text = if (counts == null) getString(R.string.local_audio_none) else {
+                    val order = AudioSettings(this).localOrder
+                    val sources = LocalAudio.sorted(counts.keys.map { LocalRecording(it, null, null, "") }, order).map { it.source }
+                    getString(R.string.local_audio_info, fileSize(file.length()), sources.joinToString(" · ") { "${LocalAudio.sourceName(it)} ${"%,d".format(counts.getValue(it))}" })
+                }
+                findViewById<Button>(R.id.local_audio_order).isEnabled = counts != null && counts.size > 1
+                findViewById<Button>(R.id.local_audio_remove).isEnabled = file.exists()
+            }
+        }
+    }
+
+    /**
+     * Copies the local audio database at [uri] (android.db, made by the Local Audio Server add-on)
+     * into Hiroi's files, checks it's one, and puts it first among the audio sources.
+     */
+    private fun importLocalAudio(uri: Uri) {
+        val progress = startProgress(R.string.local_audio_copying, R.id.local_audio_status, R.id.local_audio_progress)
+        background.execute {
+            val target = LocalAudio.file(this)
+            val copy = File(target.path + ".copying")
+            val result = runCatching {
+                val total = sizeOf(uri)
+                val text = getString(R.string.local_audio_copying)
+                contentResolver.openInputStream(uri)!!.use { input ->
+                    copy.outputStream().use { output ->
+                        val buffer = ByteArray(1 shl 16)
+                        var done = 0L
+                        while (true) {
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            output.write(buffer, 0, n)
+                            done += n
+                            progress(DictionaryDb.Progress(text, done, total))
+                        }
+                    }
+                }
+                AndroidLocalAudio(copy).close() // throws if it isn't one
+                LocalAudio.close()
+                if (target.exists() && !target.delete()) throw java.io.IOException("Couldn't replace ${target.name}")
+                if (!copy.renameTo(target)) throw java.io.IOException("Couldn't move ${copy.name} into place")
+                val audio = AudioSettings(this)
+                audio.offerLocal("${target.length()}:${target.lastModified()}")
+            }
+            if (result.isFailure) copy.delete()
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                endProgress(
+                    result.fold({ getString(R.string.local_audio_ready) }, { getString(R.string.local_audio_failed, it.message ?: it.javaClass.simpleName) }),
+                    R.id.local_audio_status, R.id.local_audio_progress,
+                )
+                showAudioSources()
+                if (result.isSuccess) showLocalAudio()
+            }
+        }
+    }
+
+    /** The order of the local audio database's sources, the first tried first */
+    private fun orderLocalAudio() {
+        background.execute {
+            val counts = runCatching { LocalAudio.open(this)?.counts() }.getOrNull() ?: return@execute
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                val audio = AudioSettings(this)
+                val dp = resources.displayMetrics.density
+                val list = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding((20 * dp).toInt(), (8 * dp).toInt(), (20 * dp).toInt(), 0)
+                }
+                fun render() {
+                    list.removeAllViews()
+                    val order = LocalAudio.sorted(counts.keys.map { LocalRecording(it, null, null, "") }, audio.localOrder).map { it.source }
+                    order.forEachIndexed { i, source ->
+                        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+                        row.addView(TextView(this).apply { text = "${i + 1}. ${LocalAudio.sourceName(source)}" }, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f))
+                        for ((label, by) in listOf("▲" to -1, "▼" to 1)) {
+                            row.addView(Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                                text = label
+                                minWidth = 0
+                                minimumWidth = 0
+                                isEnabled = i + by in order.indices
+                                setOnClickListener {
+                                    audio.localOrder = order.toMutableList().apply { add(i + by, removeAt(i)) }
+                                    render()
+                                }
+                            })
+                        }
+                        list.addView(row)
+                    }
+                }
+                render()
+                AlertDialog.Builder(this)
+                    .setTitle(R.string.local_audio_order_title)
+                    .setView(list)
+                    .setPositiveButton(R.string.done, null)
+                    .setOnDismissListener { showLocalAudio() }
+                    .show()
+            }
+        }
+    }
+
+    /** Deletes Hiroi's copy of the local audio database, after asking */
+    private fun removeLocalAudio() {
+        val file = LocalAudio.file(this)
+        AlertDialog.Builder(this)
+            .setMessage(getString(R.string.local_audio_remove_confirm, fileSize(file.length())))
+            .setPositiveButton(R.string.local_audio_remove) { _, _ ->
+                LocalAudio.close()
+                file.delete()
+                findViewById<TextView>(R.id.local_audio_status).text = getString(R.string.local_audio_none)
+                showLocalAudio()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun setUpAudio() {
         val audio = AudioSettings(this)
         findViewById<CheckBox>(R.id.audio_enabled).apply {
@@ -1376,12 +1515,15 @@ class MainActivity : Activity() {
             isChecked = audio.autoPlay
             setOnCheckedChangeListener { _, checked -> audio.autoPlay = checked }
         }
-        val sources = findViewById<Button>(R.id.audio_sources)
-        fun showSources() {
-            sources.text = getString(R.string.audio_sources, audio.sources.joinToString(", ") { AudioSources.label(this, AudioSource(it.type)) }.ifEmpty { getString(R.string.sort_none) })
+        showAudioSources()
+        findViewById<Button>(R.id.audio_sources).setOnClickListener { AudioSources.edit(this, audio) { showAudioSources() } }
+        showLocalAudio()
+        findViewById<Button>(R.id.local_audio_choose).setOnClickListener {
+            val pick = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*")
+            startActivityForResult(pick, REQUEST_LOCAL_AUDIO)
         }
-        showSources()
-        sources.setOnClickListener { AudioSources.edit(this, audio) { showSources() } }
+        findViewById<Button>(R.id.local_audio_order).setOnClickListener { orderLocalAudio() }
+        findViewById<Button>(R.id.local_audio_remove).setOnClickListener { removeLocalAudio() }
         val volumeLabel = findViewById<TextView>(R.id.audio_volume_label)
         findViewById<SeekBar>(R.id.audio_volume).apply {
             progress = audio.volume
@@ -1807,6 +1949,7 @@ class MainActivity : Activity() {
         const val REQUEST_EXPORT_SETTINGS = 5
         const val REQUEST_IMPORT_SETTINGS = 6
         const val REQUEST_ANKIDROID = 7
+        const val REQUEST_LOCAL_AUDIO = 8
 
         const val EXAMPLE_ASSET = "example-dictionary.zip"
         const val EXAMPLE_DICTIONARY = "Hiroi example dictionary" // title in scripts/make-example-dictionary.py

@@ -17,6 +17,7 @@ object AudioSources {
             when (source.type) {
                 "jpod101" -> R.string.audio_jpod101
                 "jisho" -> R.string.audio_jisho
+                "local" -> R.string.audio_local
                 "custom" -> R.string.audio_custom
                 "custom-json" -> R.string.audio_custom_json
                 "text-to-speech" -> R.string.audio_tts

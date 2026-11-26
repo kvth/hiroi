@@ -9,13 +9,14 @@ import java.security.MessageDigest
 /**
  * Where word audio comes from, as Yomitan's audio sources (settings → Audio → Sources): [type] is
  * "jpod101", "jisho", "custom" (a URL with {term}, {reading} and {language}), "custom-json" (a
- * URL answering with a list of audio URLs), "text-to-speech" or "text-to-speech-reading".
+ * URL answering with a list of audio URLs), "local" (the local audio database, [LocalAudio]),
+ * "text-to-speech" or "text-to-speech-reading".
  */
 data class AudioSource(val type: String, val url: String = "") {
     fun toJson(): JSONObject = JSONObject().put("type", type).put("url", url)
 
     companion object {
-        val TYPES = listOf("jpod101", "jisho", "custom", "custom-json", "text-to-speech", "text-to-speech-reading")
+        val TYPES = listOf("jpod101", "jisho", "local", "custom", "custom-json", "text-to-speech", "text-to-speech-reading")
 
         fun fromJson(o: JSONObject) = AudioSource(o.getString("type"), o.optString("url"))
     }
@@ -27,9 +28,15 @@ data class AudioInfo(val source: AudioSource, val url: String? = null, val speak
 /**
  * Finds and downloads word audio as Yomitan's AudioDownloader does (audio-downloader.js), source
  * by source. [fetch] gets a URL's bytes (null if it fails); tests replace it, and [noAudio], the
- * SHA-256 of JapanesePod101's "no audio" clip.
+ * SHA-256 of JapanesePod101's "no audio" clip. [local] is the local audio database, if there's
+ * one, and [localOrder] the order of its sources.
  */
-class WordAudio(private val fetch: (String) -> ByteArray?, private val noAudio: String = JPOD101_NO_AUDIO) {
+class WordAudio(
+    private val fetch: (String) -> ByteArray?,
+    private val noAudio: String = JPOD101_NO_AUDIO,
+    private val local: () -> LocalAudioStore? = { null },
+    private val localOrder: () -> List<String> = { LocalAudio.DEFAULT_ORDER },
+) {
 
     /** What [source] offers for a word; empty if it has nothing (or failed to say). */
     fun infos(source: AudioSource, term: String, reading: String): List<AudioInfo> = runCatching {
@@ -38,6 +45,10 @@ class WordAudio(private val fetch: (String) -> ByteArray?, private val noAudio: 
             "jisho" -> jishoUrl(term, reading)?.let { listOf(AudioInfo(source, url = it)) }.orEmpty()
             "custom" -> listOf(AudioInfo(source, url = customUrl(source.url, term, reading)))
             "custom-json" -> customJson(source, fetch(customUrl(source.url, term, reading))?.let { String(it) } ?: return@runCatching emptyList())
+            "local" -> local()?.let { store ->
+                LocalAudio.sorted(store.recordings(term, LocalAudio.readings(reading)), localOrder())
+                    .map { AudioInfo(source, url = LocalAudio.url(it), name = LocalAudio.name(it)) }
+            }.orEmpty()
             "text-to-speech" -> listOf(AudioInfo(source, speak = term))
             "text-to-speech-reading" -> listOf(AudioInfo(source, speak = reading.ifEmpty { term }))
             else -> emptyList()
@@ -47,6 +58,8 @@ class WordAudio(private val fetch: (String) -> ByteArray?, private val noAudio: 
     /** The recording at [info], or null if there's none (JapanesePod101's "no audio" clip counts as none). */
     fun download(info: AudioInfo): ByteArray? {
         val url = info.url ?: return null
+        // A recording in the local audio database is read from it
+        LocalAudio.parse(url)?.let { (source, file) -> return runCatching { local()?.data(source, file) }.getOrNull()?.takeIf { it.isNotEmpty() } }
         val bytes = fetch(url)?.takeIf { it.isNotEmpty() } ?: return null
         return bytes.takeIf { info.source.type != "jpod101" || sha256(it) != noAudio }
     }
