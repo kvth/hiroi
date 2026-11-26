@@ -263,7 +263,7 @@ Hiroi gives the templates what Yomitan's translator would: the dictionary entry 
 - `{popup-selection-text}`: the panel's selection;
 - `{sentence-furigana}`: the sentence parsed into words as on the search page, as Yomitan's scanning parser does it, so it's only as good as your dictionaries.
 
-`{clipboard-image}` stays empty. Images in a glossary are stored in Anki, as Yomitan stores them, so `{glossary}` shows them on the card.
+`{clipboard-image}` isn't in the field menu: Hiroi doesn't read images from the clipboard, so in card formats from Yomitan it stays empty. Images in a glossary are stored in Anki, as Yomitan stores them, so `{glossary}` shows them on the card.
 
 The templates run in a WebView of their own, without network or file access. `scripts/update-yomitan-anki.mjs` bundles Yomitan's code for it (`app/src/main/assets/yomitan/`) from a Yomitan release:
 

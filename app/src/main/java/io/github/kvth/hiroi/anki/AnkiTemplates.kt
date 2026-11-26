@@ -34,9 +34,15 @@ object AnkiTemplates {
     fun defaultTemplates(context: Context): String =
         context.assets.open("$ASSETS/default-anki-field-templates.handlebars").bufferedReader().use { it.readText() }
 
-    /** The markers Yomitan's card format editor offers for terms. */
+    /**
+     * The markers Yomitan's card format editor offers for terms, without the ones Hiroi always
+     * leaves empty. Their templates stay, so card formats from Yomitan that use them still render.
+     */
     fun standardMarkers(context: Context): List<String> =
-        context.assets.open("$ASSETS/markers.json").bufferedReader().use { JSONArray(it.readText()) }.let { a -> List(a.length()) { a.getString(it) } }
+        context.assets.open("$ASSETS/markers.json").bufferedReader().use { JSONArray(it.readText()) }.let { a -> List(a.length()) { a.getString(it) } } - UNSUPPORTED_MARKERS
+
+    /** {clipboard-image}: Hiroi doesn't read images from the clipboard. */
+    private val UNSUPPORTED_MARKERS = setOf("clipboard-image")
 
     /** The Yomitan release the templates come from. */
     fun version(context: Context): String = context.assets.open("$ASSETS/VERSION").bufferedReader().use { it.readText().trim() }
