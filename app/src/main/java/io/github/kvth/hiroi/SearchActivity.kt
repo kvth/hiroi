@@ -40,9 +40,10 @@ import java.util.concurrent.Executors
 
 /**
  * Searches the dictionaries, like Yomitan's search page: results for the text typed, from its
- * first Japanese character, as it is typed. The text is shown below the search box too, where
- * tapping a character looks up the word starting there. Selected text from other apps can be
- * sent here ("Hiroi search" in the selection menu).
+ * first Japanese character, as it is typed. The text is shown below the search box too, with
+ * furigana over its words as Yomitan's scanning parser finds them, where tapping a character
+ * looks up the word starting there. Selected text from other apps can be sent here ("Hiroi
+ * search" in the selection menu).
  */
 class SearchActivity : Activity() {
 
@@ -233,6 +234,8 @@ class SearchActivity : Activity() {
         queryView.text = text
         queryView.highlight = null
         queryView.marks = emptyList()
+        queryView.rubies = emptyList()
+        queryView.furigana = false
         queryScroll.visibility = if (text.isEmpty()) View.GONE else View.VISIBLE
         val first = text.indexOfFirst(Japanese::isJapanese)
         val wildcard = Wildcard.parse(text)
@@ -258,6 +261,7 @@ class SearchActivity : Activity() {
                 var start = first
                 while (start > 0 && TextVariants.isLatin(text[start - 1])) start--
                 lookUpAt(start, fallback = first)
+                showFurigana(text)
             }
         }
         translation.refresh()
@@ -300,6 +304,21 @@ class SearchActivity : Activity() {
                 show(Shown.Results)
                 lookup.show(outcome)
             }
+        }
+    }
+
+    /** Readings over the query's words, once they're found (after its results). */
+    private fun showFurigana(text: String) {
+        queryView.furigana = true
+        lookup.parse(text) { words ->
+            if (queryView.text.toString() != text) return@parse
+            val rubies = mutableListOf<MarkedTextView.Ruby>()
+            var offset = 0
+            for (segment in words.flatten()) {
+                segment.reading?.let { rubies += MarkedTextView.Ruby(offset, offset + segment.text.length, it) }
+                offset += segment.text.length
+            }
+            queryView.rubies = rubies
         }
     }
 

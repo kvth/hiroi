@@ -16,6 +16,7 @@ import android.widget.Toast
 import io.github.kvth.hiroi.anki.AnkiDroidApi
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardCreator
+import io.github.kvth.hiroi.anki.Furigana
 import io.github.kvth.hiroi.anki.Screenshot
 import io.github.kvth.hiroi.anki.asScreenshot
 import io.github.kvth.hiroi.audio.AudioPlayer
@@ -89,6 +90,8 @@ class DictionaryLookup(
     private val player by lazy { AudioPlayer(activity) }
 
     fun lookUp(text: String, offset: Int, onResult: (Lookup) -> Unit) = session.lookUp(text, offset, onResult)
+
+    fun parse(text: String, onResult: (List<List<Furigana.Segment>>) -> Unit) = session.parse(text, onResult)
 
     fun lookUpWildcard(wildcard: Wildcard, onResult: (Lookup) -> Unit) = session.lookUpWildcard(wildcard, onResult)
 

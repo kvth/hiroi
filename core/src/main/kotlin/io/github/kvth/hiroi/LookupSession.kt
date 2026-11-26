@@ -192,6 +192,25 @@ class LookupSession(
         find("at $offset", text, onResult) { translator.lookUp(text, offset) }
 
     /**
+     * [text] in words with their readings, as Yomitan's scanning parser splits it, for [onResult]
+     * on the main thread; nothing if there are no dictionaries or it fails.
+     */
+    fun parse(text: String, onResult: (List<List<Furigana.Segment>>) -> Unit) {
+        worker.execute {
+            val started = now()
+            val words = runCatching { if (dictionaries.enabledDictionaries().isEmpty()) null else words(text) }
+                .onFailure { host.log("Parsing the text failed", it) }.getOrNull() ?: return@execute
+            host.log("Parsing ${text.length} characters took ${now() - started} ms")
+            host.onMain { onResult(words) }
+        }
+    }
+
+    /** [text] in words with their readings ([Furigana.forText]), on the lookup thread */
+    private fun words(text: String): List<List<Furigana.Segment>> = Furigana.forText(text) { t, i ->
+        translator.lookUp(t, i, definitions = false)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
+    }
+
+    /**
      * A wildcard search ([Wildcard]), as [lookUp]; the result spans its affix, which is the
      * text of [Lookup.Found]. The first suffix search says first that it prepares for that, which
      * takes a while once on big dictionaries.
@@ -549,11 +568,7 @@ class LookupSession(
         return CardData(
             term, found.text, start, start + term.source.length,
             documentTitle = host.documentTitle(),
-            parse = { sentence ->
-                Furigana.forText(sentence) { text, i ->
-                    translator.lookUp(text, i, definitions = false)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) }
-                }
-            },
+            parse = ::words,
             selection = host.selection(),
             audio = found.audio[index],
             translate = host::translate,

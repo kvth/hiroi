@@ -36,23 +36,34 @@ object Furigana {
     }
 
     /**
-     * Running text (a sentence) split into words with readings, as Yomitan's text parser gives
-     * them for sentence furigana: [lookUp] gives the dictionary word at a position, as the overlay
-     * finds it. Only words starting with kanji are looked up; other characters are words of their own.
+     * Running text (a sentence) split into words with readings, as Yomitan's scanning parser
+     * splits it, for sentence furigana and the search page: [lookUp] gives the dictionary word at a
+     * position, as the overlay finds it. Words are looked up at every character, kana too, so a
+     * word with a kana prefix is one word (ご飯, not ご + 飯 read めし). Text no word starts in is
+     * one segment until the next word; a word of one character only counts if it's Japanese.
      */
     fun forText(text: String, lookUp: (String, Int) -> TermGroupLike?): List<List<Segment>> {
         val out = mutableListOf<List<Segment>>()
+        val unmatched = StringBuilder()
+        fun flush() {
+            if (unmatched.isEmpty()) return
+            out += listOf(Segment(unmatched.toString(), null))
+            unmatched.clear()
+        }
         var i = 0
         while (i < text.length) {
-            val term = if (Japanese.isKanji(text[i])) lookUp(text, i) else null
-            if (term != null && term.source.isNotEmpty() && term.source.any(Japanese::isKanji)) {
-                out += forSource(term.source, term.expression, term.reading)
-                i += term.source.length
+            val term = lookUp(text, i)
+            val length = term?.source?.length ?: 0
+            if (term != null && length > 0 && i + length <= text.length && (length > 1 || Japanese.isJapanese(text[i]))) {
+                flush()
+                out += forSource(text.substring(i, i + length), term.expression, term.reading)
+                i += length
             } else {
-                out += listOf(Segment(text[i].toString(), null))
+                unmatched.append(text[i])
                 i++
             }
         }
+        flush()
         return out
     }
 
