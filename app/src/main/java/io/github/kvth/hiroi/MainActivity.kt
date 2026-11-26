@@ -54,6 +54,7 @@ import io.github.kvth.hiroi.anki.AnkiDroidApi
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardFormat
 import io.github.kvth.hiroi.anki.NoteTypeStyles
+import io.github.kvth.hiroi.anki.AnkiMarkers
 import io.github.kvth.hiroi.anki.AnkiTemplates
 import io.github.kvth.hiroi.anki.YomitanCardFormat
 import io.github.kvth.hiroi.anki.YomitanSettings
@@ -71,6 +72,8 @@ import io.github.kvth.hiroi.dictionary.ResultTabs
 import io.github.kvth.hiroi.dictionary.DictionaryUpdates
 import io.github.kvth.hiroi.dictionary.Grouping
 import io.github.kvth.hiroi.dictionary.HiroiCollection
+import io.github.kvth.hiroi.dictionary.choose
+import io.github.kvth.hiroi.dictionary.frequencySort
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.settings.SettingsFile
 import io.github.kvth.hiroi.share.ShareTargets
@@ -601,8 +604,8 @@ class MainActivity : Activity() {
      */
     private fun markerChoices(): List<String> {
         val default = AnkiTemplates.defaultTemplates(this)
-        val custom = anki.fieldTemplates?.let { AnkiTemplates.inlineMarkers(it) - AnkiTemplates.inlineMarkers(default).toSet() }.orEmpty()
-        return (AnkiTemplates.standardMarkers(this) + AnkiTemplates.HIROI_MARKERS + AnkiTemplates.dynamicMarkers(dictionaries.enabledDictionaries()) + custom).distinct()
+        val custom = anki.fieldTemplates?.let { AnkiMarkers.inlineMarkers(it) - AnkiMarkers.inlineMarkers(default).toSet() }.orEmpty()
+        return (AnkiTemplates.standardMarkers(this) + AnkiMarkers.HIROI_MARKERS + AnkiMarkers.dynamicMarkers(dictionaries.enabledDictionaries()) + custom).distinct()
     }
 
     /** A form with a template per field of the note type, like Yomitan's card format editor. */
@@ -864,7 +867,7 @@ class MainActivity : Activity() {
             } else {
                 val ready = getString(R.string.cards_ready, format.model, format.deck, format.fields.values.count { it.isNotBlank() })
                 val templates = anki.fieldTemplates
-                val unknown = AnkiTemplates.unknownMarkers(format, templates ?: AnkiTemplates.defaultTemplates(this), dictionaries.enabledDictionaries())
+                val unknown = AnkiMarkers.unknownMarkers(format, templates ?: AnkiTemplates.defaultTemplates(this), dictionaries.enabledDictionaries())
                 val lines = listOfNotNull(
                     ready,
                     getString(if (templates == null) R.string.cards_templates_default else R.string.cards_templates_custom, AnkiTemplates.version(this)),
@@ -1381,8 +1384,8 @@ class MainActivity : Activity() {
     /** The local audio database's size and recordings per source, or that there's none; its buttons as fit */
     private fun showLocalAudio() {
         background.execute {
-            val file = LocalAudio.file(this)
-            val counts = runCatching { LocalAudio.open(this)?.counts() }.getOrNull()
+            val file = AndroidLocalAudio.file(this)
+            val counts = runCatching { AndroidLocalAudio.open(this)?.counts() }.getOrNull()
             // A database put there by hand: the first audio source, once (removing it there stays)
             val added = counts != null && AudioSettings(this).offerLocal("${file.length()}:${file.lastModified()}")
             runOnUiThread {
@@ -1408,7 +1411,7 @@ class MainActivity : Activity() {
     private fun importLocalAudio(uri: Uri) {
         val progress = startProgress(R.string.local_audio_copying, R.id.local_audio_status, R.id.local_audio_progress)
         background.execute {
-            val target = LocalAudio.file(this)
+            val target = AndroidLocalAudio.file(this)
             val copy = File(target.path + ".copying")
             val result = runCatching {
                 val total = sizeOf(uri)
@@ -1427,7 +1430,7 @@ class MainActivity : Activity() {
                     }
                 }
                 AndroidLocalAudio(copy).close() // throws if it isn't one
-                LocalAudio.close()
+                AndroidLocalAudio.close()
                 if (target.exists() && !target.delete()) throw java.io.IOException("Couldn't replace ${target.name}")
                 if (!copy.renameTo(target)) throw java.io.IOException("Couldn't move ${copy.name} into place")
                 val audio = AudioSettings(this)
@@ -1449,7 +1452,7 @@ class MainActivity : Activity() {
     /** The order of the local audio database's sources, the first tried first */
     private fun orderLocalAudio() {
         background.execute {
-            val counts = runCatching { LocalAudio.open(this)?.counts() }.getOrNull() ?: return@execute
+            val counts = runCatching { AndroidLocalAudio.open(this)?.counts() }.getOrNull() ?: return@execute
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 val audio = AudioSettings(this)
@@ -1492,11 +1495,11 @@ class MainActivity : Activity() {
 
     /** Deletes Hiroi's copy of the local audio database, after asking */
     private fun removeLocalAudio() {
-        val file = LocalAudio.file(this)
+        val file = AndroidLocalAudio.file(this)
         AlertDialog.Builder(this)
             .setMessage(getString(R.string.local_audio_remove_confirm, fileSize(file.length())))
             .setPositiveButton(R.string.local_audio_remove) { _, _ ->
-                LocalAudio.close()
+                AndroidLocalAudio.close()
                 file.delete()
                 findViewById<TextView>(R.id.local_audio_status).text = getString(R.string.local_audio_none)
                 showLocalAudio()
@@ -1807,7 +1810,7 @@ class MainActivity : Activity() {
         if (old == new) return
         DictionarySettings(this).rename(old, new)
         val format = anki.cardFormat
-        val markers = listOf("single-glossary-", "single-frequency-number-").associate { "{$it${AnkiTemplates.kebabCase(old)}}" to "{$it${AnkiTemplates.kebabCase(new)}}" }
+        val markers = listOf("single-glossary-", "single-frequency-number-").associate { "{$it${AnkiMarkers.kebabCase(old)}}" to "{$it${AnkiMarkers.kebabCase(new)}}" }
         val fields = format.fields.mapValuesTo(LinkedHashMap()) { (_, value) -> markers.entries.fold(value) { v, (from, to) -> v.replace(from, to) } }
         if (fields != format.fields) anki.cardFormat = format.copy(fields = fields)
     }

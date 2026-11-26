@@ -40,6 +40,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core"))
     // On-device Japanese OCR with the model bundled. Closed source (Google APIs Terms of Service):
     // fine for building it yourself, but see the README before distributing APKs.
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")

@@ -52,7 +52,7 @@ COPY . /app
 RUN --mount=type=cache,target=/root/.gradle \
     --mount=type=cache,target=/root/.android \
     set -eux; \
-    ./gradlew --no-daemon testDebugUnitTest assembleDebug; \
+    ./gradlew --no-daemon :core:test :app:testDebugUnitTest :app:assembleDebug; \
     mkdir /out; \
     cp app/build/outputs/apk/debug/app-debug.apk /out/hiroi-debug.apk
 

@@ -2,6 +2,7 @@
 .git
 build
 app/build
+core/build
 .gradle
 .kotlin
 local.properties

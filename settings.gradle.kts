@@ -15,4 +15,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "hiroi"
-include(":app")
+include(":core", ":app")

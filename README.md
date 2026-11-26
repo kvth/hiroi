@@ -71,7 +71,7 @@ The looked-up word is also marked in the box on screen, where the app reports it
 - Every kanji of a word gets a card, also those no kanji dictionary has: theirs show just the parts and Used in.
 - A part phones' fonts don't have is shown as its own parts (強: 弓 + 厶 + 虫), or as … if it has none.
 
-The data is [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids)' `ids.txt`, based on the [CHISE IDS Database](https://www.chise.org/ids/), for the kanji Japanese uses (`app/src/main/assets/kanji-parts.txt`, 13,000 kanji, made by `scripts/make-kanji-parts.py`). It describes how kanji are put together, not their strokes, so look-alikes such as 土 and 士 (both 十 over 一) or 末 and 未 aren't told apart by it.
+The data is [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids)' `ids.txt`, based on the [CHISE IDS Database](https://www.chise.org/ids/), for the kanji Japanese uses (`core/src/main/resources/.../kanji-parts.txt`, 13,000 kanji, made by `scripts/make-kanji-parts.py`). It describes how kanji are put together, not their strokes, so look-alikes such as 土 and 士 (both 十 over 一) or 末 and 未 aren't told apart by it.
 
 **Tabs** above the results show them in parts, once there's more than one:
 - **All**, as usual, then one tab per language of the dictionaries' definitions: **国語** for Japanese–Japanese dictionaries, **EN**, **DE** and so on for the others. A dictionary that doesn't say its language goes by its definitions: Japanese ones in 国語, ones in Latin letters in EN.
@@ -87,7 +87,7 @@ The data is [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids)' `ids.txt`, based on
 - This goes as deep as you like, and ＋ Anki works on any of them (the card's sentence is from the definition).
 - Long-pressing still selects text in a definition.
 
-A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `app/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
+A lookup works like Yomitan's: starting at the tapped character, it tries the longest text first, both as written and deinflected. A deinflected form only matches entries whose part-of-speech rules fit (`v1`, `v5*`, `vk`, `vs`, `adj-i`). The deinflection rules are [Yomitan](https://github.com/yomidevs/yomitan)'s own (`japanese-transforms.js`). `scripts/update-yomitan-transforms.mjs` exports them to `core/src/main/resources/.../japanese-transforms.json`, and `LanguageTransformer.kt` is a Kotlin port of Yomitan's engine. The script also records Yomitan's results for sample words, and `YomitanParityTest` checks the port returns exactly the same. One addition: する verb forms also match the noun (勉強した → 勉強), since dictionaries list those verbs under the noun.
 
 Text written another way than the dictionary has it is found too, as [JL](https://github.com/rampaa/JL) and Yomitan find it:
 - half-width kana and squared words: ｶﾞｯｺｳ → 学校, ㍿ → 株式会社;
@@ -331,6 +331,12 @@ The build runs in podman, so the Android SDK never touches the host (see `Contai
 ./podman-build-apk.sh --install  # also adb install -r (needs adb on the host)
 ```
 
+The code is in two modules:
+- `core`: everything that doesn't need Android, in plain Kotlin on the JVM. That's the dictionaries and lookups, Japanese, the results' HTML, Anki cards and AnkiConnect, and the settings (through `KeyValueStore`).
+- `app`: the Android app on top of it. That's the accessibility service and overlay, OCR, the WebViews, AnkiDroid, the screens, and where settings and files are kept on the phone.
+
+`core` has no Android imports, so its tests run on any JDK without the Android SDK.
+
 ## Emulator
 
 `scripts/emulator.sh` runs Hiroi in an Android 15 emulator inside podman (needs `/dev/kvm`), set up like a phone in use: Japanese system language, the accessibility service on, Hiroi as the digital assistant, and a dictionary imported. The default dictionary is the app's example dictionary; you can pass your own zip instead.
@@ -356,4 +362,4 @@ After a code change: `./podman-build-apk.sh && scripts/emulator.sh install`. Run
 
 Copyright (C) 2026 Kevin Thomas
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The fallback sounds in `app/src/main/assets/audio/` come from Yomitan; `fallback-bloop.mp3` is by [UNIVERSFIELD](https://pixabay.com/sound-effects/error-8-206492/) under the [Pixabay Content License](https://pixabay.com/service/license-summary/). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`. The kanji parts (`app/src/main/assets/kanji-parts.txt`) come from [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids) (Copyright (c) 2014-2017 CJKVI Database), based on the [CHISE IDS Database](https://www.chise.org/ids/) (MORIOKA Tomohiko and others, with data from Academia Sinica's CDP database), GPL-2.0-or-later.
+GPL-3.0-or-later, see [LICENSE](LICENSE). The deinflection rules and `LanguageTransformer.kt` come from [Yomitan](https://github.com/yomidevs/yomitan) (GPL-3.0-or-later, Copyright (C) 2024-2026 Yomitan Authors), and so does the Anki note building bundled in `app/src/main/assets/yomitan/` (GPL-3.0-or-later, Copyright (C) 2023-2026 Yomitan Authors, 2020-2022 Yomichan Authors), with its libraries [yomitan-handlebars](https://github.com/yomidevs/yomitan-handlebars) and [Handlebars](https://handlebarsjs.com) (MIT) and [linkedom](https://github.com/WebReflection/linkedom) (ISC). The fallback sounds in `app/src/main/assets/audio/` come from Yomitan; `fallback-bloop.mp3` is by [UNIVERSFIELD](https://pixabay.com/sound-effects/error-8-206492/) under the [Pixabay Content License](https://pixabay.com/service/license-summary/). The launcher icon is 拾 from [Noto Sans CJK JP](https://github.com/notofonts/noto-cjk) (SIL Open Font License), turned into a vector by `scripts/make-icon.py`. The kanji parts (`core/src/main/resources/.../kanji-parts.txt`) come from [cjkvi-ids](https://github.com/cjkvi/cjkvi-ids) (Copyright (c) 2014-2017 CJKVI Database), based on the [CHISE IDS Database](https://www.chise.org/ids/) (MORIOKA Tomohiko and others, with data from Academia Sinica's CDP database), GPL-2.0-or-later.

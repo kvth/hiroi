@@ -24,6 +24,7 @@ import io.github.kvth.hiroi.anki.YomitanRenderer
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.Translator
+import io.github.kvth.hiroi.dictionary.frequencySort
 import io.github.kvth.hiroi.japanese.Japanese
 import io.github.kvth.hiroi.japanese.KanjiParts
 import java.util.concurrent.Executors
@@ -156,7 +157,7 @@ class TemplatesActivity : Activity() {
                         Furigana.forText(sentence) { t, i -> translator.lookUp(t, i, definitions = false)?.terms?.firstOrNull()?.let { Furigana.TermGroupLike(it.source, it.expression, it.reading) } }
                     },
                     frequencySort = settings.frequencySort(db),
-                    kanjiParts = KanjiParts.get(this),
+                    kanjiParts = KanjiParts.get(),
                 )
                 val format = CardFormat(deck = "Test", model = "Test", fields = mapOf("Test" to fieldValue))
                 val note = YomitanRenderer(this, anki, format, templates).render(data, null, null)

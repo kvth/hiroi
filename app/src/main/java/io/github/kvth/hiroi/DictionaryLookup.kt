@@ -21,11 +21,13 @@ import io.github.kvth.hiroi.anki.CardCreator
 import io.github.kvth.hiroi.anki.CardData
 import io.github.kvth.hiroi.anki.DuplicateNoteException
 import io.github.kvth.hiroi.anki.Furigana
+import io.github.kvth.hiroi.anki.asScreenshot
 import io.github.kvth.hiroi.audio.AudioInfo
 import io.github.kvth.hiroi.audio.AudioPlayer
 import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.AudioSources
 import io.github.kvth.hiroi.audio.WordAudio
+import io.github.kvth.hiroi.audio.wordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.KanjiEntry
@@ -33,6 +35,8 @@ import io.github.kvth.hiroi.dictionary.LookupResult
 import io.github.kvth.hiroi.dictionary.TermGroup
 import io.github.kvth.hiroi.dictionary.Translator
 import io.github.kvth.hiroi.dictionary.Wildcard
+import io.github.kvth.hiroi.dictionary.frequencySort
+import io.github.kvth.hiroi.dictionary.tabs
 import io.github.kvth.hiroi.japanese.KanjiParts
 import io.github.kvth.hiroi.translation.Translations
 import org.json.JSONObject
@@ -314,7 +318,7 @@ class DictionaryLookup(
 
     /** What kanji are built from (assets/kanji-parts.txt), read on the lookup thread the first time a card needs it */
     private val kanjiParts: KanjiParts? by lazy {
-        runCatching { KanjiParts.get(activity) }.onFailure { Log.e(TAG, "Reading the kanji parts failed", it) }.getOrNull()
+        runCatching { KanjiParts.get() }.onFailure { Log.e(TAG, "Reading the kanji parts failed", it) }.getOrNull()
     }
 
     /** Back to the results a lookup from their definitions showed in place of ([lookUpIn]); false if there are none. */
@@ -385,9 +389,10 @@ class DictionaryLookup(
                 if (activity.isDestroyed || shown !== found) return@runOnUiThread
                 onPage("audioState($index, '${if (audio == null) "none" else ""}')")
                 Log.d(TAG, "Audio for ${term.expression}: ${audio?.let { "${it.info.source.type} ${it.info.url ?: "(speech)"} ${it.bytes?.size ?: 0} bytes" } ?: "none"}")
+                val bytes = audio?.bytes
                 when {
                     audio == null -> player.playFallback(settings.fallbackSound, settings.volume)
-                    audio.bytes != null -> player.play(audio.bytes, settings.volume)
+                    bytes != null -> player.play(bytes, settings.volume)
                     else -> player.speak(audio.info.speak.orEmpty(), settings.volume) {
                         onPage("audioState($index, 'none')")
                         toast(activity.getString(R.string.audio_no_tts))
@@ -592,7 +597,8 @@ class DictionaryLookup(
         worker.execute {
             val result = runCatching {
                 val creator = CardCreator(activity, settings, ::clipboardText)
-                if (overwrite != null) creator.overwrite(overwrite, data, screenshot, region) else creator.add(data, screenshot, region)
+                if (overwrite != null) creator.overwrite(overwrite, data, screenshot?.asScreenshot(), region?.asScreenshot())
+                else creator.add(data, screenshot?.asScreenshot(), region?.asScreenshot())
             }
             activity.runOnUiThread {
                 if (activity.isDestroyed || shown !== found) return@runOnUiThread

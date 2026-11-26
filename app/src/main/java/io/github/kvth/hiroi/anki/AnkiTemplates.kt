@@ -7,7 +7,6 @@ import android.os.Looper
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import io.github.kvth.hiroi.dictionary.DictionaryInfo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
@@ -19,7 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Yomitan's Anki note building, run as Yomitan runs it: its AnkiNoteBuilder, Handlebars template
  * renderer and helpers (assets/yomitan/anki.js, bundled by scripts/update-yomitan-anki.mjs) in a
  * WebView of its own, without network or file access. The WebView lives on the main thread and
- * stays loaded; [call] blocks, so use it off the main thread.
+ * stays loaded; [call] blocks, so use it off the main thread. The markers it knows: [AnkiMarkers].
  */
 object AnkiTemplates {
     private const val TIMEOUT_S = 30L
@@ -41,56 +40,6 @@ object AnkiTemplates {
 
     /** The Yomitan release the templates come from. */
     fun version(context: Context): String = context.assets.open("$ASSETS/VERSION").bufferedReader().use { it.readText().trim() }
-
-    /**
-     * Inline templates ({{#*inline "name"}}) defined in [templates]: each is a marker, as in
-     * Yomitan. Some are only helpers of other templates, but can still be used.
-     */
-    fun inlineMarkers(templates: String): List<String> =
-        Regex("\\{\\{~?#\\*inline\\s+\"([^\"]+)\"").findAll(templates).map { it.groupValues[1] }.distinct().toList()
-
-    /** Yomitan's per-dictionary markers (anki-template-util.js, getDynamicFieldMarkers). */
-    fun dynamicMarkers(dictionaries: List<DictionaryInfo>): List<String> = dictionaries.flatMap { info ->
-        listOfNotNull(
-            "single-glossary-${kebabCase(info.title)}".takeIf { info.terms > 0 },
-            "single-frequency-number-${kebabCase(info.title)}".takeIf { info.frequencies > 0 },
-        )
-    }
-
-    /** {sentence-translation}: Hiroi's own marker (Yomitan has none for it), the sentence translated. */
-    const val SENTENCE_TRANSLATION = "{sentence-translation}"
-
-    /** {screenshot-region}: the screenshot cut to the box tapped or the region dragged out, whatever {screenshot} does */
-    const val SCREENSHOT_REGION = "{screenshot-region}"
-
-    /**
-     * Hiroi's own markers, besides Yomitan's ([hiroiMarkers] fills them): the sentence translated;
-     * each kanji of the word with its meanings, with its readings, and with its parts; the
-     * inflections with what each means; the text the word was looked up in (the box, the region,
-     * all of them, or what was searched), and that text before and after the word; the rank from
-     * the frequency dictionary results are sorted by; the screenshot of just the box or region;
-     * and when the card was made.
-     */
-    val HIROI_MARKERS = listOf(
-        "sentence-translation", "kanji-meanings", "kanji-readings", "kanji-parts", "conjugation-description", "text-block",
-        "text-block-prefix", "text-block-suffix", "frequency-sort-rank", "screenshot-region", "local-time",
-    )
-
-    /** Markers [format]'s fields use that neither [templates] nor the dictionaries define: they'd come out as {name-render-error}. */
-    fun unknownMarkers(format: CardFormat, templates: String, dictionaries: List<DictionaryInfo>): List<String> {
-        val known = inlineMarkers(templates).toSet() + dynamicMarkers(dictionaries) + HIROI_MARKERS
-        return format.fields.values.flatMap { MARKER.findAll(it).map { m -> m.groupValues[1] } }.filter { it !in known }.distinct()
-    }
-
-    /** Yomitan's marker pattern (anki-util.js): {name} with letters, digits, - and _. */
-    val MARKER = Regex("\\{([\\p{L}\\p{N}_-]+)\\}")
-
-    fun kebabCase(name: String): String = name
-        .replace(Regex("[\\s_　]"), "-")
-        .replace(Regex("[^\\p{L}\\p{N}-]"), "")
-        .replace(Regex("--+"), "-")
-        .trim('-')
-        .lowercase()
 
     /** Calls [method] of hiroi-anki.js with [args] and returns its result. */
     fun call(context: Context, method: String, args: JSONObject): Any? {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds app/src/main/assets/kanji-parts.txt: what each kanji is built from
+"""Builds core/src/main/resources/io/github/kvth/hiroi/japanese/kanji-parts.txt: what each kanji is built from
 (働: ⿰亻動), from the cjkvi-ids ids.txt, for the kanji cards' "Parts" and
 "Used in" and the {kanji-parts} card marker.
 
@@ -71,7 +71,7 @@ def main():
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     source = Path(sys.argv[1])
-    out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent / "app/src/main/assets/kanji-parts.txt"
+    out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).resolve().parent.parent / "core/src/main/resources/io/github/kvth/hiroi/japanese/kanji-parts.txt"
 
     ids = {}
     for line in source.read_text(encoding="utf-8").splitlines():

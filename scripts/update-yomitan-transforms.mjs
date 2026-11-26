@@ -17,8 +17,8 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const TAG = process.argv[2] ?? '26.11.2.0';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const RULES_OUT = join(REPO_ROOT, 'app/src/main/resources/io/github/kvth/hiroi/japanese/japanese-transforms.json');
-const SAMPLES_OUT = join(REPO_ROOT, 'app/src/test/resources/io/github/kvth/hiroi/japanese/yomitan-samples.json');
+const RULES_OUT = join(REPO_ROOT, 'core/src/main/resources/io/github/kvth/hiroi/japanese/japanese-transforms.json');
+const SAMPLES_OUT = join(REPO_ROOT, 'core/src/test/resources/io/github/kvth/hiroi/japanese/yomitan-samples.json');
 const FILES = [
     'ext/js/language/language-transforms.js',
     'ext/js/language/language-transformer.js',
