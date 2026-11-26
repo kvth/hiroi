@@ -72,8 +72,7 @@ import io.github.kvth.hiroi.dictionary.ResultTabs
 import io.github.kvth.hiroi.dictionary.DictionaryUpdates
 import io.github.kvth.hiroi.dictionary.Grouping
 import io.github.kvth.hiroi.dictionary.HiroiCollection
-import io.github.kvth.hiroi.dictionary.choose
-import io.github.kvth.hiroi.dictionary.frequencySort
+import io.github.kvth.hiroi.dictionary.get
 import io.github.kvth.hiroi.marks.MarksActivity
 import io.github.kvth.hiroi.settings.SettingsFile
 import io.github.kvth.hiroi.share.ShareTargets

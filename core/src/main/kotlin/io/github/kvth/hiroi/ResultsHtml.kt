@@ -29,7 +29,8 @@ class AnkiStatus(val notes: Map<String, List<Long>>, val error: String? = null) 
 /**
  * A lookup result as HTML, laid out like Yomitan's popup: the headword with furigana, tags for
  * inflection, Anki, frequency and pitch, then the numbered definitions with their dictionary,
- * styled by the dictionary's own styles.css. "＋ Anki" buttons call Hiroi.addCard(index).
+ * styled by the dictionary's own styles.css. What's tapped goes to Hiroi as a message ([SCRIPT]'s
+ * hiroi(), which [LookupSession.handle] takes): "＋ Anki" buttons send {type: "addCard", index}.
  */
 class ResultsHtml(
     private val colors: Colors,
@@ -100,7 +101,7 @@ class ResultsHtml(
         private val frequencies: Frequencies = Frequencies(),
         /** A dictionary's image by its path, for the definitions that show one */
         private val media: (dictionary: String, path: String) -> DictionaryMedia? = { _, _ -> null },
-        /** A 🔊 button per result: Hiroi.playAudio(index), long-pressed Hiroi.audioMenu(index) */
+        /** A 🔊 button per result: playAudio, long-pressed audioMenu */
         private val audio: Boolean = false,
         /** Whether the page that stays loaded ([shell]) has a dictionary's styles already */
         private val hasStyles: (String) -> Boolean = { false },
@@ -266,15 +267,15 @@ class ResultsHtml(
             }
             append("</span><div class=\"actions\">")
             if (audio) {
-                append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"Hiroi.playAudio($index)\" ")
-                append("oncontextmenu=\"Hiroi.audioMenu($index); return false;\">🔊</button>")
+                append("<button class=\"audio\" id=\"audio$index\" data-index=\"$index\" onclick=\"hiroi({type: 'playAudio', index: $index})\" ")
+                append("oncontextmenu=\"hiroi({type: 'audioMenu', index: $index}); return false;\">🔊</button>")
             }
             // Shown when the word has a note (or once one was added), like Yomitan's "view note" button.
             val hasNote = anki?.notes?.containsKey(term.expression) == true
-            append("<button class=\"card\" id=\"open$index\" onclick=\"Hiroi.openNote($index)\"")
+            append("<button class=\"card\" id=\"open$index\" onclick=\"hiroi({type: 'openNote', index: $index})\"")
             if (!hasNote) append(" style=\"display:none\"")
             append(">Open in Anki</button>")
-            if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"Hiroi.addCard($index)\">＋ Anki</button>")
+            if (cards) append("<button class=\"card\" id=\"card$index\" onclick=\"hiroi({type: 'addCard', index: $index})\">＋ Anki</button>")
             append("</div></div>")
             if (term.inflections.isNotEmpty()) inflections(index, term.inflections)
 
@@ -536,9 +537,9 @@ class ResultsHtml(
               var g = t.closest('.glossary, .kanji .definitions, .kanji-card, .kanji-parts');
               if (!g || t.closest('button, summary, img, .inflection, .tag')) return;
               var kanji = t.closest('[data-kanji]');
-              if (kanji) { Hiroi.lookUpKanji(kanji.dataset.kanji); return; }
+              if (kanji) { hiroi({type: 'lookUpKanji', character: kanji.dataset.kanji}); return; }
               var link = t.closest('[data-query]');
-              if (link) { Hiroi.lookUpIn(link.dataset.query, 0); return; }
+              if (link) { hiroi({type: 'lookUpIn', text: link.dataset.query, offset: 0}); return; }
               var r = document.caretRangeFromPoint(e.clientX, e.clientY);
               if (!r || r.startContainer.nodeType !== 3 || !g.contains(r.startContainer)) return;
               var node = r.startContainer, at = r.startOffset;
@@ -561,7 +562,7 @@ class ResultsHtml(
                 for (var c = n.firstChild; c; c = c.nextSibling) walk(c);
                 if (block) text += '\n';
               })(g);
-              if (offset >= 0) Hiroi.lookUpIn(text, offset);
+              if (offset >= 0) hiroi({type: 'lookUpIn', text: text, offset: offset});
             });
         """.trimIndent().replace("\n", " ")
 
@@ -592,12 +593,16 @@ class ResultsHtml(
             function selectTab(b) {
               if (b.disabled) return;
               document.getElementById('tabs').dataset.selected = b.dataset.tab;
-              applyTab(); window.scrollTo(0, 0); Hiroi.selectTab(b.dataset.tab);
+              applyTab(); window.scrollTo(0, 0); hiroi({type: 'selectTab', tab: b.dataset.tab});
             }
         """.trimIndent().replace("\n", " ")
 
-        /** The page's functions, for Hiroi to change it once it shows. */
+        /**
+         * The page's functions, for Hiroi to change it once it shows. What's tapped goes to Hiroi
+         * with hiroi(): a message, as JSON, to the Hiroi object the platform gives the page.
+         */
         val SCRIPT = buildString {
+            append("function hiroi(message) { Hiroi.post(JSON.stringify(message)); }")
             append("function setCard(i, label, enabled) { var b = document.getElementById('card' + i); if (b) { b.textContent = label; b.disabled = !enabled; } }")
             append("function inAnki(i, label) { var t = document.getElementById('anki' + i); if (t) { t.className = 'tag anki'; t.firstChild.textContent = label; } ")
             append("var o = document.getElementById('open' + i); if (o) o.style.display = ''; }")
@@ -626,9 +631,9 @@ class ResultsHtml(
             // On a touch screen the button takes its touches itself: a tap plays, a long press opens the
             // audio menu, and the page doesn't start selecting the words next to it.
             append("document.addEventListener('touchstart', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
-            append("e.preventDefault(); b.timer = setTimeout(function () { b.timer = null; Hiroi.audioMenu(+b.dataset.index); }, 500); }, {passive: false});")
+            append("e.preventDefault(); b.timer = setTimeout(function () { b.timer = null; hiroi({type: 'audioMenu', index: +b.dataset.index}); }, 500); }, {passive: false});")
             append("document.addEventListener('touchend', function (e) { var b = e.target.closest && e.target.closest('.audio'); if (!b) return; ")
-            append("e.preventDefault(); if (b.timer) { clearTimeout(b.timer); b.timer = null; Hiroi.playAudio(+b.dataset.index); } }, {passive: false});")
+            append("e.preventDefault(); if (b.timer) { clearTimeout(b.timer); b.timer = null; hiroi({type: 'playAudio', index: +b.dataset.index}); } }, {passive: false});")
             // A tile opens into its result (and closes when its headword is tapped)
             append("function openTile(i) { var t = document.getElementById('tile' + i); t.classList.add('open'); t.scrollIntoView({block: 'nearest'}); }")
             append("document.addEventListener('click', function (e) { var h = e.target.closest && e.target.closest('.tile.open .headword'); ")
@@ -639,7 +644,7 @@ class ResultsHtml(
             append("function popResults() { var s = stack.pop(); if (!s) return; document.body.innerHTML = s.html; window.scrollTo(0, s.y); }")
             append("function clearStack() { stack = []; }")
             append("function backBar(label) { var b = document.createElement('div'); b.className = 'back'; b.setAttribute('role', 'button'); ")
-            append("b.textContent = '‹ ' + label; b.onclick = function () { Hiroi.back(); }; document.body.insertBefore(b, document.body.firstChild); }")
+            append("b.textContent = '‹ ' + label; b.onclick = function () { hiroi({type: 'back'}); }; document.body.insertBefore(b, document.body.firstChild); }")
             append(NESTED_LOOKUP)
             append(TABS)
         }

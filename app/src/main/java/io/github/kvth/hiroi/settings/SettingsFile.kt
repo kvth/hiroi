@@ -2,6 +2,7 @@ package io.github.kvth.hiroi.settings
 
 import android.content.Context
 import io.github.kvth.hiroi.dictionary.DictionaryDb
+import io.github.kvth.hiroi.dictionary.get
 import java.io.InputStream
 import java.io.OutputStream
 import java.time.OffsetDateTime

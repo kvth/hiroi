@@ -6,6 +6,7 @@ import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.wordAudio
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
+import io.github.kvth.hiroi.dictionary.get
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream

@@ -24,7 +24,7 @@ import io.github.kvth.hiroi.anki.YomitanRenderer
 import io.github.kvth.hiroi.dictionary.DictionaryDb
 import io.github.kvth.hiroi.dictionary.DictionarySettings
 import io.github.kvth.hiroi.dictionary.Translator
-import io.github.kvth.hiroi.dictionary.frequencySort
+import io.github.kvth.hiroi.dictionary.get
 import io.github.kvth.hiroi.japanese.Japanese
 import io.github.kvth.hiroi.japanese.KanjiParts
 import java.util.concurrent.Executors

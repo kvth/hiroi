@@ -269,7 +269,7 @@ class SearchActivity : Activity() {
         val text = queryView.text.toString()
         show(Shown.Message, getString(R.string.looking_up))
         lookup.lookUp(text, offset) {
-            if (it !is DictionaryLookup.Lookup.Found && fallback != offset) lookUpAt(fallback) else showOutcome(text, it, 0)
+            if (it !is Lookup.Found && fallback != offset) lookUpAt(fallback) else showOutcome(text, it, 0)
         }
     }
 
@@ -291,11 +291,11 @@ class SearchActivity : Activity() {
     }
 
     /** [outcome] of looking up in [text], unless it changed meanwhile; the result's text starts at [shift] in it. */
-    private fun showOutcome(text: String, outcome: DictionaryLookup.Lookup, shift: Int) {
+    private fun showOutcome(text: String, outcome: Lookup, shift: Int) {
         if (queryView.text.toString() != text) return
         when (outcome) {
-            is DictionaryLookup.Lookup.Message -> show(Shown.Message, outcome.text)
-            is DictionaryLookup.Lookup.Found -> {
+            is Lookup.Message -> show(Shown.Message, outcome.text)
+            is Lookup.Found -> {
                 queryView.highlight = outcome.result.start + shift to outcome.result.end + shift
                 show(Shown.Results)
                 lookup.show(outcome)

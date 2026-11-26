@@ -1,14 +1,10 @@
 package io.github.kvth.hiroi.dictionary
 
-import android.content.ContentValues
-import android.content.Context
-import android.database.DatabaseUtils
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
-import android.graphics.BitmapFactory
 import io.github.kvth.hiroi.settings.SettingsBackup
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -27,52 +23,31 @@ import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
 /**
- * The imported Yomitan dictionaries: each in a file of its own ([DictionaryFile]), and their list
- * here, in SQLite, with their order (their priority: the first comes first) and switches.
- * The list is kept in memory, so a lookup only opens the files of the dictionaries it needs.
+ * The imported Yomitan dictionaries: each in a file of its own ([DictionaryFile]) in [folder], and
+ * their list in [list], a JSON file, with their order (their priority: the first comes first) and
+ * switches. The list is kept in memory, so a lookup only opens the files of the dictionaries it
+ * needs; each change writes the file anew. [rasterSize] tells a PNG's, JPEG's… width and height
+ * (null if it can't), for the images some dictionaries come with.
  */
-class DictionaryDb private constructor(context: Context) :
-    SQLiteOpenHelper(context, "dictionaries.db", null, 11), DictionaryStore {
-
-    /** The dictionaries' files */
-    private val folder = File(context.filesDir, "dictionaries")
-
-    /** Where images were before dictionaries had files of their own */
-    private val legacyMediaDir = File(context.filesDir, "dictionary-media")
-
-    init {
-        setWriteAheadLoggingEnabled(true)
-    }
-
-    override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            "CREATE TABLE dictionaries (id INTEGER PRIMARY KEY, title TEXT NOT NULL UNIQUE, revision TEXT, " +
-                "terms INTEGER DEFAULT 0, meta INTEGER DEFAULT 0, kanji INTEGER DEFAULT 0, styles TEXT, " +
-                "frequency_mode TEXT, frequencies INTEGER DEFAULT 0, position INTEGER DEFAULT 0, summary TEXT, enabled INTEGER DEFAULT 1, images INTEGER DEFAULT 0, " +
-                "file TEXT NOT NULL, forms INTEGER)",
-        )
-    }
-
-    /**
-     * Before 10, dictionaries were SQLite files (up to 8, tables here that they shared). Those
-     * aren't carried over to [DictionaryFile]s: the dictionaries need importing again. 11 counts
-     * the forms of other words; the dictionaries imported before don't know theirs (null).
-     */
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 10) {
-            for (table in listOf("dictionaries", "terms", "term_meta", "kanji", "kanji_meta", "tags", "media")) db.execSQL("DROP TABLE IF EXISTS $table")
-            onCreate(db)
-            legacyMediaDir.deleteRecursively()
-            folder.deleteRecursively()
-        } else if (oldVersion < 11) {
-            db.execSQL("ALTER TABLE dictionaries ADD COLUMN forms INTEGER")
-        }
-    }
+class DictionaryDb(
+    private val folder: File,
+    private val list: File,
+    private val rasterSize: (ByteArray) -> Pair<Int, Int>?,
+) : DictionaryStore {
 
     // ---- The list ------------------------------------------------------------------------------
 
-    /** A dictionary in the list; [file] is its file's name in [folder]. */
-    private class Entry(val info: DictionaryInfo, val position: Int, val file: String)
+    /**
+     * A dictionary in the list; [file] is its file's name in [folder], [position] its place (1
+     * the first). [styles] is its styles.css, [summary] its index.json (with its update links).
+     */
+    private class Entry(val info: DictionaryInfo, val position: Int, val file: String, val styles: String?, val summary: String?)
+
+    /**
+     * A dictionary of a list kept elsewhere before (in SQLite, as Hiroi on Android did), for
+     * [writeList]; [file] is its file's name in the dictionaries' folder.
+     */
+    class Listed(val info: DictionaryInfo, val file: String, val styles: String?, val index: String?)
 
     @Volatile
     private var cached: List<Entry>? = null
@@ -86,18 +61,7 @@ class DictionaryDb private constructor(context: Context) :
     private var tidied = false
 
     private fun load(): List<Entry> {
-        val entries = readableDatabase.rawQuery(
-            "SELECT id, title, revision, terms, meta, kanji, frequencies, frequency_mode, enabled, images, position, file, forms FROM dictionaries ORDER BY position, id", null,
-        ).use { c ->
-            List(c.count) {
-                c.moveToNext()
-                val info = DictionaryInfo(
-                    c.getLong(0), c.getString(1), c.getString(2).orEmpty(), c.getInt(3), c.getInt(4), c.getInt(5),
-                    c.getInt(6), c.getString(7), c.getInt(8) != 0, c.getInt(9), if (c.isNull(12)) null else c.getInt(12),
-                )
-                Entry(info, c.getInt(10), c.getString(11))
-            }
-        }
+        val entries = if (list.isFile) parseList(list.readText()) else emptyList()
         if (!tidied) {
             tidied = true
             // A dictionary's file and its suffix search keys ("x.hd.rev"); not what imports leave
@@ -108,9 +72,18 @@ class DictionaryDb private constructor(context: Context) :
         return entries
     }
 
-    /** After the list changed */
-    private fun changed() {
-        cached = null
+    /** Changes the list with [change], which gets the dictionaries in their order to put them as they're to be, and writes it ([save]). */
+    private fun update(change: (MutableList<Entry>) -> Unit) = synchronized(this) {
+        val entries = entries().toMutableList().also(change)
+            .mapIndexed { i, e -> if (e.position == i + 1) e else Entry(e.info, i + 1, e.file, e.styles, e.summary) }
+        save(list, entries)
+        cached = entries
+    }
+
+    /** [change]d entry [id], if it's there */
+    private fun updateEntry(id: Long, change: (Entry) -> Entry) = update { entries ->
+        val i = entries.indexOfFirst { it.info.id == id }
+        if (i >= 0) entries[i] = change(entries[i])
     }
 
     fun dictionaries(): List<DictionaryInfo> = entries().map { it.info }
@@ -121,10 +94,7 @@ class DictionaryDb private constructor(context: Context) :
     fun enabledDictionaries(): List<DictionaryInfo> = dictionaries().filter { it.enabled }
 
     /** Each dictionary's styles.css by title, for showing its definitions as Yomitan does. */
-    fun styles(): Map<String, String> =
-        readableDatabase.rawQuery("SELECT title, styles FROM dictionaries WHERE styles IS NOT NULL", null).use { c ->
-            buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) }
-        }
+    fun styles(): Map<String, String> = entries().mapNotNull { e -> e.styles?.let { e.info.title to it } }.toMap()
 
     /** What dictionary [id]'s file says about it, with the counts Yomitan's details show; null if it's gone. */
     fun facts(id: Long): DictionaryFacts? {
@@ -133,19 +103,13 @@ class DictionaryDb private constructor(context: Context) :
     }
 
     /** Dictionary [id]'s index.json as stored (with its update links), if it was stored. */
-    fun summary(id: Long): String? =
-        readableDatabase.rawQuery("SELECT summary FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
+    fun summary(id: Long): String? = entries().firstOrNull { it.info.id == id }?.summary
 
     /**
      * Turns dictionary [id] on or off, as Yomitan's switch per dictionary: one that's off stays
      * installed but is left out of lookups, frequency sorting and Anki's per-dictionary markers.
      */
-    fun setEnabled(id: Long, enabled: Boolean) {
-        writableDatabase.update("dictionaries", ContentValues().apply { put("enabled", if (enabled) 1 else 0) }, "id = ?", arrayOf(id.toString()))
-        changed()
-    }
+    fun setEnabled(id: Long, enabled: Boolean) = updateEntry(id) { e -> Entry(e.info.copy(enabled = enabled), e.position, e.file, e.styles, e.summary) }
 
     /**
      * Moves dictionary [id] up ([by] < 0) or down in the order, which is their priority as in
@@ -167,18 +131,9 @@ class DictionaryDb private constructor(context: Context) :
         setOrder(order)
     }
 
-    private fun setOrder(order: List<Long>) {
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            for ((i, dict) in order.withIndex()) {
-                db.update("dictionaries", ContentValues().apply { put("position", i + 1) }, "id = ?", arrayOf(dict.toString()))
-            }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
-        changed()
+    /** Puts the dictionaries in [order] (their ids); any it leaves out go after them. */
+    private fun setOrder(order: List<Long>) = update { entries ->
+        entries.sortBy { e -> order.indexOf(e.info.id).let { if (it < 0) order.size else it } }
     }
 
     /**
@@ -190,32 +145,24 @@ class DictionaryDb private constructor(context: Context) :
         val byTitle = installed.associateBy { it.title }
         val listed = states.mapNotNull { state -> byTitle[state.title]?.let { it to state.enabled } }
         val order = listed.map { it.first.id }.distinct() + installed.map { it.id }.filter { id -> listed.none { it.first.id == id } }
-        setOrder(order)
-        for ((info, enabled) in listed) setEnabled(info.id, enabled)
+        val switches = listed.associate { (info, enabled) -> info.id to enabled }
+        update { entries ->
+            entries.sortBy { order.indexOf(it.info.id) }
+            entries.replaceAll { e -> switches[e.info.id]?.let { Entry(e.info.copy(enabled = it), e.position, e.file, e.styles, e.summary) } ?: e }
+        }
         return states.map { it.title }.filter { it !in byTitle }
     }
 
     /** Adds the dictionary in file [name] (in [folder]) to the end of the list, with what the file says about it. */
     private fun register(facts: DictionaryFacts, name: String, enabled: Boolean = true): DictionaryInfo {
-        val db = writableDatabase
-        val id = db.insertOrThrow("dictionaries", null, ContentValues().apply {
-            put("title", facts.title)
-            put("revision", facts.revision)
-            put("frequency_mode", facts.frequencyMode)
-            put("position", DatabaseUtils.longForQuery(db, "SELECT COALESCE(MAX(position), 0) + 1 FROM dictionaries", null))
-            put("summary", facts.index)
-            put("styles", facts.styles)
-            put("enabled", if (enabled) 1 else 0)
-            put("file", name)
-            put("terms", facts.terms)
-            put("meta", facts.meta)
-            put("kanji", facts.kanji)
-            put("frequencies", facts.frequencies)
-            put("images", facts.images)
-            put("forms", facts.forms)
-        })
-        changed()
-        return DictionaryInfo(id, facts.title, facts.revision, facts.terms, facts.meta, facts.kanji, facts.frequencies, facts.frequencyMode, enabled, facts.images, facts.forms)
+        lateinit var info: DictionaryInfo
+        update { entries ->
+            require(entries.none { it.info.title == facts.title }) { "\"${facts.title}\" is already imported" }
+            val id = (entries.maxOfOrNull { it.info.id } ?: 0) + 1
+            info = DictionaryInfo(id, facts.title, facts.revision, facts.terms, facts.meta, facts.kanji, facts.frequencies, facts.frequencyMode, enabled, facts.images, facts.forms)
+            entries += Entry(info, entries.size + 1, name, facts.styles, facts.index)
+        }
+        return info
     }
 
     /** A name for a new dictionary file; while it's written, it has ".importing" after it. */
@@ -409,7 +356,7 @@ class DictionaryDb private constructor(context: Context) :
         val reverseKeys = searchable().any { runCatching { file(it).hasReverseKeys() }.getOrDefault(false) }
         val name = newFile()
         try {
-            val facts = write(zip, writing(name), reverseKeys, onProgress)
+            val facts = write(zip, writing(name), reverseKeys, rasterSize, onProgress)
             if (reverseKeys) File(writing(name).path + ".rev").renameTo(File(folder, "$name.rev"))
             finishWriting(name)
             return register(facts, name)
@@ -426,15 +373,9 @@ class DictionaryDb private constructor(context: Context) :
      * same: the old one is renamed meanwhile, and gets its title back if the import fails.
      */
     fun replace(oldId: Long, zip: File, onProgress: (Progress) -> Unit): DictionaryInfo {
-        val db = writableDatabase
-        val (title, position, enabled) = db.rawQuery("SELECT title, position, enabled FROM dictionaries WHERE id = ?", arrayOf(oldId.toString())).use { c ->
-            require(c.moveToFirst()) { "The dictionary to update is gone" }
-            Triple(c.getString(0), c.getLong(1), c.getInt(2))
-        }
-        fun rename(to: String) {
-            db.update("dictionaries", ContentValues().apply { put("title", to) }, "id = ?", arrayOf(oldId.toString()))
-            changed()
-        }
+        val old = entries().firstOrNull { it.info.id == oldId } ?: throw IllegalArgumentException("The dictionary to update is gone")
+        val title = old.info.title
+        fun rename(to: String) = updateEntry(oldId) { e -> Entry(e.info.copy(title = to), e.position, e.file, e.styles, e.summary) }
         rename("$title (updating)")
         val info = try {
             import(zip, onProgress)
@@ -442,24 +383,18 @@ class DictionaryDb private constructor(context: Context) :
             rename(title)
             throw e
         }
-        db.update(
-            "dictionaries",
-            ContentValues().apply {
-                put("position", position)
-                put("enabled", enabled)
-            },
-            "id = ?", arrayOf(info.id.toString()),
-        )
-        changed()
+        update { entries ->
+            val new = entries.first { it.info.id == info.id }
+            entries.remove(new)
+            entries.add(entries.indexOfFirst { it.info.id == oldId }.coerceAtLeast(0), Entry(new.info.copy(enabled = old.info.enabled), 0, new.file, new.styles, new.summary))
+        }
         delete(oldId)
         return dictionaries().first { it.id == info.id }
     }
 
     fun delete(id: Long) {
-        val db = writableDatabase
-        val name = db.rawQuery("SELECT file FROM dictionaries WHERE id = ?", arrayOf(id.toString())).use { c -> if (c.moveToFirst()) c.getString(0) else null }
-        db.delete("dictionaries", "id = ?", arrayOf(id.toString()))
-        changed()
+        val name = entries().firstOrNull { it.info.id == id }?.file
+        update { entries -> entries.removeAll { it.info.id == id } }
         if (name != null) {
             files.remove(name)?.close()
             File(folder, name).delete()
@@ -594,15 +529,10 @@ class DictionaryDb private constructor(context: Context) :
             throw e.cause ?: e
         }
 
-        /** An image's size: an SVG's from its attributes (100 × 100 if it has none, Yomitan's default), else the image's own. */
-        private fun imageSize(type: String, bytes: ByteArray): Pair<Int, Int> =
-            if (type == "image/svg+xml") {
-                DictionaryImages.svgSize(String(bytes)) ?: (100 to 100)
-            } else {
-                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                if (options.outWidth > 0) options.outWidth to options.outHeight else 100 to 100
-            }
+        /** An image's size: an SVG's from its attributes, else the image's own ([rasterSize]); 100 × 100 (Yomitan's default) if it can't tell. */
+        private fun imageSize(type: String, bytes: ByteArray, rasterSize: (ByteArray) -> Pair<Int, Int>?): Pair<Int, Int> =
+            if (type == "image/svg+xml") DictionaryImages.svgSize(String(bytes)) ?: (100 to 100)
+            else rasterSize(bytes)?.takeIf { it.first > 0 && it.second > 0 } ?: (100 to 100)
 
         /**
          * Writes the Yomitan dictionary in [zip] as a [DictionaryFile] at [out] (and its suffix
@@ -612,7 +542,7 @@ class DictionaryDb private constructor(context: Context) :
          * rows. Several threads parse them and deflate the glossaries while this one writes, in
          * their order.
          */
-        fun write(zip: File, out: File, reverseKeys: Boolean, onProgress: (Progress) -> Unit): DictionaryFacts = ZipFile(zip).use { file ->
+        fun write(zip: File, out: File, reverseKeys: Boolean, rasterSize: (ByteArray) -> Pair<Int, Int>?, onProgress: (Progress) -> Unit): DictionaryFacts = ZipFile(zip).use { file ->
             val indexJson = file.getInputStream(file.getEntry("index.json")).use { String(it.readBytes(), Charsets.UTF_8) }
             val index = Yomitan.parseIndex(indexJson)
             val styles = file.getEntry("styles.css")?.let { entry -> file.getInputStream(entry).use { String(it.readBytes(), Charsets.UTF_8) } }
@@ -654,7 +584,7 @@ class DictionaryDb private constructor(context: Context) :
                 for (entry in images) {
                     val bytes = file.getInputStream(entry).use { it.readBytes() }
                     val type = DictionaryImages.mediaType(entry.name)!!
-                    val size = imageSize(type, bytes)
+                    val size = imageSize(type, bytes, rasterSize)
                     writer.media(entry.name, bytes, type, size)
                     sizes[entry.name] = size
                     advance(entry, "reading images")
@@ -717,12 +647,58 @@ class DictionaryDb private constructor(context: Context) :
             }
         }
 
-        @Volatile
-        private var instance: DictionaryDb? = null
-
-        fun get(context: Context): DictionaryDb =
-            instance ?: synchronized(this) {
-                instance ?: DictionaryDb(context.applicationContext).also { instance = it }
+        /**
+         * Writes [entries] as the list at [list]: to a file beside it first, which then takes its
+         * place, so the list is either as it was or as it's to be.
+         */
+        private fun save(list: File, entries: List<Entry>) {
+            val temporary = File(list.path + ".new")
+            FileOutputStream(temporary).use { out ->
+                out.write(listJson(entries).toByteArray())
+                out.fd.sync()
             }
+            if (!temporary.renameTo(list)) throw IOException("Couldn't write the dictionary list")
+        }
+
+        /** The list as [DictionaryDb] keeps it: the dictionaries in their order */
+        private fun listJson(entries: List<Entry>): String = JSONObject()
+            .put("version", 1)
+            .put("dictionaries", JSONArray(entries.map { e ->
+                val info = e.info
+                JSONObject()
+                    .put("id", info.id)
+                    .put("title", info.title)
+                    .put("revision", info.revision)
+                    .put("file", e.file)
+                    .put("enabled", info.enabled)
+                    .put("terms", info.terms)
+                    .put("meta", info.meta)
+                    .put("kanji", info.kanji)
+                    .put("frequencies", info.frequencies)
+                    .put("frequencyMode", info.frequencyMode ?: JSONObject.NULL)
+                    .put("images", info.images)
+                    .put("forms", info.forms ?: JSONObject.NULL)
+                    .put("styles", e.styles ?: JSONObject.NULL)
+                    .put("index", e.summary ?: JSONObject.NULL)
+            }))
+            .toString(1)
+
+        private fun parseList(json: String): List<Entry> {
+            val array = JSONObject(json).getJSONArray("dictionaries")
+            return List(array.length()) { i ->
+                val o = array.getJSONObject(i)
+                fun string(key: String) = if (o.isNull(key)) null else o.getString(key)
+                val info = DictionaryInfo(
+                    o.getLong("id"), o.getString("title"), o.optString("revision"), o.optInt("terms"), o.optInt("meta"), o.optInt("kanji"),
+                    o.optInt("frequencies"), string("frequencyMode"), o.optBoolean("enabled", true), o.optInt("images"),
+                    if (o.isNull("forms")) null else o.getInt("forms"),
+                )
+                Entry(info, i + 1, o.getString("file"), string("styles"), string("index"))
+            }
+        }
+
+        /** Writes [dictionaries], in their order, as the list at [list] for a [DictionaryDb] to read */
+        fun writeList(list: File, dictionaries: List<Listed>) =
+            save(list, dictionaries.mapIndexed { i, d -> Entry(d.info, i + 1, d.file, d.styles, d.index) })
     }
 }

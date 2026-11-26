@@ -289,13 +289,13 @@ class LookupActivity : Activity() {
         lookup.lookUp(textView.text.toString(), offset, ::showLookup)
     }
 
-    private fun showLookup(outcome: DictionaryLookup.Lookup) {
+    private fun showLookup(outcome: Lookup) {
         when (outcome) {
-            is DictionaryLookup.Lookup.Message -> {
+            is Lookup.Message -> {
                 lookedUp = null
                 showResultsText(outcome.text)
             }
-            is DictionaryLookup.Lookup.Found -> {
+            is Lookup.Found -> {
                 lookedUp = outcome.result.start to outcome.result.end
                 // Select the matched word so Copy and Look up act on it. The selection only shows
                 // while the text has focus, which it lacks when the tap was on a box.
