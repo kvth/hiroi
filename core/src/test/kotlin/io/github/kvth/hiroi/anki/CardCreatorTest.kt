@@ -192,12 +192,14 @@ class CardCreatorTest {
         )
         val data = CardData(term, "昨日、{ラーメン}を\n食べた。", 5, 8, frequencySort = FrequencySort("JPDB", ascending = true))
         data.screenshotRegion = "hiroi_screenshot_region_1.png"
+        data.screenshotPicture = "hiroi_screenshot_picture_1.png"
         val fields = mapOf(
             "Kanji" to "{kanji-meanings}|{kanji-readings}",
             "Conjugation" to "{conjugation-description}",
             "Context" to "{text-block}",
             "Rank" to "{frequency-sort-rank}",
             "Picture" to "{screenshot-region}",
+            "Page" to "{screenshot-picture}",
             "Word" to "{expression}",
         )
         val (filled, error) = hiroiMarkers(fields, data)
@@ -210,6 +212,7 @@ class CardCreatorTest {
         assertEquals("300", filled["Rank"])
         assertEquals("900", hiroiMarkers(fields, CardData(term, "", 0, 0, frequencySort = FrequencySort("JPDB", ascending = false))).first["Rank"])
         assertEquals("""<img src="hiroi_screenshot_region_1.png">""", filled["Picture"])
+        assertEquals("""<img src="hiroi_screenshot_picture_1.png">""", filled["Page"])
         assertEquals("{expression}", filled["Word"])
         // Without a sorting dictionary or a region: empty
         val bare = hiroiMarkers(fields, CardData(term, "", 0, 0)).first
@@ -221,12 +224,14 @@ class CardCreatorTest {
         // The word 食べ in a text block of two lines, spaces around it
         val text = "  昨日、ラーメンを\n食べた。今日は{寿司}。  "
         val start = text.indexOf("食べ")
-        val data = CardData(term("食べる"), text, start, start + 2, now = { LocalDateTime.of(2026, 11, 26, 9, 5, 30) })
-        val fields = mapOf("Before" to "{text-block-prefix}", "After" to "{text-block-suffix}", "Added" to "{local-time}")
+        val data = CardData(term("食べる"), text, start, start + 2, playbackTime = "12:34", now = { LocalDateTime.of(2026, 11, 26, 9, 5, 30) })
+        val fields = mapOf("Before" to "{text-block-prefix}", "After" to "{text-block-suffix}", "Added" to "{local-time}", "At" to "{playback-time}")
         val filled = hiroiMarkers(fields, data).first
         assertEquals("昨日、ラーメンを<br>", filled["Before"])
         assertEquals("た。今日は&#123;寿司}。", filled["After"])
         assertEquals("2026-11-26 09:05", filled["Added"])
+        assertEquals("12:34", filled["At"])
+        assertEquals("", hiroiMarkers(fields, CardData(term("食べる"), text, start, start + 2)).first["At"])
     }
 
     @Test

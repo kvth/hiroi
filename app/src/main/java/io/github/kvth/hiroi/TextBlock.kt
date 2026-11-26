@@ -75,6 +75,17 @@ object CaptureStore {
     @Volatile
     var sourcePackage: String? = null
 
+    /** The page's address as its browser told the assistant (Chrome does), for a card's {url} */
+    @Volatile
+    var assistUrl: String? = null
+
+    /** What the app showed about where the text is from: title, address bar, pictures, playback time */
+    @Volatile
+    var source: ScreenSource = ScreenSource()
+
+    /** The address of the page the text is from, if it's from one: the browser's own, else its address bar's */
+    val pageUrl get() = assistUrl ?: source.url
+
     /** The screen as it was when the overlay was triggered, for OCR; null if there is none. */
     @Volatile
     var screenshot: Bitmap? = null

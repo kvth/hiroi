@@ -28,6 +28,8 @@ class CardData(
     val start: Int,
     val end: Int,
     val documentTitle: String = "",
+    /** The address of the page the text is from, for {url}; empty outside a browser */
+    val url: String = "",
     val parse: (String) -> List<List<Furigana.Segment>> = { listOf(listOf(Furigana.Segment(it, null))) },
     val selection: String = "",
     /** The recording picked in the result's audio menu, for {audio}; else the sources' first */
@@ -38,6 +40,8 @@ class CardData(
     val frequencySort: FrequencySort? = null,
     /** What kanji are built from, for {kanji-parts} */
     val kanjiParts: KanjiParts? = null,
+    /** Where a video was, as its player showed it ("12:34"), for {playback-time}; empty without one */
+    val playbackTime: String = "",
     /** The time now, for {local-time} */
     private val now: () -> LocalDateTime = LocalDateTime::now,
 ) {
@@ -46,6 +50,9 @@ class CardData(
 
     /** The screenshot of the box or region as stored in Anki, for {screenshot-region}; set by [CardCreator] */
     var screenshotRegion: String? = null
+
+    /** The picture the text is on, cut out of the screenshot, as stored in Anki, for {screenshot-picture}; set by [CardCreator] */
+    var screenshotPicture: String? = null
 
     /** The sentence's translation, made once for the card (both passes need it) */
     val sentenceTranslation: Result<String> by lazy {
@@ -58,6 +65,12 @@ class CardData(
 fun interface Screenshot {
     fun encode(jpeg: Boolean, quality: Int): ByteArray
 }
+
+/**
+ * The screenshots a card can have: the [full] screen, its [region] with the text (the box or
+ * region) for {screenshot-region}, and the [picture] the text is on for {screenshot-picture}.
+ */
+class Screenshots(val full: Screenshot? = null, val region: Screenshot? = null, val picture: Screenshot? = null)
 
 /**
  * A card format's fields filled for a card: [errors] are templates that failed (their field
@@ -112,6 +125,8 @@ fun hiroiMarkers(fields: Map<String, String>, data: CardData): Pair<Map<String, 
             "local-time" -> data.time.format(LOCAL_TIME)
             "frequency-sort-rank" -> frequencySortRank(data)?.toString().orEmpty()
             "screenshot-region" -> data.screenshotRegion?.let { "<img src=\"${Html.escape(it)}\">" }.orEmpty()
+            "screenshot-picture" -> data.screenshotPicture?.let { "<img src=\"${Html.escape(it)}\">" }.orEmpty()
+            "playback-time" -> markerHtml(data.playbackTime)
             else -> ""
         }
     }
@@ -181,11 +196,12 @@ class CardCreator(
 
     /**
      * Adds the note; throws [DuplicateNoteException] if duplicates are prevented. [region] is the
-     * screenshot of just the box or region, for {screenshot-region}.
+     * screenshot of just the box or region, for {screenshot-region}; [picture] the picture the
+     * text is on, for {screenshot-picture}.
      */
-    fun add(data: CardData, screenshot: Screenshot?, region: Screenshot? = null): Result {
+    fun add(data: CardData, screenshot: Screenshot?, region: Screenshot? = null, picture: Screenshot? = null): Result {
         if (format.preventDuplicates && !anki.canAddNote(duplicateCheckNote(data.term))) throw DuplicateNoteException()
-        val note = render(data, screenshot, region)
+        val note = render(data, screenshot, region, picture)
         val (fields, stylesChanged) = withoutStyles(note.fields)
         return withNoteType(Result(anki.addNote(note(format, fields)), note.errors, stylesChanged))
     }
@@ -194,9 +210,9 @@ class CardCreator(
      * Overwrites note [id] with the note [data] makes, as Yomitan does with duplicates: each field
      * by its overwrite mode (by default only where the existing note's field is empty).
      */
-    fun overwrite(id: Long, data: CardData, screenshot: Screenshot?, region: Screenshot? = null): Result {
+    fun overwrite(id: Long, data: CardData, screenshot: Screenshot?, region: Screenshot? = null, picture: Screenshot? = null): Result {
         val existing = anki.notesInfo(listOf(id)).singleOrNull()?.fields ?: throw AnkiException("Note $id is gone")
-        val note = render(data, screenshot, region)
+        val note = render(data, screenshot, region, picture)
         val (newFields, stylesChanged) = withoutStyles(note.fields)
         val fields = newFields
             .filterKeys { it in existing }
@@ -253,16 +269,21 @@ class CardCreator(
 
     /**
      * Both passes: the fields, and, if they need media, the fields again with the media stored.
-     * {screenshot-region}, Hiroi's own, is stored first, if a field has it.
+     * {screenshot-region} and {screenshot-picture}, Hiroi's own, are stored first, if a field has them.
      */
-    private fun render(data: CardData, screenshot: Screenshot?, region: Screenshot?): RenderedNote {
-        if (region != null && data.screenshotRegion == null && format.fields.values.any { AnkiMarkers.SCREENSHOT_REGION in it }) {
-            val (bytes, extension) = image(region)
-            data.screenshotRegion = anki.storeMediaFile("hiroi_screenshot_region_${System.currentTimeMillis()}.$extension", bytes)
-        }
+    private fun render(data: CardData, screenshot: Screenshot?, region: Screenshot?, picture: Screenshot?): RenderedNote {
+        if (data.screenshotRegion == null) data.screenshotRegion = stored(region, AnkiMarkers.SCREENSHOT_REGION, "hiroi_screenshot_region")
+        if (data.screenshotPicture == null) data.screenshotPicture = stored(picture, AnkiMarkers.SCREENSHOT_PICTURE, "hiroi_screenshot_picture")
         val first = renderer.render(data, null, null)
         if (first.requirements.length() == 0) return first
         return renderer.render(data, first.requirements, media(first.requirements, data, screenshot))
+    }
+
+    /** [screenshot] stored in Anki under a name starting with [name], if a field has [marker]; its file name */
+    private fun stored(screenshot: Screenshot?, marker: String, name: String): String? {
+        if (screenshot == null || format.fields.values.none { marker in it }) return null
+        val (bytes, extension) = image(screenshot)
+        return anki.storeMediaFile("${name}_${System.currentTimeMillis()}.$extension", bytes)
     }
 
     /**

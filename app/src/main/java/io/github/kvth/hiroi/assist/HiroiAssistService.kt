@@ -14,6 +14,7 @@ import io.github.kvth.hiroi.AssistStructureCapture
 import io.github.kvth.hiroi.CaptureStore
 import io.github.kvth.hiroi.HiroiAccessibilityService
 import io.github.kvth.hiroi.LookupActivity
+import io.github.kvth.hiroi.ScreenSource
 
 class HiroiAssistService : VoiceInteractionService()
 
@@ -28,6 +29,9 @@ class HiroiSessionService : VoiceInteractionSessionService() {
 class HiroiSession(context: Context) : VoiceInteractionSession(context) {
     private var launched = false
 
+    /** The overlay was open on a frozen screen: what's in front now is Hiroi, not the page */
+    private var frozen = false
+
     override fun onCreate() {
         super.onCreate()
         setUiEnabled(false)
@@ -38,15 +42,18 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
         // Android hands the next trigger to a session that is still showing (e.g. when the overlay
         // was left with Home), so every show starts over.
         launched = false
+        frozen = false
         val accessibility = HiroiAccessibilityService.instance
         Log.d(TAG, "onShow flags=$showFlags accessibility=${accessibility != null}")
         // The overlay is open on a frozen screen: it keeps the moment it shows.
         if (LookupActivity.keepsFrozen(context)) {
+            frozen = true
             launched = true
             launch()
             return
         }
         CaptureStore.screenshot = null
+        CaptureStore.assistUrl = null
         // The accessibility service sees every window (status bar, notifications, dialogs),
         // so prefer it over the assist structure, which only covers the foreground app.
         if (accessibility != null) {
@@ -69,9 +76,14 @@ class HiroiSession(context: Context) : VoiceInteractionSession(context) {
     }
 
     override fun onHandleAssist(state: AssistState) {
+        // Browsers (Chrome) give the assistant their page's address: kept for {url} also when the
+        // accessibility service captured the text, and better than what its address bar shows.
+        if (!frozen && state.isFocused) state.assistContent?.webUri?.let { CaptureStore.assistUrl = it.toString() }
         if (launched || !state.isFocused) return
         launched = true
-        CaptureStore.update(state.assistStructure?.let(AssistStructureCapture::capture).orEmpty())
+        val capture = state.assistStructure?.let(AssistStructureCapture::capture)
+        CaptureStore.update(capture?.blocks.orEmpty())
+        CaptureStore.source = capture?.source ?: ScreenSource()
         CaptureStore.sourcePackage = state.assistStructure?.activityComponent?.packageName
         launch()
     }

@@ -25,17 +25,20 @@ object AnkiMarkers {
     /** {screenshot-region}: the screenshot cut to the box tapped or the region dragged out, whatever {screenshot} does */
     const val SCREENSHOT_REGION = "{screenshot-region}"
 
+    /** {screenshot-picture}: the picture the text is on (the manga page, a panel), cut out of the screenshot */
+    const val SCREENSHOT_PICTURE = "{screenshot-picture}"
+
     /**
      * Hiroi's own markers, besides Yomitan's ([hiroiMarkers] fills them): the sentence translated;
      * each kanji of the word with its meanings, with its readings, and with its parts; the
      * inflections with what each means; the text the word was looked up in (the box, the region,
      * all of them, or what was searched), and that text before and after the word; the rank from
-     * the frequency dictionary results are sorted by; the screenshot of just the box or region;
-     * and when the card was made.
+     * the frequency dictionary results are sorted by; the screenshot of just the box or region,
+     * and of just the picture the text is on; where a video was; and when the card was made.
      */
     val HIROI_MARKERS = listOf(
         "sentence-translation", "kanji-meanings", "kanji-readings", "kanji-parts", "conjugation-description", "text-block",
-        "text-block-prefix", "text-block-suffix", "frequency-sort-rank", "screenshot-region", "local-time",
+        "text-block-prefix", "text-block-suffix", "frequency-sort-rank", "screenshot-region", "screenshot-picture", "playback-time", "local-time",
     )
 
     /** Markers [format]'s fields use that neither [templates] nor the dictionaries define: they'd come out as {name-render-error}. */

@@ -113,11 +113,12 @@ class YomitanNoteDataTest {
 
     @Test
     fun cutsOutTheSentenceForTheContext() {
-        val context: JSONObject = YomitanNoteData.context(CardData(term, "昨日、パンを食べなかった。今日は食べる。", 6, 12, "Kindle"))
+        val context: JSONObject = YomitanNoteData.context(CardData(term, "昨日、パンを食べなかった。今日は食べる。", 6, 12, "Kindle", url = "https://example.com/a"))
         val sentence = context.getJSONObject("sentence")
         assertEquals("昨日、パンを食べなかった。", sentence.getString("text"))
         assertEquals(6, sentence.getInt("offset"))
         assertEquals("Kindle", context.getString("documentTitle"))
+        assertEquals("https://example.com/a", context.getString("url"))
         assertEquals("昨日、パンを食べなかった。今日は食べる。", context.getString("fullQuery"))
     }
 

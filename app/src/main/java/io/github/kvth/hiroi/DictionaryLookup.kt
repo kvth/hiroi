@@ -17,7 +17,7 @@ import io.github.kvth.hiroi.anki.AnkiDroidApi
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardCreator
 import io.github.kvth.hiroi.anki.Furigana
-import io.github.kvth.hiroi.anki.Screenshot
+import io.github.kvth.hiroi.anki.Screenshots
 import io.github.kvth.hiroi.anki.asScreenshot
 import io.github.kvth.hiroi.audio.AudioPlayer
 import io.github.kvth.hiroi.audio.AudioSettings
@@ -33,7 +33,8 @@ import io.github.kvth.hiroi.translation.Translations
 /**
  * The results of a [LookupSession] in [web], a WebView, on the phone: the session's host and the
  * page's bridge to it. Used by the overlay and the search screen. [documentTitle] and
- * [screenshot] fill a card's {document-title} and {screenshot}.
+ * [screenshot] fill a card's {document-title} and {screenshot}; [source] its {url},
+ * {screenshot-picture} and {playback-time}.
  */
 class DictionaryLookup(
     private val activity: Activity,
@@ -41,6 +42,8 @@ class DictionaryLookup(
     private val screenshot: () -> Bitmap?,
     /** The text selected where the word was looked up, for {popup-selection-text}. */
     private val selection: () -> String = { "" },
+    /** What the app the text is from showed about where it's from (its url the page's address) */
+    private val source: () -> ScreenSource = { ScreenSource() },
     /** Where on the screen the text is (its box or region), for a cropped {screenshot}; null for all of it */
     private val screenshotArea: () -> Rect? = { null },
 ) {
@@ -138,9 +141,15 @@ class DictionaryLookup(
 
         override fun selection() = this@DictionaryLookup.selection()
 
-        override fun screenshots(): Pair<Screenshot?, Screenshot?> {
-            val full = screenshot() ?: return null to null
-            return full.asScreenshot() to crop(full, screenshotArea()).asScreenshot()
+        override fun pageUrl() = source().url.orEmpty()
+
+        override fun playbackTime() = source().playbackTime.orEmpty()
+
+        override fun screenshots(): Screenshots {
+            val full = screenshot() ?: return Screenshots()
+            val area = screenshotArea()
+            val picture = source().pictureAround(area?.box())?.let { crop(full, it.rect(), margin = false).asScreenshot() }
+            return Screenshots(full.asScreenshot(), crop(full, area).asScreenshot(), picture)
         }
 
         override fun translate(sentence: String) = Translations(activity).translate(sentence).text
@@ -178,10 +187,10 @@ class DictionaryLookup(
     private fun clipboardText(): String? =
         activity.getSystemService(ClipboardManager::class.java)?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(activity)?.toString()
 
-    /** [area] of [full] (screen coordinates) with a margin around it, within the picture; all of it without an area. */
-    private fun crop(full: Bitmap, area: Rect?): Bitmap {
+    /** [area] of [full] (screen coordinates) with a [margin] around it, within the picture; all of it without an area. */
+    private fun crop(full: Bitmap, area: Rect?, margin: Boolean = true): Bitmap {
         if (area == null) return full
-        val margin = (CROP_MARGIN_DP * activity.resources.displayMetrics.density).toInt()
+        val margin = if (margin) (CROP_MARGIN_DP * activity.resources.displayMetrics.density).toInt() else 0
         val inside = Rect(area.left - margin, area.top - margin, area.right + margin, area.bottom + margin)
         if (!inside.intersect(0, 0, full.width, full.height) || inside.isEmpty) return full
         return Bitmap.createBitmap(full, inside.left, inside.top, inside.width(), inside.height())

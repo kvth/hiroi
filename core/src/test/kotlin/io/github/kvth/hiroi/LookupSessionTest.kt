@@ -2,7 +2,7 @@ package io.github.kvth.hiroi
 
 import io.github.kvth.hiroi.anki.AnkiSettings
 import io.github.kvth.hiroi.anki.CardCreator
-import io.github.kvth.hiroi.anki.Screenshot
+import io.github.kvth.hiroi.anki.Screenshots
 import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.AudioSource
 import io.github.kvth.hiroi.audio.WordAudio
@@ -39,7 +39,9 @@ class LookupSessionTest {
         override fun log(message: String, error: Throwable?) {}
         override fun documentTitle() = ""
         override fun selection() = ""
-        override fun screenshots(): Pair<Screenshot?, Screenshot?> = null to null
+        override fun pageUrl() = ""
+        override fun playbackTime() = ""
+        override fun screenshots() = Screenshots()
         override fun translate(sentence: String) = throw UnsupportedOperationException()
         override fun cardCreator(): CardCreator = throw UnsupportedOperationException()
         override fun browseInLocalAnki(query: String) = false

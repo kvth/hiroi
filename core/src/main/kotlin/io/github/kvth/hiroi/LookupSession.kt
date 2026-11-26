@@ -5,7 +5,7 @@ import io.github.kvth.hiroi.anki.CardCreator
 import io.github.kvth.hiroi.anki.CardData
 import io.github.kvth.hiroi.anki.DuplicateNoteException
 import io.github.kvth.hiroi.anki.Furigana
-import io.github.kvth.hiroi.anki.Screenshot
+import io.github.kvth.hiroi.anki.Screenshots
 import io.github.kvth.hiroi.audio.AudioInfo
 import io.github.kvth.hiroi.audio.AudioSettings
 import io.github.kvth.hiroi.audio.AudioSource
@@ -127,8 +127,14 @@ interface LookupHost {
     /** The text selected where the word was looked up, for {popup-selection-text} */
     fun selection(): String
 
-    /** The screenshot for {screenshot}, and the part of it with the text (its box or region) for {screenshot-region}; nulls without one */
-    fun screenshots(): Pair<Screenshot?, Screenshot?>
+    /** The address of the page the text is from, for {url}; empty if it isn't from one */
+    fun pageUrl(): String
+
+    /** Where a video was when the text was read, as its player showed it, for {playback-time}; empty without one */
+    fun playbackTime(): String
+
+    /** The screenshot for {screenshot}, {screenshot-region} and {screenshot-picture}; nulls without one */
+    fun screenshots(): Screenshots
 
     /** Translates [sentence], for {sentence-translation}; throws with the reason when it can't */
     fun translate(sentence: String): String
@@ -568,12 +574,14 @@ class LookupSession(
         return CardData(
             term, found.text, start, start + term.source.length,
             documentTitle = host.documentTitle(),
+            url = host.pageUrl(),
             parse = ::words,
             selection = host.selection(),
             audio = found.audio[index],
             translate = host::translate,
             frequencySort = settings.frequencySort(dictionaries),
             kanjiParts = kanjiParts,
+            playbackTime = host.playbackTime(),
         )
     }
 
@@ -602,12 +610,18 @@ class LookupSession(
         button(if (overwrite != null) LookupText.ANKI_OVERWRITING else LookupText.ANKI_ADDING, false)
         val data = cardData(found, index)
         // {screenshot-region} is always just the box or region; {screenshot} only if the settings say so
-        val (full, region) = host.screenshots()
-        val screenshot = if (anki.screenshotCrop) region else full
+        val screenshots = host.screenshots()
+        val screenshot = if (anki.screenshotCrop) screenshots.region else screenshots.full
+        // On no picture (text that isn't on one), the whole screen
+        val picture = screenshots.picture ?: screenshots.full
         worker.execute {
             val result = runCatching {
                 val creator = host.cardCreator()
-                if (overwrite != null) creator.overwrite(overwrite, data, screenshot, region) else creator.add(data, screenshot, region)
+                if (overwrite != null) {
+                    creator.overwrite(overwrite, data, screenshot, screenshots.region, picture)
+                } else {
+                    creator.add(data, screenshot, screenshots.region, picture)
+                }
             }
             host.onMain {
                 if (shown !== found) return@onMain

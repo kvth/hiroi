@@ -211,7 +211,7 @@ class YomitanNoteData(
         fun context(data: CardData): JSONObject {
             val (start, end) = sentence(data.text, data.start, data.end)
             return JSONObject()
-                .put("url", "")
+                .put("url", data.url)
                 .put("documentTitle", data.documentTitle)
                 .put("query", data.text.substring(data.start))
                 .put("fullQuery", data.text)

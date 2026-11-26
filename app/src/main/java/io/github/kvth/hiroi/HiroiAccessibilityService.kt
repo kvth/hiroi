@@ -48,6 +48,8 @@ class HiroiAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     private fun captureAndShow() {
+        // Not opened as the assistant: no page address from the browser this time (a frozen screen keeps its own)
+        if (!LookupActivity.keepsFrozen(this)) CaptureStore.assistUrl = null
         capture {
             CaptureStore.onClosed = null
             startActivity(LookupActivity.intent(this))
@@ -107,7 +109,9 @@ class HiroiAccessibilityService : AccessibilityService() {
     }
 
     private fun captureNow(then: () -> Unit) {
-        CaptureStore.update(AccessibilityCapture.capture(this))
+        val capture = AccessibilityCapture.capture(this)
+        CaptureStore.update(capture.blocks)
+        CaptureStore.source = capture.source
         CaptureStore.sourcePackage = rootInActiveWindow?.packageName?.toString()
         CaptureStore.screenshot = null
         takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {

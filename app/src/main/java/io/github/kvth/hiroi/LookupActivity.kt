@@ -95,7 +95,14 @@ class LookupActivity : Activity() {
         // Edge-to-edge is the default from Android 15 on, but still has to be requested on 14.
         @Suppress("DEPRECATION")
         window.setDecorFitsSystemWindows(false)
-        lookup = DictionaryLookup(this, { appLabel(CaptureStore.sourcePackage) }, { CaptureStore.screenshot }, ::selectedText) {
+        lookup = DictionaryLookup(
+            this,
+            // The page's or book's title, else the app's name
+            { CaptureStore.source.title ?: appLabel(CaptureStore.sourcePackage) },
+            { CaptureStore.screenshot },
+            ::selectedText,
+            { CaptureStore.source.copy(url = CaptureStore.pageUrl) },
+        ) {
             // The region dragged out, else the box tapped; all boxes ("All") are the whole screen
             overlay.region ?: shownBlock?.bounds
         }

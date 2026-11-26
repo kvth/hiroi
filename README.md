@@ -242,6 +242,8 @@ Hiroi's own markers, which Yomitan doesn't have:
 - `{local-time}`: when the card was made, by the phone's clock, such as *2026-11-26 17:30*. (Anki keeps when each note was added anyway; this is for showing it on the card.)
 - `{frequency-sort-rank}`: the word's number in the frequency dictionary results are sorted by (*Results → Result sorting*), for sorting notes in Anki whichever dictionary that is.
 - `{screenshot-region}`: the screenshot cut to the box or region, whether or not `{screenshot}` is, so a card can have both.
+- `{screenshot-picture}`: the picture the text is on, cut out of the screenshot: the manga page in a reader or browser, or a panel if the app shows panels as pictures of their own. That's the smallest image (as the app reports its images) around the middle of the box or region; with *All*, the biggest image on screen. Text that isn't on a picture, such as a manga page drawn on a canvas, gets the whole screenshot.
+- `{playback-time}`: where a video was when the overlay opened, as its player shows it, such as *12:34*. Hiroi reads it from the player's controls: ExoPlayer's and VLC's elapsed time (most video apps use ExoPlayer), a seek bar that says its position (Chrome's video player), or text such as *12:34 / 23:40*. Players hide their controls while playing, so show them before opening the overlay; without them it's empty.
 
 #### Templates
 
@@ -256,7 +258,10 @@ Fields are filled by **Yomitan's own code**: its `AnkiNoteBuilder`, its Handleba
 
 A marker the templates don't define comes out as `{marker-render-error}`, as in Yomitan. *Cards* lists such markers, and adding a card says which templates failed.
 
-Hiroi gives the templates what Yomitan's translator would: the dictionary entry with its headword, inflections, definitions (the dictionaries' structured content as is), tags from the dictionaries' tag banks, frequencies and pitch accents, and the note context (sentence, document title: the app the text came from). Dictionaries imported before tag banks were supported need importing again to get their tag categories and notes. Media go through the same two passes as in Yomitan: the first rendering tells which ones the fields need, then Hiroi provides them and the fields are rendered again:
+Hiroi gives the templates what Yomitan's translator would: the dictionary entry with its headword, inflections, definitions (the dictionaries' structured content as is), tags from the dictionaries' tag banks, frequencies and pitch accents, and the note context:
+- the sentence;
+- the document title: a browser page's title, else the title in the app's top bar (a book, an episode) or its window's, else the app's name;
+- the url: the address of the page the text is from. When Hiroi is opened as the assistant, Chrome (and other browsers that do) give Hiroi the page's address; otherwise Hiroi reads the browser's address bar (Chrome and the browsers built on it, Firefox and its forks, Samsung Internet, Opera, DuckDuckGo) and puts back the `https://` the bar leaves out. Outside a browser it's empty. Dictionaries imported before tag banks were supported need importing again to get their tag categories and notes. Media go through the same two passes as in Yomitan: the first rendering tells which ones the fields need, then Hiroi provides them and the fields are rendered again:
 - `{audio}`: word audio from JapanesePod101, Yomitan's default source;
 - `{screenshot}`: the screen when the overlay opened, without the overlay. *Cards* has Yomitan's screenshot options, PNG or JPEG with its quality (imported from Yomitan settings too), and Hiroi's own: just the box or region the panel's text is from, with a small margin, instead of the whole screen (with *All*, it's the whole screen). Cards from the search page have none;
 - `{clipboard-text}`: the clipboard;
